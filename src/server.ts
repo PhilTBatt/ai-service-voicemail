@@ -20,7 +20,7 @@ app.post("/incoming-call", (req, res) => {
                 Please state your name and issue please after the beep.
             </Say>
 
-            <Record action="/recording" maxLength="30" playBeep="true" />
+            <Record action="/recording" maxLength="15" playBeep="true" />
         </Response>
     `);
 });
