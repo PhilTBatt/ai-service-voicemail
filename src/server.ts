@@ -15,7 +15,25 @@ app.post("/incoming-call", (req, res) => {
 
     res.send(`
         <Response>
-        <Say>Hello, this is your AI voicemail service.</Say>
+            <Say>
+                Hello, this is your AI voicemail service.
+                Please state your name and issue please after the beep.
+            </Say>
+
+            <Record action="/recording" maxLength="30" playBeep="true" />
+        </Response>
+    `);
+});
+
+app.post("/recording", (req, res) => {
+    console.log("Recording URL:", req.body.RecordingUrl);
+    console.log("From:", req.body.From);
+
+    res.type("text/xml");
+
+    res.send(`
+        <Response>
+            <Say> Thank you. Goodbye. </Say>
         </Response>
     `);
 });
