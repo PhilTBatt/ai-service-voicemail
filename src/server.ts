@@ -32,7 +32,7 @@ app.post("/incoming-call", (req, res) => {
                 Please state your name and issue please after the beep.
             </Say>
 
-            <Record action="/recording" maxLength="15" playBeep="true" />
+            <Record action="https://dayana-nonvarious-seldomly.ngrok-free.dev/recording" maxLength="10" playBeep="true" />
         </Response>
     `);
 });
@@ -40,14 +40,33 @@ app.post("/incoming-call", (req, res) => {
 app.post("/recording", async (req, res) => {
     const recordingUrl = req.body.RecordingUrl
 
-    console.log("Recording URL:", recordingUrl)
-    console.log("From:", req.body.From)
+    const response = await fetch(recordingUrl + ".mp3", {
+        headers: { 
+            Authorization: "Basic " + Buffer.from( `${process.env.TWILIO_API_KEY_SID}:${process.env.TWILIO_API_KEY_SECRET}` ).toString("base64") 
+        }
+    })
+
+    console.log("Content-Type:", response.headers.get("content-type"))
+    console.log("Status:", response.status)
+
+    const audioBuffer = Buffer.from(await response.arrayBuffer())
     
     await transporter.sendMail({
         from: process.env.PHILSEMAIL,
         to: process.env.PHILSEMAIL,
         subject: "New Voicemail",
-        text: `Voicemail received:\n${recordingUrl}`
+        text: `Voicemail received:\n${recordingUrl}`,
+        html: `
+                <div style="font-family: Arial;">
+                    <h2>New Voicemail</h2>
+                </div>
+            `,
+        attachments: [
+            {
+                filename: "voicemail.mp3",
+                content: audioBuffer
+            }
+            ]
     })
 
     res.type("text/xml")
