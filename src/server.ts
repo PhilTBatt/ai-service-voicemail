@@ -38,6 +38,18 @@ app.post("/recording", (req, res) => {
     `);
 });
 
+app.post("/fallback", (req, res) => {
+    console.log("Fallback hit");
+
+    res.type("text/xml");
+
+    res.send(`
+        <Response>
+            <Say>Sorry, something went wrong. Please try again later.</Say>
+        </Response>
+    `);
+});
+
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
 });
