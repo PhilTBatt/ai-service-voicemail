@@ -64,9 +64,12 @@ app.post("/api/incoming-call", (req, res) => {
 })
 
 app.post("/api/recording", async (req, res) => {
+    const callerNumber = req.body.From || "Unknown"
+    const recordingUrl = req.body.RecordingUrl
+    const timestamp = new Date().toLocaleString()
+    let audioBuffer: Buffer
+
     try { 
-        const recordingUrl = req.body.RecordingUrl
-        const timestamp = new Date().toLocaleString()
 
         const response = await fetch(recordingUrl + ".mp3", {
             headers: { 
@@ -74,16 +77,32 @@ app.post("/api/recording", async (req, res) => {
             }
         })
 
+        if (!response.ok) {
+            throw new Error(`Failed to fetch recording: ${response.status} ${response.statusText}`)
+        }
+
         console.log("Content-Type:", response.headers.get("content-type"))
         console.log("Status:", response.status)
 
-        const audioBuffer = Buffer.from(await response.arrayBuffer())
-        
+        audioBuffer = Buffer.from(await response.arrayBuffer())
+    }
+    catch (error) {
+        console.error("Failed to fetch recording audio:", error)
+    
+        res.type("text/xml")
+        res.send(`
+            <Response>
+                <Say>Sorry, something went wrong processing your message.</Say>
+            </Response>
+        `)
+        return
+    }
+    try {
         await transporter.sendMail({
             from: process.env.PHILSEMAIL,
             to: process.env.PHILSEMAIL,
             subject: "New Voicemail",
-            text: `Voicemail received:\n${recordingUrl}`,
+            text: `Voicemail received from ${callerNumber} at ${timestamp}\n`,
             html: `
                     <div style="font-family: Arial;">
                         <h2>New Voicemail</h2>
@@ -98,35 +117,28 @@ app.post("/api/recording", async (req, res) => {
                 }
                 ]
         })
-
-        const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER
-        const TARGET_PHONE_NUMBER = process.env.TARGET_PHONE_NUMBER
-
-        if (!TWILIO_PHONE_NUMBER || !TARGET_PHONE_NUMBER) throw new Error("Missing required environment variables") 
-            
+    } catch (error) {
+        console.error("Failed to send voicemail email:", error)
+    }
+    try {
         await client.messages.create({
             body: `New enquiry from ${req.body.From}. Voicemail received at ${timestamp}.`,
-            from: TWILIO_PHONE_NUMBER,
-            to: TARGET_PHONE_NUMBER
+            from: process.env.TWILIO_PHONE_NUMBER!,
+            to: process.env.TARGET_PHONE_NUMBER!
         })
 
-
-        res.type("text/xml")
-
-        res.send(`
-            <Response>
-                <Say> Thank you. Goodbye. </Say>
-            </Response>
-        `)
+        console.log("SMS sent successfully")
     } catch (error) {
-        console.error("Error handling recording:", error)
-        res.type("text/xml")
-        res.send(`
-            <Response>
-                <Say>Something went wrong</Say>
-            </Response>
-        `)
+        console.error("Failed to send SMS notification:", error)
     }
+
+    res.type("text/xml")
+
+    res.send(`
+        <Response>
+            <Say> Thank you. Goodbye. </Say>
+        </Response>
+    `)
 })
 
 app.post("/api/fallback", (req, res) => {
