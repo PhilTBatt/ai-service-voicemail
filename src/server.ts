@@ -2,11 +2,31 @@ import express from "express"
 import dotenv from "dotenv"
 import nodemailer from "nodemailer"
 import twilio from "twilio"
+import winston from "winston"
 
 const app = express()
 const PORT = 3000
 
 dotenv.config()
+
+const logger = winston.createLogger({
+    level: "info",
+    format: winston.format.combine(
+        winston.format.timestamp(),
+        winston.format.errors({ stack: true }),
+        winston.format.json()
+    ),
+    transports: [
+        new winston.transports.Console({
+            format: winston.format.combine(
+                winston.format.colorize(),
+                winston.format.simple()
+            ),
+        }),
+        new winston.transports.File({ filename: "logs/error.log", level: "error" }),
+        new winston.transports.File({ filename: "logs/combined.log" }),
+    ],
+})
 
 const REQUIRED_ENV_VARS = [
     "TWILIO_ACCOUNT_SID",
@@ -20,9 +40,9 @@ const REQUIRED_ENV_VARS = [
     "WEBHOOK_BASE_URL",
 ]
 
-const missing = REQUIRED_ENV_VARS.filter((key) => !process.env[key])
+const missing = REQUIRED_ENV_VARS.filter( key => !process.env[key])
 if (missing.length > 0) {
-    console.error(`\n Missing required environment variables:\n${missing.map( v => `  - ${v}`).join("\n")}\n`)
+    logger.error(`\n Missing required environment variables: ${missing.join(", ")}`)
     process.exit(1)
 }
 
@@ -49,6 +69,7 @@ app.get("/api", (req, res) => {
 });
 
 app.post("/api/incoming-call", (req, res) => {
+    logger.info("Incoming call received")
     res.type("text/xml")
 
     res.send(`
@@ -69,6 +90,8 @@ app.post("/api/recording", async (req, res) => {
     const timestamp = new Date().toLocaleString()
     let audioBuffer: Buffer
 
+    logger.info("Recording received", { from: callerNumber, recordingUrl })
+
     try { 
 
         const response = await fetch(recordingUrl + ".mp3", {
@@ -77,17 +100,17 @@ app.post("/api/recording", async (req, res) => {
             }
         })
 
-        if (!response.ok) {
-            throw new Error(`Failed to fetch recording: ${response.status} ${response.statusText}`)
-        }
+        if (!response.ok) throw new Error(`Failed to fetch recording: ${response.status} ${response.statusText}`) 
 
-        console.log("Content-Type:", response.headers.get("content-type"))
-        console.log("Status:", response.status)
+        logger.info("Recording fetched", {
+            status: response.status,
+            contentType: response.headers.get("content-type"),
+        })
 
         audioBuffer = Buffer.from(await response.arrayBuffer())
     }
     catch (error) {
-        console.error("Failed to fetch recording audio:", error)
+        logger.error("Failed to fetch recording audio", { error, recordingUrl })
     
         res.type("text/xml")
         res.send(`
@@ -101,7 +124,7 @@ app.post("/api/recording", async (req, res) => {
         await transporter.sendMail({
             from: process.env.PHILSEMAIL,
             to: process.env.PHILSEMAIL,
-            subject: "New Voicemail",
+            subject: "New Voicemail from ${callerNumber}",
             text: `Voicemail received from ${callerNumber} at ${timestamp}\n`,
             html: `
                     <div style="font-family: Arial;">
@@ -117,8 +140,9 @@ app.post("/api/recording", async (req, res) => {
                 }
                 ]
         })
+        logger.info("Voicemail email sent", { from: callerNumber })
     } catch (error) {
-        console.error("Failed to send voicemail email:", error)
+        logger.error("Failed to send voicemail email", { error, from: callerNumber })
     }
     try {
         await client.messages.create({
@@ -127,9 +151,9 @@ app.post("/api/recording", async (req, res) => {
             to: process.env.TARGET_PHONE_NUMBER!
         })
 
-        console.log("SMS sent successfully")
+        logger.info("SMS notification sent", { from: callerNumber })
     } catch (error) {
-        console.error("Failed to send SMS notification:", error)
+        logger.error("Failed to send SMS notification", { error, from: callerNumber })
     }
 
     res.type("text/xml")
@@ -142,7 +166,7 @@ app.post("/api/recording", async (req, res) => {
 })
 
 app.post("/api/fallback", (req, res) => {
-    console.log("Fallback hit")
+    logger.warn("Fallback handler hit", { body: req.body })
 
     res.type("text/xml")
 
