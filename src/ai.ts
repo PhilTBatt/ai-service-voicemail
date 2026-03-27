@@ -1,4 +1,9 @@
+import OpenAI from "openai"
 import { logger } from "./config.js"
+
+const openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
+})
 
 export async function transcribeAudio(audioBuffer: Buffer): Promise<string> {
     const formData = new FormData()
@@ -30,4 +35,42 @@ export async function transcribeAudio(audioBuffer: Buffer): Promise<string> {
     })
 
     return transcript
+}
+
+export async function summariseCall(transcript: string): Promise<string> {
+    if (!transcript) return ""
+
+    try {
+        const response = await openai.chat.completions.create({
+            model: "gpt-4o-mini",
+            messages: [
+                {
+                    role: "system",
+                    content: "Summarise voicemail messages clearly and concisely."
+                },
+                {
+                    role: "user",
+                    content: `
+                        Extract the following from this voicemail:
+                        - Name
+                        - Issue
+                        - Urgency (low, medium, high)
+                        Voicemail:
+                        ${transcript}
+                    `
+                }
+            ],
+            temperature: 0.2,
+        })
+
+        logger.info("Transcription summarised", {
+            length: transcript.length,
+            preview: transcript.substring(0, 80),
+        })
+
+        return response.choices[0]?.message?.content?.trim() || ""
+    } catch (error) {
+        logger.error("Summarisation failed", { error })
+        return transcript
+    }
 }

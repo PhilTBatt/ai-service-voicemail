@@ -1,7 +1,7 @@
 import { Router } from "express"
 import { config, logger } from "./config.js"
 import { fetchRecordingAudio, sendVoicemailEmail, sendSmsNotification } from "./utils.js"
-import { transcribeAudio } from "./ai.js"
+import { transcribeAudio, summariseCall } from "./ai.js"
 
 const router = Router()
 
@@ -52,6 +52,12 @@ router.post("/api/recording", async (req, res) => {
         transcription = await transcribeAudio(audioBuffer)
     } catch (error) {
         logger.error("Failed to transcribe audio", { error, from: callerNumber })
+    }
+
+    try {
+        transcription = await summariseCall(transcription)
+    } catch (error) {
+        logger.error("Failed to summarise transcription", { error, from: callerNumber })
     }
 
     try {
