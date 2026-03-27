@@ -1,6 +1,7 @@
 import { Router } from "express"
 import { config, logger } from "./config.js"
 import { fetchRecordingAudio, sendVoicemailEmail, sendSmsNotification } from "./utils.js"
+import { transcribeAudio } from "./ai.js"
 
 const router = Router()
 
@@ -15,7 +16,7 @@ router.post("/api/incoming-call", (_req, res) => {
     res.send(`
         <Response>
             <Say>
-                Hello, this is your AI voicemail service.
+                Hello, this is Phil's voicemail service.
                 Please state your name and issue please after the beep.
             </Say>
             <Record action="${config.webhookBaseUrl}/api/recording" maxLength="10" playBeep="true" />
@@ -26,11 +27,12 @@ router.post("/api/incoming-call", (_req, res) => {
 router.post("/api/recording", async (req, res) => {
     const callerNumber = req.body.From || "Unknown"
     const recordingUrl = req.body.RecordingUrl
-    const timestamp = new Date().toLocaleString()
+    const timestamp = new Date().toLocaleString('en-GB', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: '2-digit' })
 
     logger.info("Recording received", { from: callerNumber, recordingUrl })
 
     let audioBuffer: Buffer
+    let transcription = ''
 
     try {
         audioBuffer = await fetchRecordingAudio(recordingUrl)
@@ -47,13 +49,19 @@ router.post("/api/recording", async (req, res) => {
     }
 
     try {
-        await sendVoicemailEmail({ from: callerNumber, recordingUrl, timestamp,  audioBuffer })
+        transcription = await transcribeAudio(audioBuffer)
+    } catch (error) {
+        logger.error("Failed to transcribe audio", { error, from: callerNumber })
+    }
+
+    try {
+        await sendVoicemailEmail({ from: callerNumber, timestamp, transcription })
     } catch (error) {
         logger.error("Failed to send voicemail email", { error, from: callerNumber })
     }
 
     try {
-        await sendSmsNotification({ from: callerNumber, timestamp })
+        await sendSmsNotification({ from: callerNumber, timestamp, transcription })
     } catch (error) {
         logger.error("Failed to send SMS notification", { error, from: callerNumber })
     }
