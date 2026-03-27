@@ -20,7 +20,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "build": "tsc",
+    "build": "npx tsc",
     "start": "node dist/server.js"
   }
 }
