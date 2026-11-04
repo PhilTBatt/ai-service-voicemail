@@ -12,24 +12,25 @@ Four pieces are worth keeping, each with changes: Twilio signature validation, e
 
 ## File-by-file verdicts
 
-| File | What it does | Verdict (Appendix E) | Where it goes |
-|---|---|---|---|
-| `src/middleware.ts` | Validates `X-Twilio-Signature` using `WEBHOOK_BASE_URL + req.originalUrl` | **Keep** | Step 4, inside the Twilio adapter |
-| `src/config.ts`: env check | Lists required variable names; exits naming the missing ones, never printing values | **Keep the idea**, rewrite with zod | Step 0, `apps/api/src/config.ts` |
-| `src/config.ts`: Winston | JSON logger writing to console and `logs/*.log` | **Keep**, add redaction | Step 0, `apps/api/src/logger.ts` |
-| `src/config.ts`: Nodemailer | Gmail transport using an app password | **Drop** | Step 6 picks a transactional email service |
-| `src/config.ts`: Twilio client | Created at import time | **Keep** (SMS) | Step 6, `SmsProvider` |
-| `src/ai.ts`: `transcribeAudio` | Calls Whisper over raw `fetch` | **Drop** | The voice platform provides transcripts |
-| `src/ai.ts`: `summariseCall` | gpt-4o-mini, free-text output | **Change** | Step 5: current small model, pinned version, zod-validated JSON |
-| `src/utils.ts`: `sendSmsNotification` | Twilio `messages.create` | **Keep** | Step 6 |
-| `src/utils.ts`: `sendVoicemailEmail` | Gmail HTML email | **Drop** | Step 6 |
-| `src/utils.ts`: `fetchRecordingAudio` | Downloads the recording with API-key basic auth | **Drop** for now | Possibly reused by Step 4's reconciliation job |
-| `src/routes.ts` | Voicemail-only flow, all work done inline | **Drop** | Steps 3–5 (live agent, webhook, then queue) |
-| `Dockerfile` | Single stage on `node:20` | **Keep**, rework | Step 8 builds on it; findings below |
+| File                                  | What it does                                                                        | Verdict (Appendix E)                | Where it goes                                                   |
+| ------------------------------------- | ----------------------------------------------------------------------------------- | ----------------------------------- | --------------------------------------------------------------- |
+| `src/middleware.ts`                   | Validates `X-Twilio-Signature` using `WEBHOOK_BASE_URL + req.originalUrl`           | **Keep**                            | Step 4, inside the Twilio adapter                               |
+| `src/config.ts`: env check            | Lists required variable names; exits naming the missing ones, never printing values | **Keep the idea**, rewrite with zod | Step 0, `apps/api/src/config.ts`                                |
+| `src/config.ts`: Winston              | JSON logger writing to console and `logs/*.log`                                     | **Keep**, add redaction             | Step 0, `apps/api/src/logger.ts`                                |
+| `src/config.ts`: Nodemailer           | Gmail transport using an app password                                               | **Drop**                            | Step 6 picks a transactional email service                      |
+| `src/config.ts`: Twilio client        | Created at import time                                                              | **Keep** (SMS)                      | Step 6, `SmsProvider`                                           |
+| `src/ai.ts`: `transcribeAudio`        | Calls Whisper over raw `fetch`                                                      | **Drop**                            | The voice platform provides transcripts                         |
+| `src/ai.ts`: `summariseCall`          | gpt-4o-mini, free-text output                                                       | **Change**                          | Step 5: current small model, pinned version, zod-validated JSON |
+| `src/utils.ts`: `sendSmsNotification` | Twilio `messages.create`                                                            | **Keep**                            | Step 6                                                          |
+| `src/utils.ts`: `sendVoicemailEmail`  | Gmail HTML email                                                                    | **Drop**                            | Step 6                                                          |
+| `src/utils.ts`: `fetchRecordingAudio` | Downloads the recording with API-key basic auth                                     | **Drop** for now                    | Possibly reused by Step 4's reconciliation job                  |
+| `src/routes.ts`                       | Voicemail-only flow, all work done inline                                           | **Drop**                            | Steps 3–5 (live agent, webhook, then queue)                     |
+| `Dockerfile`                          | Single stage on `node:20`                                                           | **Keep**, rework                    | Step 8 builds on it; findings below                             |
 
 ## What's worth keeping, and what to fix when it moves
 
 **Twilio signature validation (`middleware.ts`).**
+
 - What's right: it builds the URL from a configured base URL, not from `req.protocol` or `req.host`. That's exactly the Step 4 gotcha about proxies, so the old code already handles it.
 - To fix:
   - Rename `WEBHOOK_BASE_URL` to `PUBLIC_BASE_URL`, as the plan does.
@@ -37,6 +38,7 @@ Four pieces are worth keeping, each with changes: Twilio signature validation, e
   - It has no tests. Step 4 adds fixtures for a valid signature, a bad signature and a tampered body.
 
 **Env validation (`config.ts`).**
+
 - What's right: it fails fast and names the missing variables without printing any values. That matches Step 0's requirement.
 - To fix:
   - It only checks that a variable exists, not its format. Zod adds format checks (a URL is a URL, a number is in E.164).
@@ -44,6 +46,7 @@ Four pieces are worth keeping, each with changes: Twilio signature validation, e
   - It's one module mixing config, the logger and API clients. Split them up.
 
 **Winston logging (`config.ts`).**
+
 - What's right: the base format is timestamp, error stacks and JSON.
 - To fix:
   - The Console transport overrides that with `colorize()` + `simple()`, so console output **isn't** JSON. In a container, console output is the only output that matters.
@@ -55,6 +58,7 @@ Four pieces are worth keeping, each with changes: Twilio signature validation, e
   - **Gotcha (your laptop):** `logs/combined.log` and `logs/error.log` exist locally and probably hold real callers' numbers and transcript snippets. I haven't opened them. They were never committed (checked in git history), but delete them once you're sure you don't need them.
 
 **Dockerfile.**
+
 - What's right: it's simple and works.
 - To fix (Step 8, unless Step 0's CI needs it sooner):
   - `node:20` reached end of life in April 2026. Pin the same Node LTS as `package.json` `engines`.
@@ -74,16 +78,16 @@ Four pieces are worth keeping, each with changes: Twilio signature validation, e
 
 ## Dependencies
 
-| Package | Verdict |
-|---|---|
-| `express` 5, `winston`, `twilio` | Keep |
-| `typescript` | Listed in both `dependencies` and `devDependencies`. Keep it in dev only |
-| `tsx` | Keep (dev runner) |
-| `dotenv` | Probably replace with Node's built-in `--env-file`, decided in the Step 0 config change |
-| `openai` | Drop for now. Step 5 chooses the LLM provider |
-| `nodemailer`, `@types/nodemailer` | Drop |
-| `axios` | Drop: unused (no imports in `src/`) |
-| `ts-node-dev` | Drop: unused (`dev` uses `tsx`) |
+| Package                           | Verdict                                                                                 |
+| --------------------------------- | --------------------------------------------------------------------------------------- |
+| `express` 5, `winston`, `twilio`  | Keep                                                                                    |
+| `typescript`                      | Listed in both `dependencies` and `devDependencies`. Keep it in dev only                |
+| `tsx`                             | Keep (dev runner)                                                                       |
+| `dotenv`                          | Probably replace with Node's built-in `--env-file`, decided in the Step 0 config change |
+| `openai`                          | Drop for now. Step 5 chooses the LLM provider                                           |
+| `nodemailer`, `@types/nodemailer` | Drop                                                                                    |
+| `axios`                           | Drop: unused (no imports in `src/`)                                                     |
+| `ts-node-dev`                     | Drop: unused (`dev` uses `tsx`)                                                         |
 
 ## Decision
 

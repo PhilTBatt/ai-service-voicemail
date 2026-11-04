@@ -1,0 +1,3 @@
+# Always check text files out with LF endings, whatever core.autocrlf says.
+# Prettier (and Linux CI) expect LF; Git for Windows defaults to converting to CRLF.
+* text=auto eol=lf

@@ -1,0 +1,6 @@
+package-lock.json
+.vscode/
+
+# Phil's local-only files (excluded from git via .git/info/exclude, which Prettier doesn't read)
+CLAUDE.md
+docs/BUILD_PLAN.md

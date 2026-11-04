@@ -11,10 +11,20 @@
   ],
   "scripts": {
     "dev": "npm run dev --workspace @callmate/api",
-    "typecheck": "npm run typecheck --workspaces --if-present"
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "vitest run",
+    "check": "npm run lint && npm run format:check && npm run typecheck && npm test"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^26.6.6",
-    "typescript": "~6.0.3"
+    "eslint": "^10.14.0",
+    "prettier": "^3.9.10",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.72.1",
+    "vitest": "^5.1.0"
   }
 }

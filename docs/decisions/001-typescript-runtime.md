@@ -9,6 +9,7 @@
 The repo needs one way to run TypeScript that works in `npm run dev`, in tests, in CI and in the production container, across three workspaces (`apps/api`, `apps/web`, `packages/shared`).
 
 What I checked on 2026-11-04:
+
 - **Node 26** became the Active LTS on 2026-10-28. Node 24 is now in maintenance, and so is Node 22, which is what the laptop currently has. Source: [Node release schedule](https://github.com/nodejs/Release/blob/main/schedule.json).
 - **Type stripping** is stable in Node 26. Node runs `.ts` files by replacing type annotations with spaces. It doesn't type-check, and it doesn't support syntax that generates code (`enum`, namespaces with values, parameter properties). It refuses `.ts` files inside `node_modules`. Source: [Node 26 TypeScript docs](https://nodejs.org/docs/latest-v26.x/api/typescript.html).
 - **TypeScript 7.0** (the native compiler) is now `latest` on npm, but `typescript-eslint` 8.72 supports `typescript >=4.8.4 <6.1.0` (`npm view typescript-eslint peerDependencies`).
@@ -33,11 +34,12 @@ What I checked on 2026-11-04:
 4. **TypeScript 7.**
    - Discarded for now: linting would break. Revisit when typescript-eslint supports it.
 
-**Confidence:** medium-high. The Node feature is documented as stable, and the workspace link was tested. What isn't tested yet is vitest and ESLint against this setup; that comes in the next change.
+**Confidence:** medium-high. The Node feature is documented as stable. The workspace link, ESLint (typed linting) and Vitest have all been tested against this setup.
 
 **Strongest case against:** we're one week into Node 26 LTS, and running uncompiled source in production is less common than shipping compiled JavaScript. If a dependency or tool doesn't cope, the fallback is option 3 (bundling). That change touches the build scripts and the Dockerfile, but not the application code.
 
 **Gotchas this creates:**
+
 - Use `const` objects or arrays with `as const` instead of `enum`.
 - Import types with `import type` (enforced by `verbatimModuleSyntax`).
 - Relative imports need the real extension: `import { x } from "./x.ts"`.
