@@ -60,7 +60,8 @@ Smaller calls, explained when they were made:
 ## Reference
 
 - **Fictional phone numbers** for tests, seeds and fixtures come from Ofcom's ranges reserved for drama: https://www.ofcom.org.uk/phones-and-broadband/phone-numbers/numbers-for-drama
-- **Local databases:** dev `postgres://callmate:callmate@127.0.0.1:5434/callmate`, test `postgres://callmate:callmate@127.0.0.1:5433/callmate_test`.
+- **Local databases** (no passwords; only reachable from this machine): dev on port 5434, test on port 5433. Connection strings for each role are at the top of `docker-compose.yml`.
+- **Pushing to `main` also triggers** a Render auto-deploy of the old `voicemail-service` (until Phil deletes it) and GitGuardian secret scanning (the repo is public). Keep secret-looking strings out of committed files.
 
 ## Session log (newest first)
 

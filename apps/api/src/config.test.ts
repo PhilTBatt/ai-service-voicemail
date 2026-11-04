@@ -68,14 +68,16 @@ describe("loadConfig", () => {
   });
 
   it("never includes values in the error", () => {
-    const secret = "s3cr3t-do-not-print";
+    // A recognisable marker rather than a realistic-looking secret, so secret scanners
+    // (GitGuardian watches this repo) don't flag the test itself.
+    const marker = "value-that-must-never-appear";
     const error = configErrorFor({
-      NODE_ENV: secret,
-      PORT: secret,
-      LOG_LEVEL: secret,
-      DATABASE_URL: `mysql://app:${secret}@localhost/callmate`,
+      NODE_ENV: marker,
+      PORT: marker,
+      LOG_LEVEL: marker,
+      DATABASE_URL: `mysql://app:${marker}@localhost/callmate`,
     });
-    expect(error.message).not.toContain(secret);
+    expect(error.message).not.toContain(marker);
     for (const name of ["NODE_ENV", "PORT", "LOG_LEVEL", "DATABASE_URL"]) {
       expect(error.message).toContain(name);
     }

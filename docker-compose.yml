@@ -1,12 +1,13 @@
 # Local Postgres for development and tests (production uses Azure's managed Postgres).
-# The credentials are local throwaways: ports are bound to 127.0.0.1, so nothing else on
-# your network can reach these databases. Host ports 5434 (dev) and 5433 (test) avoid the
-# default 5432, which other local Postgres installs and containers often already use.
+# No passwords (trust authentication): ports are bound to 127.0.0.1, so only your own
+# machine can reach these databases, and the repo holds nothing that looks like a secret.
+# Host ports 5434 (dev) and 5433 (test) avoid the default 5432, which other local
+# Postgres installs and containers often already use.
 #
 # `callmate` is the admin (superuser), used only to create the app's roles on first start
 # (apps/api/src/db/roles.sql). For .env:
-#   DATABASE_URL=postgres://callmate_app:callmate_app@127.0.0.1:5434/callmate
-#   MIGRATION_DATABASE_URL=postgres://callmate_owner:callmate_owner@127.0.0.1:5434/callmate?sslmode=disable
+#   DATABASE_URL=postgres://callmate_app@127.0.0.1:5434/callmate
+#   MIGRATION_DATABASE_URL=postgres://callmate_owner@127.0.0.1:5434/callmate?sslmode=disable
 name: callmate
 
 services:
@@ -14,7 +15,7 @@ services:
     image: postgres:16
     environment:
       POSTGRES_USER: callmate
-      POSTGRES_PASSWORD: callmate
+      POSTGRES_HOST_AUTH_METHOD: trust
       POSTGRES_DB: callmate
     ports:
       - "127.0.0.1:5434:5432"
@@ -38,7 +39,7 @@ services:
     image: postgres:16
     environment:
       POSTGRES_USER: callmate
-      POSTGRES_PASSWORD: callmate
+      POSTGRES_HOST_AUTH_METHOD: trust
       POSTGRES_DB: callmate_test
     ports:
       - "127.0.0.1:5433:5432"

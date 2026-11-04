@@ -6,7 +6,7 @@ import { createPool } from "./db/pool.ts";
 import { TEST_DATABASE_URL } from "./testing/databases.ts";
 
 // Nothing listens on port 1, so connections are refused: a real "database is down".
-const DOWN_DATABASE_URL = "postgres://callmate_app:callmate_app@127.0.0.1:1/callmate";
+const DOWN_DATABASE_URL = "postgres://callmate_app@127.0.0.1:1/callmate";
 
 const running: (() => Promise<void>)[] = [];
 
