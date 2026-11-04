@@ -1,0 +1,48 @@
+# Local Postgres for development and tests (production uses Azure's managed Postgres).
+# The credentials are local throwaways: ports are bound to 127.0.0.1, so nothing else on
+# your network can reach these databases. Host ports 5434 (dev) and 5433 (test) avoid the
+# default 5432, which other local Postgres installs and containers often already use.
+#
+# DATABASE_URL for .env: postgres://callmate:callmate@127.0.0.1:5434/callmate
+name: callmate
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: callmate
+      POSTGRES_PASSWORD: callmate
+      POSTGRES_DB: callmate
+    ports:
+      - "127.0.0.1:5434:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      # -h 127.0.0.1 checks over TCP. While the image initialises it runs a temporary
+      # server on the Unix socket only, so a socket check can report "ready" too early.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U callmate -d callmate"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+  # A separate server for tests, so test runs never touch dev data, and the database roles
+  # Step 1 creates (roles are server-wide in Postgres) can't clash between the two.
+  # Data lives in memory (tmpfs) and is wiped whenever the container stops.
+  db-test:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: callmate
+      POSTGRES_PASSWORD: callmate
+      POSTGRES_DB: callmate_test
+    ports:
+      - "127.0.0.1:5433:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U callmate -d callmate_test"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+volumes:
+  db-data:
