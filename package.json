@@ -11,6 +11,7 @@
   ],
   "scripts": {
     "dev": "npm run dev --workspace @callmate/api",
+    "build": "npm run build --workspaces --if-present",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
