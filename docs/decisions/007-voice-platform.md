@@ -11,13 +11,13 @@
 | 1   | Exact pre-written message (emergency)     | ✅ **Static Sentence**: "says your exact sentence"; triggered by a condition (e.g. a global node)            | ✅ `say` call-control command ("exact text"), sent by our server; tool messages also pre-set. Verbatim to confirm 🧪 |
 | 2   | Call our API mid-call                     | ✅ Custom functions, signed (`X-Retell-Signature`)                                                           | ✅ Function tools / API Request tool                                                                                 |
 | 3   | Per-call context                          | ✅ Inbound webhook: pick agent, set variables, override settings, **reject** the call                        | ✅ `assistant-request` event (hard 7.5 s limit); `{{variables}}`                                                     |
-| 4   | Agents fully via API; rate limits         | ✅ API and SDK, with versions. API rate limits: **unknown**                                                  | ✅ API, config-as-code, versions. API rate limits: **unknown**                                                       |
+| 4   | Agents fully via API; rate limits         | ✅ **Verified:** test agent built entirely via API. API rate limits: **unknown**                             | ✅ **Verified:** test assistant built entirely via API. API rate limits: **unknown**                                 |
 | 5   | Our own Twilio UK numbers                 | ✅ Twilio **SIP trunking** (no Twilio master credentials shared). Retell's own numbers: US/Canada only       | ✅ Import, but needs our **Twilio Account SID + Auth Token** (master key to the Twilio account)                      |
 | 6   | Post-call webhook, retries, signature     | ✅ `call_ended`/`call_analyzed`; 10 s timeout, up to 3 retries; HMAC-SHA256 **with timestamp**               | ✅ `end-of-call-report`; Bearer, OAuth or HMAC (optional timestamp). Retries: **unknown**                            |
 | 7   | Max length, silence, ending               | ✅ `max_call_duration_ms`, `end_call_after_silence_ms`, silence reminders                                    | ✅ `maxDurationSeconds` (10–43,200), `silenceTimeoutSeconds`, time-elapsed hooks for wrap-up                         |
 | 8   | Concurrency on our plan                   | **20** included (pay-as-you-go); adjustable; paid burst                                                      | **4** on pay-as-you-go; 10 (Core) / 30 (Pro) on paid packages                                                        |
 | 9   | Delete recordings and transcripts; region | ✅ Delete Call API; **"Basic Attributes Only"** deletes raw data ~10 min after the call. Region: **unknown** | ✅ Delete Call API; raw data kept 14 days on pay-as-you-go. US by default; EU region only on Premier                 |
-| 10  | British voices                            | 🧪                                                                                                           | 🧪                                                                                                                   |
+| 10  | British voices                            | **25** British voices across providers, incl. Retell platform voices (Willa, Maren). Quality: 🧪             | Native library has **one** British voice (Dan, male); British female voices need a third-party provider. Quality: 🧪 |
 | 11  | Reply latency (10 calls)                  | 🧪                                                                                                           | 🧪                                                                                                                   |
 | 12  | Cost per minute                           | $0.07–$0.31/min; their example is $0.11/min                                                                  | $0.05/min hosting + model, voice and transcriber at cost + telephony                                                 |
 | 13  | Caller experience on errors; fallback     | Built-in LLM/TTS fallback; `fallback_number` and Backup mode. Twilio fallback with SIP: 🧪                   | Model/voice/transcriber fallback plans; `call.ending` hook if our server fails. Twilio fallback URL after import: 🧪 |
@@ -104,6 +104,39 @@ Vapi's strengths are more flexible webhook authentication and voice-based simula
 3. **Phone path:** one Twilio UK number pointed at each platform in turn. This tests numbers, webhooks and the fallback URL. **Gotcha:** UK numbers may need Twilio's regulatory bundle first, which can take days, so start it early. Calling a US test number from a UK mobile instead costs international call rates.
 4. Record the real spend on each.
 5. **Spike code stays local** (an excluded folder, never committed). Only this decision record changes.
+
+## Build findings (2026-11-04)
+
+Both test agents ("SPIKE Ant's Plumbing") were created through the APIs from a local, uncommitted script, then read back to confirm every setting was kept.
+
+|                   | Retell                                                                                                                                                                                       | Vapi                                                                                                                                                                              |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| How it's built    | Conversation flow: static opening → prompt node (take the message) → static end node. Gas, danger, water and "are you an AI?" are **global nodes with static text**, reachable from anywhere | One prompt. Gas, danger, water and "are you an AI?" are **tools whose `request-start` message is the exact script** (`blocking: true`); the close is the `endCall` tool's message |
+| AI model          | GPT 5.6 Terra, standard tier, temperature 0                                                                                                                                                  | GPT 5.6 Terra, temperature 0                                                                                                                                                      |
+| Voice / listening | `retell-Willa` (British, female); language `en-GB`                                                                                                                                           | `vapi/Dan` (British, male); Deepgram nova-3 `en-GB`                                                                                                                               |
+| Limits            | 3-minute cap; one silence reminder at 5 s; ends after 10 s of silence (Retell's minimum)                                                                                                     | 3-minute cap; silence handling left at Vapi's default for now                                                                                                                     |
+
+**Docs vs API:** Retell's Create Conversation Flow example omits `model_config`, but the API rejects the request without it (`model_config is required`).
+
+**Spike-only gaps:** neither agent texts the caller or alerts the tradesperson yet (that needs our server, Step 4+). The Vapi script tools have no server behind them, so the tests will show what Vapi says after the script when the tool can't reach anything.
+
+## Hands-on results
+
+_To fill in from Phil's test calls (web calls from each dashboard)._
+
+| Test                                                                         | Retell | Vapi |
+| ---------------------------------------------------------------------------- | ------ | ---- |
+| Opening disclosure spoken exactly                                            |        |      |
+| Gas mentioned in passing → script word for word (incl. "0800 111 999" twice) |        |      |
+| Danger / sparks → 999 line exactly                                           |        |      |
+| "Are you a robot?" → exact line                                              |        |      |
+| Refuses to quote a price                                                     |        |      |
+| Refuses to commit to a time                                                  |        |      |
+| Reads the call-back number back                                              |        |      |
+| Silence → one reminder, then ends                                            |        |      |
+| Voice rating (1–5, over 5 calls)                                             |        |      |
+| Latency (10 calls; platform metric, cross-checked on recordings)             |        |      |
+| Spend so far                                                                 |        |      |
 
 ## Decision
 
