@@ -1,0 +1,52 @@
+# Runs the checks from `npm run check` on every push to main and every pull request, with a
+# real Postgres for the integration tests (CLAUDE.md: never a mocked database).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# The default token can write to the repo. This workflow only needs to read it.
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: callmate
+          POSTGRES_PASSWORD: callmate
+          POSTGRES_DB: callmate_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U callmate -d callmate_test"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+
+    env:
+      TEST_DATABASE_URL: postgres://callmate:callmate@127.0.0.1:5432/callmate_test
+
+    steps:
+      # Actions are pinned to full commit SHAs: a tag like v7 can be moved to point at
+      # different code, a commit can't. The comment says which release each one is.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # later steps don't need git access with the token
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: package.json # uses engines.node, same as local and Docker
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run format:check
+      - run: npm run typecheck
+      - run: npm test
