@@ -51,22 +51,27 @@ function redact(value: unknown, ancestors: WeakSet<object>): unknown {
   let result: unknown;
   if (Array.isArray(value)) {
     result = value.map((item) => redact(item, ancestors));
+  } else if (value instanceof Error) {
+    // Library errors often carry big internal objects: pg attaches its whole connection, and
+    // HTTP clients attach the request, auth headers included. Keep only plain values (code,
+    // errno, status...). Name, message, stack and cause aren't enumerable, so JSON would
+    // drop them: copy them explicitly. The message stays because it makes failures debuggable.
+    const plainFields = Object.entries(value).filter(([, item]) =>
+      ["string", "number", "boolean"].includes(typeof item),
+    );
+    result = {
+      ...Object.fromEntries(
+        plainFields.map(([key, item]) => [key, redactEntry(key, item, ancestors)]),
+      ),
+      name: value.name,
+      message: redactText(value.message),
+      ...(value.stack !== undefined && { stack: redactText(value.stack) }),
+      ...(value.cause !== undefined && { cause: redact(value.cause, ancestors) }),
+    };
   } else {
-    const fields = Object.fromEntries(
+    result = Object.fromEntries(
       Object.entries(value).map(([key, item]) => [key, redactEntry(key, item, ancestors)]),
     );
-    // An Error's name, message, stack and cause aren't enumerable, so JSON would drop them.
-    // The message is kept (pattern-redacted) because it's what makes failures debuggable.
-    result =
-      value instanceof Error
-        ? {
-            ...fields,
-            name: value.name,
-            message: redactText(value.message),
-            ...(value.stack !== undefined && { stack: redactText(value.stack) }),
-            ...(value.cause !== undefined && { cause: redact(value.cause, ancestors) }),
-          }
-        : fields;
   }
   ancestors.delete(value);
   return result;

@@ -142,6 +142,19 @@ describe("redactValue", () => {
     expect(result.cause).toMatchObject({ message: "timeout" });
   });
 
+  it("keeps an Error's plain fields but drops attached objects like connections and requests", () => {
+    const error = Object.assign(new Error("connect ECONNREFUSED"), {
+      code: "ECONNREFUSED",
+      port: 5434,
+      client: { user: "callmate", secretKey: 123 },
+      config: { headers: { Authorization: "Basic abc123" } },
+    });
+    const result = redactValue(error) as Record<string, unknown>;
+    expect(result).toMatchObject({ code: "ECONNREFUSED", port: 5434 });
+    expect(result).not.toHaveProperty("client");
+    expect(result).not.toHaveProperty("config");
+  });
+
   it("replaces binary data with its size", () => {
     expect(redactValue(Buffer.from("audio bytes"))).toBe("[binary: 11 bytes]");
   });
