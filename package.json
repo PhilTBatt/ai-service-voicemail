@@ -22,7 +22,8 @@
     "db:down": "docker compose down",
     "db:migrate": "dbmate --env MIGRATION_DATABASE_URL --migrations-dir apps/api/src/db/migrations --no-dump-schema up",
     "db:status": "dbmate --env MIGRATION_DATABASE_URL --migrations-dir apps/api/src/db/migrations status",
-    "db:new": "dbmate --migrations-dir apps/api/src/db/migrations new"
+    "db:new": "dbmate --migrations-dir apps/api/src/db/migrations new",
+    "db:seed": "node --env-file-if-exists=.env apps/api/src/db/seed.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

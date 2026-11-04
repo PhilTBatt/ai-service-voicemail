@@ -31,6 +31,8 @@ export function createAdminPool(adminDatabaseUrl: string): AdminPool {
 }
 
 export interface NewTenant {
+  /** Normally generated. Seed data passes a fixed one so re-running the seed is harmless. */
+  id?: string;
   businessName: string;
   trade: Trade;
   status?: "onboarding" | "demo";
@@ -41,10 +43,11 @@ export interface NewTenant {
 
 export async function createTenant(admin: AdminPool, tenant: NewTenant): Promise<string> {
   const { rows } = await admin.query<{ id: string }>(
-    `INSERT INTO tenants (business_name, trade, status, notification_mobile, notification_email, service_region)
-     VALUES ($1, $2, $3, $4, $5, $6)
+    `INSERT INTO tenants (id, business_name, trade, status, notification_mobile, notification_email, service_region)
+     VALUES (COALESCE($1::uuid, gen_random_uuid()), $2, $3, $4, $5, $6, $7)
      RETURNING id`,
     [
+      tenant.id ?? null,
       tenant.businessName,
       tenant.trade,
       tenant.status ?? "onboarding",

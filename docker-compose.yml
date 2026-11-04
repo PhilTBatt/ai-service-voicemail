@@ -7,6 +7,7 @@
 # `callmate` is the admin (superuser), used only to create the app's roles on first start
 # (apps/api/src/db/roles.sql). For .env:
 #   DATABASE_URL=postgres://callmate_app@127.0.0.1:5434/callmate
+#   ADMIN_DATABASE_URL=postgres://callmate_admin@127.0.0.1:5434/callmate
 #   MIGRATION_DATABASE_URL=postgres://callmate_owner@127.0.0.1:5434/callmate?sslmode=disable
 name: callmate
 
