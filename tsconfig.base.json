@@ -1,0 +1,28 @@
+{
+  // Shared compiler options. Each workspace's tsconfig.json extends this.
+  // tsc only type-checks (noEmit); Node 26 runs the .ts files directly by
+  // stripping the types. See docs/decisions/001-typescript-runtime.md.
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "nodenext",
+    "types": ["node"],
+    "noEmit": true,
+
+    // Required so Node's type stripping can run what tsc accepts.
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    "allowImportingTsExtensions": true,
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "noUncheckedSideEffectImports": true,
+    "skipLibCheck": true
+  }
+}
