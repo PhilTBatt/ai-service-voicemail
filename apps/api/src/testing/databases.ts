@@ -6,6 +6,11 @@ export const TEST_DATABASE_URL =
   process.env.TEST_DATABASE_URL ??
   "postgres://callmate_app:callmate_app@127.0.0.1:5433/callmate_test";
 
+/** The admin role, for cross-tenant work (apps/api/src/db/cross-tenant.ts). */
+export const TEST_ADMIN_DATABASE_URL =
+  process.env.TEST_ADMIN_DATABASE_URL ??
+  "postgres://callmate_admin:callmate_admin@127.0.0.1:5433/callmate_test";
+
 /** The owner role, used only to run migrations. */
 export const TEST_MIGRATION_DATABASE_URL =
   process.env.TEST_MIGRATION_DATABASE_URL ??

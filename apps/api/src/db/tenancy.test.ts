@@ -29,10 +29,11 @@ describe("row-level security", () => {
       name: string;
       enabled: boolean;
       forced: boolean;
-      policies: number;
+      isolated: boolean;
     }>(`
       SELECT c.relname AS name, c.relrowsecurity AS enabled, c.relforcerowsecurity AS forced,
-             (SELECT count(*)::int FROM pg_policy p WHERE p.polrelid = c.oid) AS policies
+             EXISTS (SELECT 1 FROM pg_policy p
+                     WHERE p.polrelid = c.oid AND p.polname = 'tenant_isolation') AS isolated
       FROM pg_class c
       WHERE c.relnamespace = 'public'::regnamespace AND c.relkind = 'r'
         AND (c.relname = 'tenants' OR EXISTS (
@@ -41,8 +42,18 @@ describe("row-level security", () => {
       ORDER BY c.relname`);
     expect(rows.length).toBeGreaterThanOrEqual(11);
     for (const table of rows) {
-      expect(table, table.name).toMatchObject({ enabled: true, forced: true, policies: 1 });
+      expect(table, table.name).toMatchObject({ enabled: true, forced: true, isolated: true });
     }
+  });
+
+  it("applies no policy to the app role except tenant isolation", async () => {
+    // Policies are OR'd together, so one stray "USING (true)" reaching the app role would
+    // open a whole table. Policies for PUBLIC apply to every role, including the app role.
+    const { rows } = await app.query<{ table: string; policy: string }>(`
+      SELECT tablename AS table, policyname AS policy FROM pg_policies
+      WHERE schemaname = 'public' AND policyname <> 'tenant_isolation'
+        AND (roles && ARRAY['public', 'callmate_app']::name[])`);
+    expect(rows).toEqual([]);
   });
 
   it("lets a tenant see only its own rows", async () => {
