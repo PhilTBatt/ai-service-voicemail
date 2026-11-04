@@ -1,15 +1,12 @@
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { createApp } from "./app.ts";
 import { createPool } from "./db.ts";
-
-// The Docker test database (npm run db:up). CI points TEST_DATABASE_URL at its own Postgres.
-const TEST_DATABASE_URL =
-  process.env.TEST_DATABASE_URL ?? "postgres://callmate:callmate@127.0.0.1:5433/callmate_test";
+import { TEST_DATABASE_URL } from "./testing/databases.ts";
 
 // Nothing listens on port 1, so connections are refused: a real "database is down".
-const DOWN_DATABASE_URL = "postgres://callmate:callmate@127.0.0.1:1/callmate";
+const DOWN_DATABASE_URL = "postgres://callmate_app:callmate_app@127.0.0.1:1/callmate";
 
 const running: (() => Promise<void>)[] = [];
 
@@ -47,23 +44,10 @@ describe("GET /readyz", () => {
     expect(await response.json()).toEqual({ status: "unavailable" });
   });
 
-  describe("with the test database running", () => {
-    beforeAll(async () => {
-      const pool = createPool(TEST_DATABASE_URL);
-      try {
-        await pool.query("SELECT 1");
-      } catch (cause) {
-        throw new Error("Test database unreachable. Start it with: npm run db:up", { cause });
-      } finally {
-        await pool.end();
-      }
-    });
-
-    it("returns 200", async () => {
-      const get = await startApp(TEST_DATABASE_URL);
-      const response = await get("/readyz");
-      expect(response.status).toBe(200);
-      expect(await response.json()).toEqual({ status: "ready" });
-    });
+  it("returns 200 when the database is reachable", async () => {
+    const get = await startApp(TEST_DATABASE_URL);
+    const response = await get("/readyz");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ status: "ready" });
   });
 });

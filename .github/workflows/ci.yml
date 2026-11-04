@@ -33,7 +33,8 @@ jobs:
           --health-retries 15
 
     env:
-      TEST_DATABASE_URL: postgres://callmate:callmate@127.0.0.1:5432/callmate_test
+      TEST_DATABASE_URL: postgres://callmate_app:callmate_app@127.0.0.1:5432/callmate_test
+      TEST_MIGRATION_DATABASE_URL: postgres://callmate_owner:callmate_owner@127.0.0.1:5432/callmate_test?sslmode=disable
 
     steps:
       # Actions are pinned to full commit SHAs: a tag like v7 can be moved to point at
@@ -46,6 +47,10 @@ jobs:
           node-version-file: package.json # uses engines.node, same as local and Docker
           cache: npm
       - run: npm ci
+      # The same roles local Docker creates on first start. Service containers can't mount
+      # repo files, so the script is piped into psql inside the container.
+      - name: Create database roles
+        run: docker exec -i ${{ job.services.postgres.id }} psql -v ON_ERROR_STOP=1 -U callmate -d callmate_test < apps/api/src/db/roles.sql
       - run: npm run lint
       - run: npm run format:check
       - run: npm run typecheck

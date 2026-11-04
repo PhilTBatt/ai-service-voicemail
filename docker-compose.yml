@@ -3,7 +3,10 @@
 # your network can reach these databases. Host ports 5434 (dev) and 5433 (test) avoid the
 # default 5432, which other local Postgres installs and containers often already use.
 #
-# DATABASE_URL for .env: postgres://callmate:callmate@127.0.0.1:5434/callmate
+# `callmate` is the admin (superuser), used only to create the app's roles on first start
+# (apps/api/src/db/roles.sql). For .env:
+#   DATABASE_URL=postgres://callmate_app:callmate_app@127.0.0.1:5434/callmate
+#   MIGRATION_DATABASE_URL=postgres://callmate_owner:callmate_owner@127.0.0.1:5434/callmate?sslmode=disable
 name: callmate
 
 services:
@@ -17,6 +20,9 @@ services:
       - "127.0.0.1:5434:5432"
     volumes:
       - db-data:/var/lib/postgresql/data
+      # Scripts in this folder run once, when the data directory is first created. To
+      # re-run on the dev database, wipe it: docker compose down -v
+      - ./apps/api/src/db/roles.sql:/docker-entrypoint-initdb.d/roles.sql:ro
     healthcheck:
       # -h 127.0.0.1 checks over TCP. While the image initialises it runs a temporary
       # server on the Unix socket only, so a socket check can report "ready" too early.
@@ -38,6 +44,8 @@ services:
       - "127.0.0.1:5433:5432"
     tmpfs:
       - /var/lib/postgresql/data
+    volumes:
+      - ./apps/api/src/db/roles.sql:/docker-entrypoint-initdb.d/roles.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U callmate -d callmate_test"]
       interval: 2s
