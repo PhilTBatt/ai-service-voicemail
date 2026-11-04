@@ -2,7 +2,7 @@ import { once } from "node:events";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { createApp } from "./app.ts";
-import { createPool } from "./db.ts";
+import { createPool } from "./db/pool.ts";
 import { TEST_DATABASE_URL } from "./testing/databases.ts";
 
 // Nothing listens on port 1, so connections are refused: a real "database is down".

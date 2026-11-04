@@ -1,6 +1,6 @@
 import { createApp } from "./app.ts";
 import { ConfigError, loadConfig, type Config } from "./config.ts";
-import { createPool } from "./db.ts";
+import { createPool } from "./db/pool.ts";
 import { logger } from "./logger.ts";
 
 function start(config: Config): void {

@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "vitest";
-import { createPool } from "../db.ts";
+import { createPool } from "./pool.ts";
 import { TEST_DATABASE_URL } from "../testing/databases.ts";
 
 // Connected as the app role, exactly as the API is.

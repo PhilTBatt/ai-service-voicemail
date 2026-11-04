@@ -1,5 +1,5 @@
 import pg from "pg";
-import { logger } from "./logger.ts";
+import { logger } from "../logger.ts";
 
 /** One pool per process. It connects lazily, on the first query. */
 export function createPool(connectionString: string): pg.Pool {
