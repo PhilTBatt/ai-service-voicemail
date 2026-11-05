@@ -72,6 +72,7 @@ Smaller calls, explained when they were made:
 
 ## Session log (newest first)
 
+- **2026-11-05:** Step 2: text simulations on both platforms (Retell 6/6 after fixing a global-node loop; Vapi 6/6 after narrowing the water rule). Retell rate limit 30 req/10 s. Twilio SIP Disaster Recovery URL covers platform outages. Waiting on Phil's voice test calls.
 - **2026-11-04:** Step 2 started: docs research for Retell vs Vapi (decision 007 draft). Found Vapi's pay-as-you-go concurrency is 4, not 10.
 - **2026-11-04:** Step 1 done: dbmate migrations; owner, app and admin roles; all tenant tables with forced RLS; `withTenant()`; the number lookup function; the cross-tenant admin module; seed data. Also fixed GitGuardian and Render fallout (no real secrets were ever committed), and removed passwords from local and CI databases.
 - **2026-11-04:** Step 0 done: legacy audit, npm workspaces on Node 26, ESLint, Prettier and Vitest, zod config, local Postgres, a redacting logger, `/healthz` and `/readyz`, the Dockerfile, CI on GitHub Actions. Also stopped tracking `node_modules`.
