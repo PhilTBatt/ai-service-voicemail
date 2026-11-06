@@ -33,6 +33,10 @@ const envSchema = z
       .optional(),
     // The TwiML Bin that plays the static voicemail (npm run twiml:fallback): the number's fallback URL.
     FALLBACK_VOICEMAIL_URL: z.url({ protocol: /^https$/ }).optional(),
+    // The LLM for post-call extraction (BUILD_PLAN Step 5). The model is pinned here so a
+    // provider-side change never silently alters what gets extracted.
+    ANTHROPIC_API_KEY: z.string().min(1).optional(),
+    LLM_MODEL: z.string().min(1).default("claude-haiku-5-5"),
   })
   .superRefine((env, ctx) => {
     if (env.NODE_ENV !== "production") return;
@@ -42,6 +46,7 @@ const envSchema = z
       "TWILIO_AUTH_TOKEN",
       "PUBLIC_BASE_URL",
       "FALLBACK_VOICEMAIL_URL",
+      "ANTHROPIC_API_KEY",
     ] as const) {
       if (env[name] === undefined) {
         ctx.addIssue({ code: "custom", path: [name], message: "required in production" });
@@ -66,6 +71,9 @@ const envSchema = z
         : undefined,
     publicBaseUrl: env.PUBLIC_BASE_URL?.replace(/\/$/, ""),
     fallbackVoicemailUrl: env.FALLBACK_VOICEMAIL_URL,
+    llm: env.ANTHROPIC_API_KEY
+      ? { apiKey: env.ANTHROPIC_API_KEY, model: env.LLM_MODEL }
+      : undefined,
   }));
 
 export type Config = z.output<typeof envSchema>;

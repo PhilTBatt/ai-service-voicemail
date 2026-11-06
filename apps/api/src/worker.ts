@@ -12,6 +12,7 @@ import {
 import { reconcileVoicemails } from "./jobs/reconcile-voicemails.ts";
 import { runSyncAgent, type SyncAgentJobData } from "./jobs/sync-agent.ts";
 import { logger } from "./logger.ts";
+import { AnthropicLlmProvider } from "./providers/anthropic.ts";
 import { RetellVoiceProvider } from "./providers/retell.ts";
 import { TwilioTelephonyProvider } from "./providers/twilio.ts";
 
@@ -24,14 +25,21 @@ try {
   const pool = createPool(config.databaseUrl);
   const boss = await startQueue(config.databaseUrl);
   const voice = new RetellVoiceProvider({ apiKey: config.retellApiKey });
-  const queues = [SYNC_AGENT_QUEUE, PROCESS_CALL_QUEUE];
+  const queues = [SYNC_AGENT_QUEUE];
 
   await boss.work<SyncAgentJobData>(SYNC_AGENT_QUEUE, async (jobs) => {
     for (const job of jobs) await runSyncAgent({ pool, voice }, job.data);
   });
-  await boss.work<ProcessCallJobData>(PROCESS_CALL_QUEUE, async (jobs) => {
-    for (const job of jobs) await runProcessCall(job.data);
-  });
+
+  if (config.llm) {
+    const llm = new AnthropicLlmProvider(config.llm);
+    await boss.work<ProcessCallJobData>(PROCESS_CALL_QUEUE, async (jobs) => {
+      for (const job of jobs) await runProcessCall({ pool, llm }, job.data);
+    });
+    queues.push(PROCESS_CALL_QUEUE);
+  } else {
+    logger.warn("Call processing disabled: ANTHROPIC_API_KEY isn't set (jobs wait in the queue)");
+  }
 
   if (config.twilio) {
     const telephony = new TwilioTelephonyProvider(config.twilio);

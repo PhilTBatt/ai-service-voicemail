@@ -33,6 +33,7 @@ describe("loadConfig", () => {
         TWILIO_AUTH_TOKEN: "token_for_tests",
         PUBLIC_BASE_URL: "https://callmate.example.com",
         FALLBACK_VOICEMAIL_URL: "https://handler.twilio.com/twiml/EH0",
+        ANTHROPIC_API_KEY: "key_for_tests",
         PORT: "8080",
         LOG_LEVEL: "debug",
       }),
@@ -133,6 +134,7 @@ describe("loadConfig: Twilio and PUBLIC_BASE_URL", () => {
       "TWILIO_AUTH_TOKEN is missing",
       "PUBLIC_BASE_URL is missing",
       "FALLBACK_VOICEMAIL_URL is missing",
+      "ANTHROPIC_API_KEY is missing",
     ]);
   });
 
@@ -187,5 +189,19 @@ describe("loadConfig: number purchasing", () => {
     expect(
       configErrorFor({ ...valid, FALLBACK_VOICEMAIL_URL: "http://insecure" }).problems[0],
     ).toMatch(/^FALLBACK_VOICEMAIL_URL is invalid/);
+  });
+});
+
+describe("loadConfig: LLM", () => {
+  it("is off without a key, and pins the small model by default with one", () => {
+    expect(loadConfig(valid).llm).toBeUndefined();
+    expect(loadConfig({ ...valid, ANTHROPIC_API_KEY: "key_for_tests" }).llm).toEqual({
+      apiKey: "key_for_tests",
+      model: "claude-haiku-5-5",
+    });
+    expect(
+      loadConfig({ ...valid, ANTHROPIC_API_KEY: "key_for_tests", LLM_MODEL: "claude-sonnet-5-5" })
+        .llm?.model,
+    ).toBe("claude-sonnet-5-5");
   });
 });

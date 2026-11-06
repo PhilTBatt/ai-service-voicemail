@@ -9,6 +9,7 @@
     "worker": "node --env-file-if-exists=../../.env src/worker.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.6.0",
     "@callmate/shared": "*",
     "express": "^5.3.0",
     "pg": "^8.23.1",
