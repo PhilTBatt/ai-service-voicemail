@@ -1,0 +1,326 @@
+import { afterAll, describe, expect, it } from "vitest";
+import { sampleAgentDefinition, sampleCallEndedEvent } from "../testing/agent-fixture.ts";
+import { RetellApiStub } from "../testing/retell-stub.ts";
+import {
+  RetellVoiceProvider,
+  buildAgent,
+  buildConversationFlow,
+  signRetellWebhook,
+} from "./retell.ts";
+import { describeVoiceProviderContract, type VoiceProviderHarness } from "./voice.contract.ts";
+import { WebhookVerificationError, type CallEndedEvent } from "./voice.ts";
+
+const TEST_API_KEY = "not-a-real-key";
+const NOW = new Date("2026-11-06T12:00:00Z");
+
+/** A Retell call_ended payload carrying the same facts as a normalised event. */
+function retellPayload(event: CallEndedEvent, overrides: Record<string, unknown> = {}) {
+  return {
+    event: "call_ended",
+    call: {
+      call_type: "phone_call",
+      call_id: event.providerCallId,
+      agent_id: event.providerAgentId,
+      from_number: event.callerNumber ?? undefined,
+      to_number: event.dialledNumber,
+      direction: "inbound",
+      start_timestamp: event.startedAt.getTime(),
+      end_timestamp: event.endedAt.getTime(),
+      duration_ms: event.durationSeconds * 1000,
+      disconnection_reason: event.endReason,
+      transcript_object: event.transcript.map((turn) => ({
+        role: turn.role === "caller" ? "user" : "agent",
+        content: turn.text,
+      })),
+      recording_url: event.recordingRef ?? undefined,
+      call_cost: {
+        product_costs: [{ product: "voice_minutes", unit_price: 5.5, cost: 8.25 }],
+        total_duration_seconds: event.durationSeconds,
+      },
+      ...overrides,
+    },
+  };
+}
+
+function signed(body: unknown, { apiKey = TEST_API_KEY, at = NOW.getTime() } = {}) {
+  const rawBody = Buffer.from(JSON.stringify(body));
+  return {
+    rawBody,
+    headers: {
+      "content-type": "application/json",
+      "x-retell-signature": signRetellWebhook(rawBody, apiKey, at),
+    },
+  };
+}
+
+function makeStubHarness(): VoiceProviderHarness & { stub: RetellApiStub } {
+  const stub = new RetellApiStub();
+  const provider = new RetellVoiceProvider({
+    apiKey: TEST_API_KEY,
+    fetch: stub.fetch,
+    now: () => NOW,
+  });
+  return {
+    stub,
+    provider,
+    signedWebhook: (event) =>
+      signed(
+        retellPayload(event, {
+          call_cost: {
+            product_costs: event.costs
+              .filter((c) => c.unitType === "usd_cents")
+              .map((c) => ({ product: c.component.replace("retell:", ""), cost: c.units })),
+            total_duration_seconds: event.costs.find((c) => c.component === "retell:duration")
+              ?.units,
+          },
+        }),
+      ),
+    ignorableWebhook: () =>
+      signed({ event: "call_started", call: retellPayload(sampleCallEndedEvent()).call }),
+    attachableNumber: "+441632960001",
+  };
+}
+
+const retellShapedEvent = () =>
+  sampleCallEndedEvent({
+    costs: [
+      { component: "retell:voice_minutes", units: 8.25, unitType: "usd_cents" },
+      { component: "retell:duration", units: 90, unitType: "seconds" },
+    ],
+  });
+
+describeVoiceProviderContract("Retell (stubbed API)", makeStubHarness);
+
+describe("RetellVoiceProvider webhooks", () => {
+  const provider = () => new RetellVoiceProvider({ apiKey: TEST_API_KEY, now: () => NOW });
+
+  it("maps a call_ended payload: roles, costs, times and the withheld-number case", () => {
+    const event = retellShapedEvent();
+    const { rawBody, headers } = signed(retellPayload(event));
+    expect(provider().verifyAndParseWebhook(rawBody, headers)).toEqual(event);
+
+    const withheld = signed(retellPayload(event, { from_number: undefined }));
+    expect(provider().verifyAndParseWebhook(withheld.rawBody, withheld.headers)).toMatchObject({
+      callerNumber: null,
+    });
+  });
+
+  it("keeps only speech from the transcript, not tool calls or node transitions", () => {
+    const { rawBody, headers } = signed(
+      retellPayload(retellShapedEvent(), {
+        transcript_object: [
+          { role: "node_transition", former_node_id: "begin", new_node_id: "opening" },
+          { role: "agent", content: "Hi there." },
+          { role: "tool_call_invocation", name: "x" },
+          { role: "user", content: "Hello." },
+        ],
+      }),
+    );
+    expect(provider().verifyAndParseWebhook(rawBody, headers)).toMatchObject({
+      transcript: [
+        { role: "agent", text: "Hi there." },
+        { role: "caller", text: "Hello." },
+      ],
+    });
+  });
+
+  it("ignores a web call, which has no dialled number", () => {
+    const { rawBody, headers } = signed(
+      retellPayload(retellShapedEvent(), {
+        call_type: "web_call",
+        to_number: undefined,
+        from_number: undefined,
+      }),
+    );
+    expect(provider().verifyAndParseWebhook(rawBody, headers)).toEqual({
+      type: "ignored",
+      reason: "no dialled number (not a phone call)",
+    });
+  });
+
+  it.each([
+    ["six minutes old", NOW.getTime() - 6 * 60_000],
+    ["six minutes in the future", NOW.getTime() + 6 * 60_000],
+  ])("rejects a signature that is %s (replay protection)", (_label, at) => {
+    const { rawBody, headers } = signed(retellPayload(retellShapedEvent()), { at });
+    expect(() => provider().verifyAndParseWebhook(rawBody, headers)).toThrow(/Stale/);
+  });
+
+  it("accepts a signature four minutes old", () => {
+    const { rawBody, headers } = signed(retellPayload(retellShapedEvent()), {
+      at: NOW.getTime() - 4 * 60_000,
+    });
+    expect(provider().verifyAndParseWebhook(rawBody, headers)).toMatchObject({
+      type: "call_ended",
+    });
+  });
+
+  it("rejects a signature made with a different key", () => {
+    const { rawBody, headers } = signed(retellPayload(retellShapedEvent()), {
+      apiKey: "some-other-key",
+    });
+    expect(() => provider().verifyAndParseWebhook(rawBody, headers)).toThrow(
+      WebhookVerificationError,
+    );
+  });
+
+  it.each([undefined, "", "nonsense", "v=abc,d=00", "d=00,v=123"])(
+    "rejects a missing or malformed signature header (%s)",
+    (header) => {
+      const { rawBody } = signed(retellPayload(retellShapedEvent()));
+      expect(() =>
+        provider().verifyAndParseWebhook(rawBody, { "x-retell-signature": header }),
+      ).toThrow(WebhookVerificationError);
+    },
+  );
+});
+
+describe("RetellVoiceProvider agents", () => {
+  it("builds the flow the spike proved: static opening, scripts as uninterruptible global nodes, static close", () => {
+    const definition = sampleAgentDefinition();
+    const flow = buildConversationFlow(definition);
+    const byId = Object.fromEntries(flow.nodes.map((node) => [node.id, node]));
+
+    expect(flow).toMatchObject({
+      start_speaker: "agent",
+      start_node_id: "opening",
+      global_prompt: definition.instructions,
+    });
+    expect(flow.model_config).toBeDefined(); // the API rejects a flow without it
+    expect(byId.opening).toMatchObject({
+      instruction: { type: "static_text", text: definition.opening },
+      interruption_sensitivity: 0,
+    });
+    for (const script of definition.scripts) {
+      expect(byId[script.id], script.id).toMatchObject({
+        instruction: { type: "static_text", text: script.text },
+        interruption_sensitivity: 0,
+        global_node_setting: { condition: script.trigger, cool_down: 1 },
+        edges: [{ destination_node_id: "take_message" }],
+      });
+    }
+    expect(byId.close).toMatchObject({
+      type: "end",
+      instruction: { type: "static_text", text: definition.close },
+    });
+    // No script text leaks into the model's prompt node.
+    expect(JSON.stringify(byId.take_message)).not.toContain("0800 111 999");
+  });
+
+  it("maps the limits, language, voice and greeting delay onto the agent", () => {
+    const agent = buildAgent(sampleAgentDefinition(), "https://example.com/webhooks/voice/retell");
+    expect(agent).toMatchObject({
+      voice_id: "retell-Willa",
+      language: "en-GB",
+      begin_message_delay_ms: 1000,
+      max_call_duration_ms: 180_000,
+      reminder_trigger_ms: 5_000,
+      reminder_max_count: 1,
+      end_call_after_silence_ms: 10_000,
+      webhook_url: "https://example.com/webhooks/voice/retell",
+    });
+    expect(buildAgent(sampleAgentDefinition({ voice: { gender: "male" } }))).toMatchObject({
+      voice_id: "11labs-Anthony",
+      fallback_voice_ids: expect.any(Array) as unknown,
+    });
+    expect(buildAgent(sampleAgentDefinition())).not.toHaveProperty("webhook_url");
+  });
+
+  it("updates an existing agent's flow and settings in place, with no new agent", async () => {
+    const { provider, stub } = makeStubHarness();
+    const { providerAgentId } = await provider.upsertAgent({
+      definition: sampleAgentDefinition({ profileVersion: 1 }),
+      existingProviderAgentId: null,
+    });
+    stub.requests.length = 0;
+
+    await provider.upsertAgent({
+      definition: sampleAgentDefinition({ profileVersion: 2 }),
+      existingProviderAgentId: providerAgentId,
+    });
+    expect(stub.requests.map((r) => `${r.method} ${r.path.split("/")[1]}`)).toEqual([
+      "GET get-agent",
+      "PATCH update-conversation-flow",
+      "PATCH update-agent",
+    ]);
+    expect(stub.agents.size).toBe(1);
+    expect(stub.agents.get(providerAgentId)?.body).toMatchObject({
+      agent_name: expect.stringContaining("v2") as unknown,
+    });
+  });
+
+  it("creates a fresh agent when the one it knew about no longer exists at Retell", async () => {
+    const { provider, stub } = makeStubHarness();
+    const { providerAgentId } = await provider.upsertAgent({
+      definition: sampleAgentDefinition(),
+      existingProviderAgentId: "agent_deleted_by_hand",
+    });
+    expect(providerAgentId).toMatch(/^agent_stub/);
+    expect(stub.agents.size).toBe(1);
+  });
+
+  it("treats deleting call data that's already gone as success", async () => {
+    const { provider, stub } = makeStubHarness();
+    await provider.deleteCallData("call_1");
+    await expect(provider.deleteCallData("call_1")).resolves.toBeUndefined();
+    expect(stub.deletedCalls).toEqual(new Set(["call_1"]));
+  });
+});
+
+// ─── Against the real Retell API ───────────────────────────────────────────────────────
+// Creates (and deletes) real agents on the trial account. Never runs in CI: it needs
+// RETELL_LIVE_TESTS=1 and RETELL_API_KEY in the environment.
+//   PowerShell: $env:RETELL_LIVE_TESTS = "1"; npx vitest run apps/api/src/providers/retell.test.ts
+describe.runIf(process.env.RETELL_LIVE_TESTS === "1" && process.env.RETELL_API_KEY)(
+  "live Retell",
+  () => {
+    const apiKey = process.env.RETELL_API_KEY!;
+    const created: string[] = [];
+
+    // Deleting an agent at Retell doesn't delete its conversation flow, so both go.
+    afterAll(async () => {
+      const headers = { Authorization: `Bearer ${apiKey}` };
+      for (const agentId of created) {
+        const agent = (await fetch(`https://api.retellai.com/get-agent/${agentId}`, {
+          headers,
+        }).then((r) => r.json())) as { response_engine?: { conversation_flow_id?: string } };
+        await fetch(`https://api.retellai.com/delete-agent/${agentId}`, {
+          method: "DELETE",
+          headers,
+        });
+        const flowId = agent.response_engine?.conversation_flow_id;
+        if (flowId) {
+          await fetch(`https://api.retellai.com/delete-conversation-flow/${flowId}`, {
+            method: "DELETE",
+            headers,
+          });
+        }
+      }
+    });
+
+    describeVoiceProviderContract(
+      "Retell (live)",
+      () => {
+        const real = new RetellVoiceProvider({ apiKey });
+        const provider: typeof real = Object.assign(Object.create(real) as typeof real, {
+          upsertAgent: async (input: Parameters<typeof real.upsertAgent>[0]) => {
+            const result = await real.upsertAgent(input);
+            if (!created.includes(result.providerAgentId)) created.push(result.providerAgentId);
+            return result;
+          },
+        });
+        return {
+          provider,
+          signedWebhook: (event) => signed(retellPayload(event), { apiKey, at: Date.now() }),
+          ignorableWebhook: () =>
+            signed(
+              { event: "call_started", call: retellPayload(sampleCallEndedEvent()).call },
+              { apiKey, at: Date.now() },
+            ),
+          attachableNumber: "+441632960001",
+        };
+      },
+      { canAttachNumbers: false },
+    );
+  },
+);

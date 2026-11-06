@@ -17,6 +17,11 @@ export interface VoiceProviderHarness {
   attachableNumber: string;
 }
 
+export interface ContractOptions {
+  /** False when the account has no number to attach (the live Retell run, until Step 4). */
+  canAttachNumbers?: boolean;
+}
+
 /**
  * The behaviour every VoiceProvider must have. Runs against the fake in CI, and against the
  * real adapter when its env flag is set (so it never runs in CI by accident).
@@ -24,6 +29,7 @@ export interface VoiceProviderHarness {
 export function describeVoiceProviderContract(
   name: string,
   makeHarness: () => VoiceProviderHarness,
+  { canAttachNumbers = true }: ContractOptions = {},
 ) {
   describe(`${name} VoiceProvider contract`, () => {
     it("creates an agent and returns the platform's ID", async () => {
@@ -49,7 +55,7 @@ export function describeVoiceProviderContract(
       expect(second.providerAgentId).toBe(first.providerAgentId);
     });
 
-    it("attaches a number to an agent it knows", async () => {
+    it.skipIf(!canAttachNumbers)("attaches a number to an agent it knows", async () => {
       const { provider, attachableNumber } = makeHarness();
       const { providerAgentId } = await provider.upsertAgent({
         definition: sampleAgentDefinition(),
@@ -60,16 +66,24 @@ export function describeVoiceProviderContract(
       ).resolves.toBeUndefined();
     });
 
-    it("refuses to attach a number to an agent it doesn't know", async () => {
-      const { provider, attachableNumber } = makeHarness();
-      await expect(provider.attachNumber("no_such_agent", attachableNumber)).rejects.toThrow();
-    });
+    it.skipIf(!canAttachNumbers)(
+      "refuses to attach a number to an agent it doesn't know",
+      async () => {
+        const { provider, attachableNumber } = makeHarness();
+        await expect(provider.attachNumber("no_such_agent", attachableNumber)).rejects.toThrow();
+      },
+    );
 
     it("parses a correctly signed call-ended webhook into the normalised event", () => {
       const harness = makeHarness();
       const event = sampleCallEndedEvent();
       const { rawBody, headers } = harness.signedWebhook(event);
-      expect(harness.provider.verifyAndParseWebhook(rawBody, headers)).toEqual(event);
+      // Cost units are the platform's own, so they're checked in each adapter's tests.
+      const facts: Partial<CallEndedEvent> = { ...event };
+      delete facts.costs;
+      const parsed = harness.provider.verifyAndParseWebhook(rawBody, headers);
+      expect(parsed).toMatchObject(facts);
+      expect(parsed).toHaveProperty("costs", expect.any(Array));
     });
 
     it("reports a genuine webhook for another event as ignored", () => {
