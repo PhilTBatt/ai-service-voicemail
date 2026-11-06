@@ -49,39 +49,29 @@ export function voicemailDone(): string {
 }
 
 /**
- * The same voicemail as a TwiML Bin, hosted by Twilio apart from the API, for the number's
- * fallback URL. With no action, <Record> re-requests this same document, that time with a
- * RecordingUrl parameter, and the bin's Handlebars `if` turns that into the thank-you. The
- * only URL in it is the API's recording callback; if the API is down, the recording still
+ * The same voicemail as two TwiML Bins, hosted by Twilio apart from the API, for the number's
+ * fallback URL. Bins are static documents (Twilio's editor rejects templating), so the
+ * "thanks, goodbye" lives in its own bin and the greeting's <Record> points at it. The only
+ * API URL in either is the recording callback; if the API is down, the recording still
  * exists at Twilio and the reconciliation job picks it up.
  */
-export function fallbackVoicemailBin(recordingStatusCallbackUrl: string): string {
-  const thanks = voicemailDone()
-    .replace(/^<\?xml[^>]*\?>/, "")
-    .replace(/<\/?Response>/g, "");
-  const greeting = new VoiceResponse();
-  greeting.say(SAY, FALLBACK_VOICEMAIL_GREETING);
-  greeting.record({
-    maxLength: VOICEMAIL_MAX_SECONDS,
-    playBeep: true,
-    recordingStatusCallback: recordingStatusCallbackUrl,
-    recordingStatusCallbackMethod: "POST",
-  });
-  const record = greeting
-    .toString()
-    .replace(/^<\?xml[^>]*\?>/, "")
-    .replace(/<\/?Response>/g, "");
-  return [
-    '<?xml version="1.0" encoding="UTF-8"?>',
-    "<Response>",
-    "{{#if RecordingUrl}}",
-    `  ${thanks}`,
-    "{{else}}",
-    `  ${record}`,
-    "{{/if}}",
-    "</Response>",
-  ].join("\n");
-}
+export const fallbackVoicemailBins = {
+  /** Create this one first; the greeting needs its URL. */
+  done: (): string => voicemailDone(),
+  greeting: (doneBinUrl: string, recordingStatusCallbackUrl: string): string => {
+    const response = new VoiceResponse();
+    response.say(SAY, FALLBACK_VOICEMAIL_GREETING);
+    response.record({
+      action: doneBinUrl,
+      method: "POST",
+      maxLength: VOICEMAIL_MAX_SECONDS,
+      playBeep: true,
+      recordingStatusCallback: recordingStatusCallbackUrl,
+      recordingStatusCallbackMethod: "POST",
+    });
+    return response.toString();
+  },
+};
 
 /** For cancelling and cancelled tenants. The mobile is read digit by digit. */
 export function serviceEnded(mobile: string | null): string {

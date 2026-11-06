@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   agentDial,
   fallbackVoicemail,
-  fallbackVoicemailBin,
+  fallbackVoicemailBins,
   hangup,
   rejectCall,
   serviceEnded,
@@ -39,14 +39,22 @@ describe("TwiML", () => {
     expect(voicemailDone()).toMatchSnapshot();
   });
 
-  it("builds the same voicemail as a self-contained TwiML Bin, with no API URL but the callback", () => {
-    const bin = fallbackVoicemailBin(URLS.recordingStatusCallbackUrl);
-    expect(bin).toMatchSnapshot();
-    expect(bin).toContain("{{#if RecordingUrl}}");
-    expect(bin).toContain("Sorry, the assistant isn't available right now.");
-    expect(bin).toContain("Thanks. Goodbye.");
-    expect(bin).not.toContain("action=");
-    expect(bin.match(/https:\/\//g)).toHaveLength(1);
+  it("builds the voicemail as two static bins: the greeting records, then hands over to the thank-you bin", () => {
+    const done = fallbackVoicemailBins.done();
+    const greeting = fallbackVoicemailBins.greeting(
+      "https://handler.twilio.com/twiml/EHdone",
+      URLS.recordingStatusCallbackUrl,
+    );
+    expect(done).toMatchSnapshot();
+    expect(greeting).toMatchSnapshot();
+    expect(done).toContain("Thanks. Goodbye.");
+    expect(greeting).toContain("Sorry, the assistant isn't available right now.");
+    expect(greeting).toContain('action="https://handler.twilio.com/twiml/EHdone"');
+    expect(greeting).toContain(
+      'recordingStatusCallback="https://example.com/webhooks/twilio/recording"',
+    );
+    // No templating: Twilio's bin editor rejects it.
+    expect(done + greeting).not.toContain("{{");
   });
 
   it("tells callers of a cancelled tenant to ring the business mobile, digit by digit", () => {

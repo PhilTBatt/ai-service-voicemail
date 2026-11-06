@@ -53,7 +53,7 @@ Twilio and Retell need a public HTTPS URL that reaches the laptop, and Twilio si
 
 The static voicemail must work when the API is down, so it can't live on the API.
 
-- **TwiML Bin (chosen):** static TwiML hosted by Twilio, free, nothing to deploy. Twilio's docs say `<Record>` with no `action` re-requests the same document (with the recording's parameters) and ignores anything after `<Record>`; bins support Handlebars `{{#if}}`, so one bin can serve both the greeting and the thank-you. `npm run twiml:fallback` prints it with the API's recording callback baked in; Phil pastes it into a bin and sets the bin's URL as the number's fallback URL. **To confirm on the real number:** that `RecordingUrl` is available to the template on the re-request.
+- **TwiML Bins (chosen):** static TwiML hosted by Twilio, free, nothing to deploy. Two bins, because Twilio's bin editor rejects Handlebars templating (tried 2026-11-06, "Your TwiML syntax is invalid"): bin 1 says "Thanks. Goodbye." and hangs up; bin 2 plays the greeting and records, with `<Record action>` pointing at bin 1 and `recordingStatusCallback` pointing at the API. `npm run twiml:fallback` prints bin 1, then bin 2 with `--done-url`. Bin 2's URL is the number's fallback URL.
 - **Twilio Function:** code that Twilio hosts. More flexible, but it needs a service, a deploy and a runtime to keep up to date, for a page that never changes.
 
 The recording callback (`recordingStatusCallback`) is how the API learns about a voicemail. Twilio doesn't retry it, so the **reconciliation job** (`reconcile-voicemails`, every 15 minutes, 24-hour window) lists recent recordings and stores any that have no call row. Storing is idempotent on Twilio's CallSid, so the callback and the job can both see a recording safely.

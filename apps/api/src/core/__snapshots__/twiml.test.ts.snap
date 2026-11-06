@@ -1,15 +1,8 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-exports[`TwiML > builds the same voicemail as a self-contained TwiML Bin, with no API URL but the callback 1`] = `
-"<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-{{#if RecordingUrl}}
-  <Say voice="Polly.Amy" language="en-GB">Thanks. Goodbye.</Say><Hangup/>
-{{else}}
-  <Say voice="Polly.Amy" language="en-GB">Sorry, the assistant isn't available right now. Please leave your name, your number and what you need after the tone, and you'll get a call back.</Say><Record maxLength="120" playBeep="true" recordingStatusCallback="https://example.com/webhooks/twilio/recording" recordingStatusCallbackMethod="POST"/>
-{{/if}}
-</Response>"
-`;
+exports[`TwiML > builds the voicemail as two static bins: the greeting records, then hands over to the thank-you bin 1`] = `"<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="Polly.Amy" language="en-GB">Thanks. Goodbye.</Say><Hangup/></Response>"`;
+
+exports[`TwiML > builds the voicemail as two static bins: the greeting records, then hands over to the thank-you bin 2`] = `"<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="Polly.Amy" language="en-GB">Sorry, the assistant isn't available right now. Please leave your name, your number and what you need after the tone, and you'll get a call back.</Say><Record action="https://handler.twilio.com/twiml/EHdone" method="POST" maxLength="120" playBeep="true" recordingStatusCallback="https://example.com/webhooks/twilio/recording" recordingStatusCallbackMethod="POST"/></Response>"`;
 
 exports[`TwiML > copes with a cancelled tenant that has no mobile on file 1`] = `"<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="Polly.Amy" language="en-GB">This service has ended. Please call the business directly. Goodbye.</Say><Hangup/></Response>"`;
 
