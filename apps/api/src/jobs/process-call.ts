@@ -20,17 +20,27 @@ export interface ProcessCallJobData {
   providerCallId: string;
 }
 
+/**
+ * Queues the notify-sms (and later notify-email) jobs for a processed call, through the
+ * transaction's client so they commit with the extraction (BUILD_PLAN Step 5, item 3).
+ */
+export type EnqueueNotifications = (
+  client: pg.ClientBase,
+  call: { tenantId: string; callId: string },
+) => Promise<void>;
+
 export interface ProcessCallDeps {
   pool: pg.Pool;
   llm: LlmProvider;
   alert?: AlertFn;
+  enqueueNotifications?: EnqueueNotifications;
 }
 
 export type ProcessCallOutcome =
   "extracted" | "extraction-failed" | "already-processed" | "no-transcript";
 
 export async function runProcessCall(
-  { pool, llm, alert = raiseAlert }: ProcessCallDeps,
+  { pool, llm, alert = raiseAlert, enqueueNotifications }: ProcessCallDeps,
   { tenantId, callId }: ProcessCallJobData,
 ): Promise<ProcessCallOutcome> {
   const loaded = await withTenant(pool, tenantId, async (client) => {
@@ -125,6 +135,8 @@ export async function runProcessCall(
         [tenantId, callId, component, units],
       );
     }
+    // Even a failed extraction gets a text: the summary says to read the transcript.
+    await enqueueNotifications?.(client, { tenantId, callId });
   });
 
   if (guardrailHits.length > 0) {

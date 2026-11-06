@@ -37,6 +37,7 @@ describe("loadConfig", () => {
         ANTHROPIC_API_KEY: "key_for_tests",
         ADMIN_DATABASE_URL: "postgres://callmate_admin@localhost/callmate",
         TWILIO_SMS_FROM: "AnswerMate",
+        SIGNING_SECRET: "x".repeat(32),
         PORT: "8080",
         LOG_LEVEL: "debug",
       }),
@@ -140,6 +141,7 @@ describe("loadConfig: Twilio and PUBLIC_BASE_URL", () => {
       "ANTHROPIC_API_KEY is missing",
       "ADMIN_DATABASE_URL is missing",
       "TWILIO_SMS_FROM is missing",
+      "SIGNING_SECRET is missing",
     ]);
   });
 
@@ -239,5 +241,16 @@ describe("loadConfig: outbound messages", () => {
     expect(configErrorFor({ ...valid, TWILIO_SMS_FROM: from }).problems[0]).toMatch(
       /^TWILIO_SMS_FROM is invalid/,
     );
+  });
+});
+
+describe("loadConfig: SIGNING_SECRET", () => {
+  it("is passed through when long enough, and rejected when short", () => {
+    expect(loadConfig({ ...valid, SIGNING_SECRET: "y".repeat(40) }).signingSecret).toBe(
+      "y".repeat(40),
+    );
+    expect(configErrorFor({ ...valid, SIGNING_SECRET: "short" }).problems).toEqual([
+      "SIGNING_SECRET is invalid: expected at least 32 characters",
+    ]);
   });
 });

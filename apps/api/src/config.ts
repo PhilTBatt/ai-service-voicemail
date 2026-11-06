@@ -48,6 +48,8 @@ const envSchema = z
         "expected an E.164 number or an alphanumeric sender ID (max 11)",
       )
       .optional(),
+    // Signs the call links in texts and emails (core/signed-links.ts). 32+ random characters.
+    SIGNING_SECRET: z.string().min(32, "expected at least 32 characters").optional(),
     // Cross-tenant work (retention, seeding). The API never uses it; the worker does.
     ADMIN_DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }).optional(),
     LLM_MODEL: z.string().min(1).default("claude-haiku-5-5"),
@@ -63,6 +65,7 @@ const envSchema = z
       "ANTHROPIC_API_KEY",
       "ADMIN_DATABASE_URL",
       "TWILIO_SMS_FROM",
+      "SIGNING_SECRET",
     ] as const) {
       if (env[name] === undefined) {
         ctx.addIssue({ code: "custom", path: [name], message: "required in production" });
@@ -88,6 +91,7 @@ const envSchema = z
     publicBaseUrl: env.PUBLIC_BASE_URL?.replace(/\/$/, ""),
     fallbackVoicemailUrl: env.FALLBACK_VOICEMAIL_URL,
     adminDatabaseUrl: env.ADMIN_DATABASE_URL,
+    signingSecret: env.SIGNING_SECRET,
     outbound: { nodeEnv: env.NODE_ENV, allowlist: parseAllowlist(env.OUTBOUND_ALLOWLIST) },
     sms:
       env.TWILIO_ACCOUNT_SID !== undefined &&

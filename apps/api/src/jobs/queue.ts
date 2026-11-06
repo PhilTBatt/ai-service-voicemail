@@ -10,6 +10,8 @@ export const RECONCILE_VOICEMAILS_CRON = "*/15 * * * *";
 /** Scheduled: deletes expired recordings and transcripts (BUILD_PLAN Step 5). */
 export const RETENTION_QUEUE = "retention";
 export const RETENTION_CRON = "30 3 * * *"; // 03:30 Europe/London, every day
+/** One text per processed call, keyed by the call ID (BUILD_PLAN Step 6). */
+export const NOTIFY_SMS_QUEUE = "notify-sms";
 /** Jobs that failed every retry land here, and anything in here raises an alert (Step 5). */
 export const DEAD_LETTER_QUEUE = "dead-letter";
 
@@ -44,6 +46,14 @@ export async function startQueue(connectionString: string): Promise<PgBoss> {
     retryDelay: 30,
     retryBackoff: true,
     expireInSeconds: 300,
+    deadLetter: DEAD_LETTER_QUEUE,
+  });
+  await ensureQueue(boss, NOTIFY_SMS_QUEUE, {
+    policy: "exclusive", // at most one job per call queued or active
+    retryLimit: 5,
+    retryDelay: 30,
+    retryBackoff: true,
+    expireInSeconds: 60,
     deadLetter: DEAD_LETTER_QUEUE,
   });
   await ensureQueue(boss, RETENTION_QUEUE, {

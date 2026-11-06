@@ -3,8 +3,10 @@ import { ConfigError, loadConfig } from "./config.ts";
 import { createAdminPool } from "./db/cross-tenant.ts";
 import { createPool } from "./db/pool.ts";
 import { startDeadLetterWatcher } from "./jobs/dead-letter.ts";
+import { runNotifySms, type NotifySmsJobData } from "./jobs/notify-sms.ts";
 import { runProcessCall, type ProcessCallJobData } from "./jobs/process-call.ts";
 import {
+  NOTIFY_SMS_QUEUE,
   PROCESS_CALL_QUEUE,
   RECONCILE_VOICEMAILS_CRON,
   RECONCILE_VOICEMAILS_QUEUE,
@@ -19,6 +21,7 @@ import { runSyncAgent, type SyncAgentJobData } from "./jobs/sync-agent.ts";
 import { logger } from "./logger.ts";
 import { AnthropicLlmProvider } from "./providers/anthropic.ts";
 import { RetellVoiceProvider } from "./providers/retell.ts";
+import { TwilioSmsProvider } from "./providers/twilio-sms.ts";
 import { TwilioTelephonyProvider } from "./providers/twilio.ts";
 
 try {
@@ -40,11 +43,45 @@ try {
   if (config.llm) {
     const llm = new AnthropicLlmProvider(config.llm);
     await boss.work<ProcessCallJobData>(PROCESS_CALL_QUEUE, async (jobs) => {
-      for (const job of jobs) await runProcessCall({ pool, llm }, job.data);
+      for (const job of jobs) {
+        await runProcessCall(
+          {
+            pool,
+            llm,
+            // The text is queued in the extraction's transaction; it waits there until a
+            // worker with SMS configured picks it up.
+            enqueueNotifications: async (client, call) => {
+              await boss.send(NOTIFY_SMS_QUEUE, call, {
+                singletonKey: call.callId,
+                db: { executeSql: (text, values) => client.query(text, values) },
+              });
+            },
+          },
+          job.data,
+        );
+      }
     });
     queues.push(PROCESS_CALL_QUEUE);
   } else {
     logger.warn("Call processing disabled: ANTHROPIC_API_KEY isn't set (jobs wait in the queue)");
+  }
+
+  if (config.sms && config.signingSecret && config.publicBaseUrl) {
+    const deps = {
+      pool,
+      sms: new TwilioSmsProvider(config.sms),
+      outbound: config.outbound,
+      signingSecret: config.signingSecret,
+      publicBaseUrl: config.publicBaseUrl,
+    };
+    await boss.work<NotifySmsJobData>(NOTIFY_SMS_QUEUE, async (jobs) => {
+      for (const job of jobs) await runNotifySms(deps, job.data);
+    });
+    queues.push(NOTIFY_SMS_QUEUE);
+  } else {
+    logger.warn(
+      "SMS notifications disabled: needs TWILIO_SMS_FROM, SIGNING_SECRET and PUBLIC_BASE_URL (jobs wait in the queue)",
+    );
   }
 
   if (config.twilio) {

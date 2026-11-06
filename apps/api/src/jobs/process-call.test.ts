@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type pg from "pg";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { EXTRACTION_FAILED_SUMMARY } from "../core/extraction.ts";
 import { assignPhoneNumber, createAdminPool, createTenant } from "../db/cross-tenant.ts";
@@ -167,6 +168,31 @@ describe("runProcessCall", () => {
       runProcessCall({ pool: app, llm }, { tenantId, callId, providerCallId: "x" }),
     ).rejects.toThrow("rate limited");
     expect(await callRow(tenantId, callId)).toMatchObject({ summary: null, costs: [] });
+  });
+
+  it("queues the notifications through the same transaction, even when extraction failed", async () => {
+    const { tenantId, callId } = await makeCall();
+    const enqueueNotifications = vi.fn(async (client: pg.ClientBase) => {
+      // Inside the transaction: the summary is already visible to this client.
+      const { rows } = await client.query<{ summary: string }>(
+        "SELECT summary FROM calls WHERE id = $1",
+        [callId],
+      );
+      expect(rows[0]?.summary).toBe(EXTRACTION_FAILED_SUMMARY);
+    });
+    const llm = new FakeLlmProvider().willFail("refused");
+    await runProcessCall(
+      { pool: app, llm, alert: vi.fn(), enqueueNotifications },
+      { tenantId, callId, providerCallId: "x" },
+    );
+    expect(enqueueNotifications).toHaveBeenCalledWith(expect.anything(), { tenantId, callId });
+
+    // Not again for a call that's already processed.
+    await runProcessCall(
+      { pool: app, llm, enqueueNotifications },
+      { tenantId, callId, providerCallId: "x" },
+    );
+    expect(enqueueNotifications).toHaveBeenCalledTimes(1);
   });
 
   it("skips a call that's already been processed", async () => {
