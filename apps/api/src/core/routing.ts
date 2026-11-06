@@ -1,0 +1,51 @@
+// Decides what a caller hears, from the tenant's status (BUILD_PLAN Step 4's table). A pure
+// function: the route loads the facts, this decides, the TwiML builders speak.
+import type { TenantStatus } from "@callmate/shared";
+import { perCallVariables, type AvailabilityInput } from "./availability.ts";
+
+export interface InboundCallContext {
+  /** Null when no tenant owns the dialled number. */
+  tenant: {
+    id: string;
+    status: TenantStatus;
+    /** Spoken in the "service has ended" message. */
+    notificationMobile: string | null;
+    /** The synced platform agent, or null if the profile has never synced. */
+    providerAgentId: string | null;
+    availability: AvailabilityInput;
+  } | null;
+  callerBlocked: boolean;
+  killSwitchOn: boolean;
+}
+
+export type RouteDecision =
+  | { kind: "agent"; providerAgentId: string; variables: Record<string, string> }
+  | { kind: "voicemail"; reason: string }
+  | { kind: "ended"; mobile: string | null }
+  | { kind: "reject"; reason: string };
+
+export function routeInboundCall(context: InboundCallContext, now: Date): RouteDecision {
+  // The kill switch beats everything: one move sends every number to plain voicemail.
+  if (context.killSwitchOn) return { kind: "voicemail", reason: "kill switch on" };
+  if (!context.tenant) return { kind: "voicemail", reason: "no tenant for the dialled number" };
+  if (context.callerBlocked) return { kind: "reject", reason: "caller is blocked" };
+
+  const { tenant } = context;
+  switch (tenant.status) {
+    case "live":
+    case "demo":
+      if (!tenant.providerAgentId) return { kind: "voicemail", reason: "agent not synced yet" };
+      return {
+        kind: "agent",
+        providerAgentId: tenant.providerAgentId,
+        variables: perCallVariables(tenant.availability, now),
+      };
+    case "cancelling":
+    case "cancelled":
+      return { kind: "ended", mobile: tenant.notificationMobile };
+    case "onboarding":
+    case "paused":
+    case "suspended":
+      return { kind: "voicemail", reason: `tenant is ${tenant.status}` };
+  }
+}

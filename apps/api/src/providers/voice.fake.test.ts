@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sampleAgentDefinition } from "../testing/agent-fixture.ts";
+import { sampleAgentDefinition, sampleCallEndedEvent } from "../testing/agent-fixture.ts";
 import { describeVoiceProviderContract } from "./voice.contract.ts";
 import { FakeVoiceProvider } from "./voice.fake.ts";
 
@@ -9,7 +9,6 @@ describeVoiceProviderContract("Fake", () => {
     provider,
     signedWebhook: (event) => provider.webhookFor(event),
     ignorableWebhook: () => provider.webhookFor({ event: "call_started" }),
-    attachableNumber: "+441632960001",
   };
 });
 
@@ -21,11 +20,12 @@ describe("FakeVoiceProvider", () => {
       definition,
       existingProviderAgentId: null,
     });
-    await provider.attachNumber(providerAgentId, "+441632960001");
+    const registration = { providerAgentId, from: null, to: "+441632960001", variables: {} };
+    await provider.registerInboundCall(registration);
     await provider.deleteCallData("call_1");
 
     expect(provider.agents.get(providerAgentId)).toBe(definition);
-    expect(provider.numbers.get("+441632960001")).toBe(providerAgentId);
+    expect(provider.calls).toEqual([registration]);
     expect(provider.deleteCalls).toEqual(["call_1"]);
   });
 
@@ -33,5 +33,6 @@ describe("FakeVoiceProvider", () => {
     const provider = new FakeVoiceProvider();
     const { rawBody, headers } = provider.signedRequest(Buffer.from('{"nonsense":true}'));
     expect(() => provider.verifyAndParseWebhook(rawBody, headers)).toThrow(/Malformed/);
+    void sampleCallEndedEvent;
   });
 });

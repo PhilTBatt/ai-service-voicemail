@@ -3,6 +3,7 @@ import { ConfigError, loadConfig, type Config } from "./config.ts";
 import { createPool } from "./db/pool.ts";
 import { logger } from "./logger.ts";
 import { RetellVoiceProvider } from "./providers/retell.ts";
+import { TwilioTelephonyProvider } from "./providers/twilio.ts";
 
 function start(config: Config): void {
   logger.level = config.logLevel;
@@ -13,9 +14,27 @@ function start(config: Config): void {
     : {};
   if (!config.retellApiKey) logger.warn("RETELL_API_KEY not set: voice webhooks are disabled");
 
+  // Call routing needs all three: Twilio to verify its webhooks, the public URL they were
+  // signed for, and Retell to hand calls to.
+  const retell = voiceProviders.retell;
+  const telephony =
+    config.twilio && config.publicBaseUrl && retell
+      ? {
+          provider: new TwilioTelephonyProvider(config.twilio),
+          voice: retell,
+          publicBaseUrl: config.publicBaseUrl,
+        }
+      : undefined;
+  if (!telephony) {
+    logger.warn(
+      "Call routing disabled: needs TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, PUBLIC_BASE_URL and RETELL_API_KEY",
+    );
+  }
+
   const app = createApp({
     pool,
     voiceProviders,
+    telephony,
     // Step 5 replaces this with storing the call and enqueueing its processing.
     onCallEnded: (event) => {
       logger.info("Voice call ended (not stored yet)", {

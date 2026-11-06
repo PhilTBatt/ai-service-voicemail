@@ -90,34 +90,8 @@ describe("saveAgentProfile", () => {
 });
 
 describe("runSyncAgent", () => {
-  it("records the agent before attaching the number, so a retry updates it rather than creating another", async () => {
+  it("builds the agent from the tenant and profile and records the sync", async () => {
     const { tenantId } = await makeTenant();
-    const version = await saveAgentProfile(app, boss, tenantId, PROFILE);
-    const voice = new FakeVoiceProvider();
-    const attach = voice.attachNumber.bind(voice);
-    voice.attachNumber = () => Promise.reject(new Error("number not imported yet"));
-
-    await expect(
-      runSyncAgent({ pool: app, voice, alert: vi.fn() }, { tenantId, profileVersion: version }),
-    ).rejects.toThrow("number not imported yet");
-    const afterFailure = await profileRow(tenantId, version);
-    expect(afterFailure).toMatchObject({
-      provider_agent_id: expect.any(String) as unknown,
-      synced_at: null,
-    });
-
-    voice.attachNumber = attach;
-    expect(await runSyncAgent({ pool: app, voice }, { tenantId, profileVersion: version })).toBe(
-      "synced",
-    );
-    expect(voice.agents.size).toBe(1);
-    expect((await profileRow(tenantId, version))?.provider_agent_id).toBe(
-      afterFailure?.provider_agent_id,
-    );
-  });
-
-  it("builds the agent from the tenant and profile, attaches the number, and records the sync", async () => {
-    const { tenantId, number } = await makeTenant();
     const version = await saveAgentProfile(app, boss, tenantId, PROFILE);
     const voice = new FakeVoiceProvider();
 
@@ -130,7 +104,6 @@ describe("runSyncAgent", () => {
     expect(definition.opening).toContain("so Sam can call you back");
     expect(definition.instructions).toContain("- boiler repairs");
     expect(definition.limits.maxCallSeconds).toBe(180); // demo tenant
-    expect(voice.numbers.get(number)).toBe(providerAgentId);
     expect(await profileRow(tenantId, version)).toMatchObject({
       provider_agent_id: providerAgentId,
       synced_at: expect.any(Date) as unknown,

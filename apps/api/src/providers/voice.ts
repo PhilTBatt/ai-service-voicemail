@@ -9,6 +9,17 @@ export interface UpsertAgentInput {
   existingProviderAgentId: string | null;
 }
 
+/** A call our telephony is about to hand to the platform (Dial to SIP, decision 009). */
+export interface InboundCallRegistration {
+  providerAgentId: string;
+  /** E.164, or null when the caller withheld their number. */
+  from: string | null;
+  /** E.164: the tenant's number. */
+  to: string;
+  /** The values the agent's instructions refer to as {{name}}. */
+  variables: Record<string, string>;
+}
+
 export interface TranscriptTurn {
   role: "agent" | "caller";
   text: string;
@@ -59,8 +70,11 @@ export class WebhookVerificationError extends Error {
 export interface VoiceProvider {
   /** Creates or updates the platform agent for a definition. Must be safe to repeat. */
   upsertAgent(input: UpsertAgentInput): Promise<{ providerAgentId: string }>;
-  /** Routes inbound calls on an E.164 number to an agent. */
-  attachNumber(providerAgentId: string, number: string): Promise<void>;
+  /**
+   * Registers a call that's about to be dialled to the platform and returns the SIP URI to
+   * dial. The dial must follow within minutes.
+   */
+  registerInboundCall(registration: InboundCallRegistration): Promise<{ sipUri: string }>;
   /**
    * Verifies a webhook against the raw bytes (signatures are computed over the raw body,
    * so a re-serialised object fails) and returns a normalised event.

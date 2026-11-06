@@ -1,0 +1,51 @@
+// Whether a tenant is open or away right now, in UK time. Fed to the agent as per-call
+// variables (decision 009). Uses the built-in Temporal API, which handles the clock-change
+// weekends correctly; the tests cover both of them.
+import { WEEKDAYS, type OpeningHours } from "./profile.ts";
+
+export const UK_TIME_ZONE = "Europe/London";
+
+function localTime(at: Date, timeZone: string): Temporal.ZonedDateTime {
+  return Temporal.Instant.fromEpochMilliseconds(at.getTime()).toZonedDateTimeISO(timeZone);
+}
+
+function minutesOfDay(hhmm: string): number {
+  const [hours, minutes] = hhmm.split(":").map(Number) as [number, number];
+  return hours * 60 + minutes;
+}
+
+/** True when the local time falls inside that weekday's opening slot (close is exclusive). */
+export function isOpenAt(hours: OpeningHours, at: Date, timeZone = UK_TIME_ZONE): boolean {
+  const local = localTime(at, timeZone);
+  const slot = hours[WEEKDAYS[local.dayOfWeek - 1]!]; // Temporal: 1 is Monday, 7 is Sunday
+  if (!slot) return false;
+  const now = local.hour * 60 + local.minute;
+  return now >= minutesOfDay(slot.open) && now < minutesOfDay(slot.close);
+}
+
+/** True while holiday mode is on: until further notice, or through the end of the given local date. */
+export function isOnHolidayAt(
+  holidayMode: boolean,
+  holidayUntil: string | null,
+  at: Date,
+  timeZone = UK_TIME_ZONE,
+): boolean {
+  if (!holidayMode) return false;
+  if (holidayUntil === null) return true;
+  const today = localTime(at, timeZone).toPlainDate();
+  return Temporal.PlainDate.compare(today, Temporal.PlainDate.from(holidayUntil)) <= 0;
+}
+
+export interface AvailabilityInput {
+  openingHours: OpeningHours;
+  holidayMode: boolean;
+  holidayUntil: string | null;
+}
+
+/** The values for the agent's {{open_now}} and {{holiday_mode}} variables. */
+export function perCallVariables(input: AvailabilityInput, at: Date): Record<string, string> {
+  return {
+    open_now: isOpenAt(input.openingHours, at) ? "yes" : "no",
+    holiday_mode: isOnHolidayAt(input.holidayMode, input.holidayUntil, at) ? "yes" : "no",
+  };
+}

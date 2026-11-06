@@ -10,17 +10,21 @@ import {
 export interface VoiceProviderHarness {
   provider: VoiceProvider;
   /** A webhook for `event`, signed as the platform would sign it. */
-  signedWebhook(event: CallEndedEvent): { rawBody: Buffer; headers: WebhookHeaders };
+  signedWebhook: (event: CallEndedEvent) => { rawBody: Buffer; headers: WebhookHeaders };
   /** A genuine, correctly signed webhook for an event we don't act on. */
-  ignorableWebhook(): { rawBody: Buffer; headers: WebhookHeaders };
-  /** An E.164 number the provider can attach to an agent. */
-  attachableNumber: string;
+  ignorableWebhook: () => { rawBody: Buffer; headers: WebhookHeaders };
 }
 
 export interface ContractOptions {
-  /** False when the account has no number to attach (the live Retell run, until Step 4). */
-  canAttachNumbers?: boolean;
+  /** False for the live run: a registered call that's never dialled is just clutter. */
+  canRegisterCalls?: boolean;
 }
+
+const REGISTRATION = {
+  from: "+447700900123",
+  to: "+441632960001",
+  variables: { open_now: "yes", holiday_mode: "no" },
+};
 
 /**
  * The behaviour every VoiceProvider must have. Runs against the fake in CI, and against the
@@ -29,7 +33,7 @@ export interface ContractOptions {
 export function describeVoiceProviderContract(
   name: string,
   makeHarness: () => VoiceProviderHarness,
-  { canAttachNumbers = true }: ContractOptions = {},
+  { canRegisterCalls = true }: ContractOptions = {},
 ) {
   describe(`${name} VoiceProvider contract`, () => {
     it("creates an agent and returns the platform's ID", async () => {
@@ -55,22 +59,26 @@ export function describeVoiceProviderContract(
       expect(second.providerAgentId).toBe(first.providerAgentId);
     });
 
-    it.skipIf(!canAttachNumbers)("attaches a number to an agent it knows", async () => {
-      const { provider, attachableNumber } = makeHarness();
-      const { providerAgentId } = await provider.upsertAgent({
-        definition: sampleAgentDefinition(),
-        existingProviderAgentId: null,
-      });
-      await expect(
-        provider.attachNumber(providerAgentId, attachableNumber),
-      ).resolves.toBeUndefined();
-    });
-
-    it.skipIf(!canAttachNumbers)(
-      "refuses to attach a number to an agent it doesn't know",
+    it.skipIf(!canRegisterCalls)(
+      "registers an inbound call for a known agent and returns a SIP URI",
       async () => {
-        const { provider, attachableNumber } = makeHarness();
-        await expect(provider.attachNumber("no_such_agent", attachableNumber)).rejects.toThrow();
+        const { provider } = makeHarness();
+        const { providerAgentId } = await provider.upsertAgent({
+          definition: sampleAgentDefinition(),
+          existingProviderAgentId: null,
+        });
+        const { sipUri } = await provider.registerInboundCall({ providerAgentId, ...REGISTRATION });
+        expect(sipUri).toMatch(/^sip:[^@]+@[^@]+$/);
+      },
+    );
+
+    it.skipIf(!canRegisterCalls)(
+      "refuses to register a call for an agent it doesn't know",
+      async () => {
+        const { provider } = makeHarness();
+        await expect(
+          provider.registerInboundCall({ providerAgentId: "no_such_agent", ...REGISTRATION }),
+        ).rejects.toThrow();
       },
     );
 

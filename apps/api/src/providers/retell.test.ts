@@ -77,7 +77,6 @@ function makeStubHarness(): VoiceProviderHarness & { stub: RetellApiStub } {
       ),
     ignorableWebhook: () =>
       signed({ event: "call_started", call: retellPayload(sampleCallEndedEvent()).call }),
-    attachableNumber: "+441632960001",
   };
 }
 
@@ -267,6 +266,45 @@ describe("RetellVoiceProvider agents", () => {
   });
 });
 
+describe("RetellVoiceProvider calls", () => {
+  it("registers an inbound call with the agent, numbers and variables, and returns the SIP URI", async () => {
+    const { provider, stub } = makeStubHarness();
+    const { providerAgentId } = await provider.upsertAgent({
+      definition: sampleAgentDefinition(),
+      existingProviderAgentId: null,
+    });
+    const { sipUri } = await provider.registerInboundCall({
+      providerAgentId,
+      from: "+447700900123",
+      to: "+441632960001",
+      variables: { open_now: "no", holiday_mode: "yes" },
+    });
+    expect(sipUri).toBe("sip:call_stub1@sip.retellai.com");
+    expect(stub.calls[0]).toEqual({
+      agent_id: providerAgentId,
+      direction: "inbound",
+      from_number: "+447700900123",
+      to_number: "+441632960001",
+      retell_llm_dynamic_variables: { open_now: "no", holiday_mode: "yes" },
+    });
+  });
+
+  it("leaves the caller's number out when it was withheld", async () => {
+    const { provider, stub } = makeStubHarness();
+    const { providerAgentId } = await provider.upsertAgent({
+      definition: sampleAgentDefinition(),
+      existingProviderAgentId: null,
+    });
+    await provider.registerInboundCall({
+      providerAgentId,
+      from: null,
+      to: "+441632960001",
+      variables: {},
+    });
+    expect(stub.calls[0]).not.toHaveProperty("from_number");
+  });
+});
+
 // ─── Against the real Retell API ───────────────────────────────────────────────────────
 // Creates (and deletes) real agents on the trial account. Never runs in CI: it needs
 // RETELL_LIVE_TESTS=1 and RETELL_API_KEY in the environment.
@@ -317,10 +355,9 @@ describe.runIf(process.env.RETELL_LIVE_TESTS === "1" && process.env.RETELL_API_K
               { event: "call_started", call: retellPayload(sampleCallEndedEvent()).call },
               { apiKey, at: Date.now() },
             ),
-          attachableNumber: "+441632960001",
         };
       },
-      { canAttachNumbers: false },
+      { canRegisterCalls: false },
     );
   },
 );

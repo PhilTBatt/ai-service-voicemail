@@ -4,6 +4,7 @@ import type { AgentDefinition } from "../core/agent.ts";
 import {
   WebhookVerificationError,
   type CallEndedEvent,
+  type InboundCallRegistration,
   type ParsedWebhook,
   type UpsertAgentInput,
   type VoiceProvider,
@@ -39,8 +40,8 @@ const webhookSchema = z.object({
 export class FakeVoiceProvider implements VoiceProvider {
   private readonly signingKey = "not-a-real-key";
   readonly agents = new Map<string, AgentDefinition>();
-  /** E.164 number → provider agent ID. */
-  readonly numbers = new Map<string, string>();
+  /** Every call registered for dialling, in order. */
+  readonly calls: InboundCallRegistration[] = [];
   readonly deleteCalls: string[] = [];
   private nextId = 1;
 
@@ -53,12 +54,12 @@ export class FakeVoiceProvider implements VoiceProvider {
     return Promise.resolve({ providerAgentId });
   }
 
-  attachNumber(providerAgentId: string, number: string) {
-    if (!this.agents.has(providerAgentId)) {
-      return Promise.reject(new Error(`Unknown agent ${providerAgentId}`));
+  registerInboundCall(registration: InboundCallRegistration) {
+    if (!this.agents.has(registration.providerAgentId)) {
+      return Promise.reject(new Error(`Unknown agent ${registration.providerAgentId}`));
     }
-    this.numbers.set(number, providerAgentId);
-    return Promise.resolve();
+    this.calls.push(registration);
+    return Promise.resolve({ sipUri: `sip:fake_call_${this.calls.length}@fake.invalid` });
   }
 
   private sign(rawBody: Buffer): string {

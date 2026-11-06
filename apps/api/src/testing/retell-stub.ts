@@ -11,7 +11,7 @@ interface Captured {
 export class RetellApiStub {
   readonly flows = new Map<string, unknown>();
   readonly agents = new Map<string, { flowId: string; body: unknown }>();
-  readonly numbers = new Map<string, string>();
+  readonly calls: Record<string, unknown>[] = [];
   readonly deletedCalls = new Set<string>();
   readonly requests: Captured[] = [];
   private nextId = 1;
@@ -72,12 +72,13 @@ export class RetellApiStub {
       agent.body = { ...(agent.body as object), ...body };
       return json(200, { agent_id: second });
     }
-    if (method === "PATCH" && first === "update-phone-number" && second) {
-      const agentId = (body?.inbound_agents as { agent_id: string }[] | undefined)?.[0]?.agent_id;
-      if (!agentId || !this.agents.has(agentId))
-        return json(400, { message: "unknown inbound agent" });
-      this.numbers.set(second, agentId);
-      return json(200, { phone_number: second });
+    if (method === "POST" && first === "v2" && second === "register-phone-call") {
+      const agentId = body?.agent_id;
+      if (typeof agentId !== "string" || !this.agents.has(agentId)) {
+        return json(404, { message: "agent not found" });
+      }
+      this.calls.push(body ?? {});
+      return json(201, { call_id: `call_stub${this.calls.length}`, call_status: "registered" });
     }
     if (method === "DELETE" && first === "v2" && second === "delete-call" && segments[2]) {
       if (this.deletedCalls.has(segments[2])) return json(404, { message: "call not found" });

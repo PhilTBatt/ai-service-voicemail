@@ -79,19 +79,7 @@ export async function runSyncAgent(
       )
     ).rows[0];
 
-    const number = (
-      await client.query<{ number: string }>(
-        "SELECT number FROM phone_numbers WHERE tenant_id = $1 AND status = 'active'",
-        [tenantId],
-      )
-    ).rows[0];
-
-    return {
-      tenant,
-      profile,
-      existingProviderAgentId: previous?.provider_agent_id ?? null,
-      number: number?.number ?? null,
-    };
+    return { tenant, profile, existingProviderAgentId: previous?.provider_agent_id ?? null };
   });
 
   if (loaded.profile.synced_at) {
@@ -128,21 +116,11 @@ export async function runSyncAgent(
       definition,
       existingProviderAgentId: loaded.existingProviderAgentId,
     });
-    // Record the agent before attaching the number: if attaching fails, the retry must
-    // update this agent, not create another one at the platform.
     await withTenant(pool, tenantId, (client) =>
       client.query(
-        "UPDATE agent_profiles SET provider_agent_id = $3 WHERE tenant_id = $1 AND version = $2",
-        [tenantId, profileVersion, providerAgentId],
-      ),
-    );
-    if (loaded.number) await voice.attachNumber(providerAgentId, loaded.number);
-
-    await withTenant(pool, tenantId, (client) =>
-      client.query(
-        `UPDATE agent_profiles SET synced_at = now(), sync_error = NULL
+        `UPDATE agent_profiles SET provider_agent_id = $3, synced_at = now(), sync_error = NULL
          WHERE tenant_id = $1 AND version = $2`,
-        [tenantId, profileVersion],
+        [tenantId, profileVersion, providerAgentId],
       ),
     );
     logger.info("Agent synced", { tenantId, profileVersion, providerAgentId });

@@ -8,6 +8,7 @@ import type { AgentDefinition, FixedScript } from "../core/agent.ts";
 import {
   WebhookVerificationError,
   type CallEndedEvent,
+  type InboundCallRegistration,
   type ParsedWebhook,
   type UpsertAgentInput,
   type VoiceProvider,
@@ -89,11 +90,20 @@ export class RetellVoiceProvider implements VoiceProvider {
     return { providerAgentId: createdAgent.agent_id };
   }
 
-  /** Points an imported number's inbound calls at an agent. The number must already exist at Retell. */
-  async attachNumber(providerAgentId: string, number: string) {
-    await this.request("PATCH", `/update-phone-number/${encodeURIComponent(number)}`, {
-      inbound_agents: [{ agent_id: providerAgentId, weight: 1 }],
+  /**
+   * Dial to SIP (decision 009): tells Retell which agent takes the call and what the per-call
+   * variables are, and gets back the call ID to dial. Retell drops the registration if the
+   * dial doesn't arrive within 5 minutes.
+   */
+  async registerInboundCall({ providerAgentId, from, to, variables }: InboundCallRegistration) {
+    const registered = await this.request<{ call_id: string }>("POST", "/v2/register-phone-call", {
+      agent_id: providerAgentId,
+      direction: "inbound",
+      ...(from !== null && { from_number: from }),
+      to_number: to,
+      retell_llm_dynamic_variables: variables,
     });
+    return { sipUri: `sip:${registered.call_id}@sip.retellai.com` };
   }
 
   verifyAndParseWebhook(rawBody: Buffer, headers: WebhookHeaders): ParsedWebhook {

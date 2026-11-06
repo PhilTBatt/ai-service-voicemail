@@ -1,19 +1,31 @@
 import express, { type ErrorRequestHandler } from "express";
 import type pg from "pg";
 import { logger } from "./logger.ts";
+import type { TelephonyProvider } from "./providers/telephony.ts";
 import type { CallEndedEvent, VoiceProvider } from "./providers/voice.ts";
+import { twilioRouter } from "./routes/twilio.ts";
 import { voiceWebhookRouter } from "./routes/webhooks.ts";
 
 export interface AppOptions {
   pool: pg.Pool;
   voiceProviders?: Record<string, VoiceProvider>;
   onCallEnded?: (event: CallEndedEvent) => Promise<void>;
+  /** Call routing. Absent until Twilio and PUBLIC_BASE_URL are configured. */
+  telephony?:
+    | {
+        provider: TelephonyProvider;
+        voice: VoiceProvider;
+        publicBaseUrl: string;
+        now?: () => Date;
+      }
+    | undefined;
 }
 
 export function createApp({
   pool,
   voiceProviders = {},
   onCallEnded = () => Promise.resolve(),
+  telephony,
 }: AppOptions) {
   const app = express();
   app.disable("x-powered-by");
@@ -37,6 +49,12 @@ export function createApp({
   });
 
   app.use("/webhooks", voiceWebhookRouter({ providers: voiceProviders, onCallEnded }));
+  if (telephony) {
+    app.use(
+      "/webhooks/twilio",
+      twilioRouter({ pool, telephony: telephony.provider, ...telephony }),
+    );
+  }
 
   // Last: Express's own handler prints the stack with console.error, unredacted, and shows
   // it to the client outside production. Log through the redacting logger instead, and

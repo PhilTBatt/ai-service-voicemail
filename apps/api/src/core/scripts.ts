@@ -39,3 +39,10 @@ export function areYouAiLine({ business, tradesperson }: ScriptNames): string {
 export function closingLine(tradesperson: string): string {
   return `Thanks. I've passed that to ${tradesperson}, who'll aim to get back to you.`;
 }
+
+/** Static, so it can't include the business name: it's served even when the API is down. */
+export const FALLBACK_VOICEMAIL_GREETING =
+  "Sorry, the assistant isn't available right now. Please leave your name, your number and what you need after the tone, and you'll get a call back.";
+
+/** For cancelling and cancelled tenants (BUILD_PLAN Step 4). */
+export const SERVICE_ENDED_LINE = "This service has ended. Please call";
