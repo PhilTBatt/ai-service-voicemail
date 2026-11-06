@@ -21,6 +21,10 @@ CREATE ROLE callmate_app LOGIN
 CREATE ROLE callmate_admin LOGIN
   NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
 
+-- Lets migrations (run as the owner) create the job queue's objects as the app role, so
+-- pg-boss owns and maintains its own schema while the app role still owns no tenant table.
+GRANT callmate_app TO callmate_owner;
+
 -- Owning the database lets callmate_owner create tables in its public schema. Other roles
 -- can't (Postgres 15+ no longer lets everyone create objects in public).
 DO $$

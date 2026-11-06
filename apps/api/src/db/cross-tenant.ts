@@ -39,12 +39,14 @@ export interface NewTenant {
   notificationMobile?: string;
   notificationEmail?: string;
   serviceRegion?: "GB" | "NI";
+  /** The tradesperson's name, as callers will hear it. Required before the agent can sync. */
+  contactName?: string;
 }
 
 export async function createTenant(admin: AdminPool, tenant: NewTenant): Promise<string> {
   const { rows } = await admin.query<{ id: string }>(
-    `INSERT INTO tenants (id, business_name, trade, status, notification_mobile, notification_email, service_region)
-     VALUES (COALESCE($1::uuid, gen_random_uuid()), $2, $3, $4, $5, $6, $7)
+    `INSERT INTO tenants (id, business_name, trade, status, notification_mobile, notification_email, service_region, contact_name)
+     VALUES (COALESCE($1::uuid, gen_random_uuid()), $2, $3, $4, $5, $6, $7, $8)
      RETURNING id`,
     [
       tenant.id ?? null,
@@ -54,6 +56,7 @@ export async function createTenant(admin: AdminPool, tenant: NewTenant): Promise
       tenant.notificationMobile ?? null,
       tenant.notificationEmail ?? null,
       tenant.serviceRegion ?? "GB",
+      tenant.contactName ?? null,
     ],
   );
   return rows[0]!.id;

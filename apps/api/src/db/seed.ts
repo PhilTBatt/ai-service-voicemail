@@ -22,6 +22,7 @@ export const SEED_TENANTS: readonly SeedTenant[] = [
   {
     id: "00000000-0000-4000-8000-000000000001",
     businessName: "Ant's Plumbing",
+    contactName: "Ant",
     trade: "plumber",
     status: "demo",
     notificationMobile: "+447700900001",
@@ -32,6 +33,7 @@ export const SEED_TENANTS: readonly SeedTenant[] = [
   {
     id: "00000000-0000-4000-8000-000000000002",
     businessName: "Test Electrics",
+    contactName: "Sam",
     trade: "electrician",
     status: "onboarding",
     notificationMobile: "+447700900002",
