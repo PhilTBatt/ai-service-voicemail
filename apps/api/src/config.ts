@@ -9,12 +9,21 @@ const envSchema = z
     PORT: z.coerce.number().int().min(1).max(65535).default(3000),
     LOG_LEVEL: z.enum(LOG_LEVELS).default("info"),
     DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }),
+    // Optional outside production so the API runs without a voice platform (tests use the
+    // fake). Production can't answer calls without it, so there it's required.
+    RETELL_API_KEY: z.string().min(1).optional(),
+  })
+  .superRefine((env, ctx) => {
+    if (env.NODE_ENV === "production" && env.RETELL_API_KEY === undefined) {
+      ctx.addIssue({ code: "custom", path: ["RETELL_API_KEY"], message: "required in production" });
+    }
   })
   .transform((env) => ({
     nodeEnv: env.NODE_ENV,
     port: env.PORT,
     logLevel: env.LOG_LEVEL,
     databaseUrl: env.DATABASE_URL,
+    retellApiKey: env.RETELL_API_KEY,
   }));
 
 export type Config = z.output<typeof envSchema>;

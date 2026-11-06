@@ -2,12 +2,32 @@ import { createApp } from "./app.ts";
 import { ConfigError, loadConfig, type Config } from "./config.ts";
 import { createPool } from "./db/pool.ts";
 import { logger } from "./logger.ts";
+import { RetellVoiceProvider } from "./providers/retell.ts";
 
 function start(config: Config): void {
   logger.level = config.logLevel;
   const pool = createPool(config.databaseUrl);
 
-  const server = createApp({ pool }).listen(config.port, (error) => {
+  const voiceProviders = config.retellApiKey
+    ? { retell: new RetellVoiceProvider({ apiKey: config.retellApiKey }) }
+    : {};
+  if (!config.retellApiKey) logger.warn("RETELL_API_KEY not set: voice webhooks are disabled");
+
+  const app = createApp({
+    pool,
+    voiceProviders,
+    // Step 5 replaces this with storing the call and enqueueing its processing.
+    onCallEnded: (event) => {
+      logger.info("Voice call ended (not stored yet)", {
+        providerCallId: event.providerCallId,
+        providerAgentId: event.providerAgentId,
+        durationSeconds: event.durationSeconds,
+      });
+      return Promise.resolve();
+    },
+  });
+
+  const server = app.listen(config.port, (error) => {
     if (error) {
       logger.error("API failed to start", { error, port: config.port });
       process.exitCode = 1;

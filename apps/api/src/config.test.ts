@@ -25,7 +25,13 @@ describe("loadConfig", () => {
 
   it("parses explicit values, turning PORT into a number", () => {
     expect(
-      loadConfig({ ...valid, NODE_ENV: "production", PORT: "8080", LOG_LEVEL: "debug" }),
+      loadConfig({
+        ...valid,
+        NODE_ENV: "production",
+        RETELL_API_KEY: "key_for_tests",
+        PORT: "8080",
+        LOG_LEVEL: "debug",
+      }),
     ).toMatchObject({ nodeEnv: "production", port: 8080, logLevel: "debug" });
   });
 
@@ -86,6 +92,24 @@ describe("loadConfig", () => {
   it("ignores variables it doesn't know about", () => {
     expect(loadConfig({ ...valid, TWILIO_AUTH_TOKEN: "legacy" })).not.toHaveProperty(
       "TWILIO_AUTH_TOKEN",
+    );
+  });
+});
+
+describe("loadConfig: RETELL_API_KEY", () => {
+  it("is optional outside production", () => {
+    expect(loadConfig(valid).retellApiKey).toBeUndefined();
+  });
+
+  it("is required in production", () => {
+    expect(configErrorFor({ ...valid, NODE_ENV: "production" }).problems).toEqual([
+      "RETELL_API_KEY is missing",
+    ]);
+  });
+
+  it("is passed through when set", () => {
+    expect(loadConfig({ ...valid, RETELL_API_KEY: "key_for_tests" }).retellApiKey).toBe(
+      "key_for_tests",
     );
   });
 });

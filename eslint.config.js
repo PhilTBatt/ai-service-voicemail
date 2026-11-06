@@ -7,6 +7,10 @@ export default defineConfig(
   {
     files: ["**/*.{js,ts}"],
     extends: [js.configs.recommended, tseslint.configs.recommendedTypeChecked],
+    rules: {
+      // Express error handlers must declare all four parameters; `_next` marks the unused one.
+      "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_" }],
+    },
     languageOptions: {
       parserOptions: {
         // Ask TypeScript for type information using each file's nearest tsconfig.json.
