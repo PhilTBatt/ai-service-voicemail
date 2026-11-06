@@ -157,20 +157,30 @@ Businesses provide company details instead (BUILD_PLAN: submit under PhilCo). Wh
 
 _To fill in from Phil's test calls (web calls from each dashboard)._
 
-| Test                                                                         | Retell | Vapi |
-| ---------------------------------------------------------------------------- | ------ | ---- |
-| Opening disclosure spoken exactly                                            |        |      |
-| Gas mentioned in passing → script word for word (incl. "0800 111 999" twice) |        |      |
-| Danger / sparks → 999 line exactly                                           |        |      |
-| "Are you a robot?" → exact line                                              |        |      |
-| Refuses to quote a price                                                     |        |      |
-| Refuses to commit to a time                                                  |        |      |
-| Reads the call-back number back                                              |        |      |
-| Silence → one reminder, then ends                                            |        |      |
-| Voice rating (1–5, over 5 calls)                                             |        |      |
-| Latency (10 calls; platform metric, cross-checked on recordings)             |        |      |
-| Spend so far                                                                 |        |      |
+| Test                                                                         | Retell                                                                          | Vapi                                                                                                                           |
+| ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Opening disclosure spoken exactly                                            |                                                                                 |                                                                                                                                |
+| Gas mentioned in passing → script word for word (incl. "0800 111 999" twice) |                                                                                 |                                                                                                                                |
+| Danger / sparks → 999 line exactly                                           |                                                                                 |                                                                                                                                |
+| "Are you a robot?" → exact line                                              |                                                                                 |                                                                                                                                |
+| Refuses to quote a price                                                     |                                                                                 |                                                                                                                                |
+| Refuses to commit to a time                                                  |                                                                                 |                                                                                                                                |
+| Reads the call-back number back                                              | ✅ "o seven seven double o…" transcribed as said and read back correctly (Phil) | ❌ Deepgram wrote "0 7 7 double o 9 0 0 1 2 3"; the agent took "double o" as one zero, and Phil's correction wasn't understood |
+| Silence → one reminder, then ends                                            | 🧪 (both calls were ended by the agent's own end node: `agent_hangup`)          | 🧪 (Phil hung up: `customer-ended-call`)                                                                                       |
+| Voice rating (1–5, over 5 calls)                                             | Phil: smoother and clearer (score not yet given)                                | Phil: worse, and harder to pick up his voice                                                                                   |
+| Latency (10 calls; platform metric, cross-checked on recordings)             | **p50 0.8–1.1 s, p90 1.9 s** (2 web calls; Retell's e2e metric)                 | **p50 1.4 s, p90 2.7 s** (1 web call, 5 turns; Vapi's turn latency)                                                            |
+| Spend so far                                                                 | $0.48 for 2 calls (about **$0.15/min**) plus simulations                        | $0.09 for 1 call (about **$0.07/min**) plus evals                                                                              |
+
+## Recommendation (2026-11-06)
+
+**Retell AI**, at medium confidence. Phil chooses.
+
+- **Options considered:** Retell; Vapi; keep testing before choosing.
+- **Why Retell:** verbatim scripts are a documented feature and proved verbatim in simulation; it heard UK number habits ("oh", "double o") correctly where Vapi didn't; lower measured latency (p90 1.9 s vs 2.7 s); 20 concurrent calls included vs 4; auto-deletion of raw call data; Twilio via SIP with a Disaster Recovery URL, and no Twilio master credentials handed over.
+- **Why not Vapi:** mis-hearing the call-back number is a core failure for a call-back service. It can probably be improved (a different transcriber, or a prompt rule that "double o" means two zeros), but Retell needed no fixing. Phil also found the voice worse and his speech harder to pick up.
+- **Strongest case against Retell:** Vapi cost about half as much per minute on these calls ($0.07 vs $0.15), and the sample is tiny (3 web calls, not the plan's 10 phone calls each). Retell's p90 of 1.9 s also misses the Step 9 target of p95 under 1.5 s; its faster model tiers cost more and are untested.
+- **Not yet tested on either:** gas, sparks, robot and silence in **voice**; the real phone path; what callers hear on failure.
 
 ## Decision
 
-_Pending the hands-on tests. Phil chooses._
+_Phil to confirm._
