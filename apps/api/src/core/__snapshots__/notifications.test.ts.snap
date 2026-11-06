@@ -1,0 +1,11 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`callSms > matches the agreed wording 1`] = `
+{
+  "body": "URGENT: Sam, 07700 900123, XQ12 3JL
+Boiler leaking under the kitchen sink; no hot water. Wants someone today if possible.
+Call back: tel:+447700900123
+Details: https://callmate.example.com/c/abc123.1799999999.sig",
+  "segments": 2,
+}
+`;

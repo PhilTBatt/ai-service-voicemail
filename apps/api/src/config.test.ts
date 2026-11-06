@@ -20,6 +20,7 @@ describe("loadConfig", () => {
       port: 3000,
       logLevel: "info",
       databaseUrl: valid.DATABASE_URL,
+      outbound: { nodeEnv: "development", allowlist: new Set() },
     });
   });
 
@@ -35,6 +36,7 @@ describe("loadConfig", () => {
         FALLBACK_VOICEMAIL_URL: "https://handler.twilio.com/twiml/EH0",
         ANTHROPIC_API_KEY: "key_for_tests",
         ADMIN_DATABASE_URL: "postgres://callmate_admin@localhost/callmate",
+        TWILIO_SMS_FROM: "AnswerMate",
         PORT: "8080",
         LOG_LEVEL: "debug",
       }),
@@ -137,6 +139,7 @@ describe("loadConfig: Twilio and PUBLIC_BASE_URL", () => {
       "FALLBACK_VOICEMAIL_URL is missing",
       "ANTHROPIC_API_KEY is missing",
       "ADMIN_DATABASE_URL is missing",
+      "TWILIO_SMS_FROM is missing",
     ]);
   });
 
@@ -205,5 +208,36 @@ describe("loadConfig: LLM", () => {
       loadConfig({ ...valid, ANTHROPIC_API_KEY: "key_for_tests", LLM_MODEL: "claude-sonnet-5-5" })
         .llm?.model,
     ).toBe("claude-sonnet-5-5");
+  });
+});
+
+describe("loadConfig: outbound messages", () => {
+  it("parses the allowlist and leaves SMS off until a sender is set", () => {
+    const config = loadConfig({ ...valid, OUTBOUND_ALLOWLIST: "+447700900001, phil@example.com" });
+    expect(config.outbound).toEqual({
+      nodeEnv: "development",
+      allowlist: new Set(["+447700900001", "phil@example.com"]),
+    });
+    expect(config.sms).toBeUndefined();
+  });
+
+  it("configures SMS from the Twilio credentials plus the sender", () => {
+    const config = loadConfig({
+      ...valid,
+      TWILIO_ACCOUNT_SID: "AC" + "a".repeat(32),
+      TWILIO_AUTH_TOKEN: "token_for_tests",
+      TWILIO_SMS_FROM: "+447700900900",
+    });
+    expect(config.sms).toEqual({
+      accountSid: "AC" + "a".repeat(32),
+      authToken: "token_for_tests",
+      from: "+447700900900",
+    });
+  });
+
+  it.each(["0770090090", "ThisSenderIsTooLong", "1Alpha"])("rejects a bad sender %s", (from) => {
+    expect(configErrorFor({ ...valid, TWILIO_SMS_FROM: from }).problems[0]).toMatch(
+      /^TWILIO_SMS_FROM is invalid/,
+    );
   });
 });

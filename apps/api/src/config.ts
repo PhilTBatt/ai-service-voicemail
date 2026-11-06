@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { parseAllowlist } from "./core/outbound-allowlist.ts";
 
 // Winston's default (npm) levels, most to least severe.
 const LOG_LEVELS = ["error", "warn", "info", "http", "verbose", "debug", "silly"] as const;
@@ -36,6 +37,17 @@ const envSchema = z
     // The LLM for post-call extraction (BUILD_PLAN Step 5). The model is pinned here so a
     // provider-side change never silently alters what gets extracted.
     ANTHROPIC_API_KEY: z.string().min(1).optional(),
+    // Outside production, SMS and email go only to these E.164 numbers and email addresses
+    // (comma-separated). CLAUDE.md rule 4: never bypassed.
+    OUTBOUND_ALLOWLIST: z.string().optional(),
+    // The shared notification sender: a UK mobile number in E.164, or an alphanumeric ID.
+    TWILIO_SMS_FROM: z
+      .string()
+      .regex(
+        /^(\+[1-9]\d{7,14}|[A-Za-z][A-Za-z0-9 ]{0,10})$/,
+        "expected an E.164 number or an alphanumeric sender ID (max 11)",
+      )
+      .optional(),
     // Cross-tenant work (retention, seeding). The API never uses it; the worker does.
     ADMIN_DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }).optional(),
     LLM_MODEL: z.string().min(1).default("claude-haiku-5-5"),
@@ -50,6 +62,7 @@ const envSchema = z
       "FALLBACK_VOICEMAIL_URL",
       "ANTHROPIC_API_KEY",
       "ADMIN_DATABASE_URL",
+      "TWILIO_SMS_FROM",
     ] as const) {
       if (env[name] === undefined) {
         ctx.addIssue({ code: "custom", path: [name], message: "required in production" });
@@ -75,6 +88,17 @@ const envSchema = z
     publicBaseUrl: env.PUBLIC_BASE_URL?.replace(/\/$/, ""),
     fallbackVoicemailUrl: env.FALLBACK_VOICEMAIL_URL,
     adminDatabaseUrl: env.ADMIN_DATABASE_URL,
+    outbound: { nodeEnv: env.NODE_ENV, allowlist: parseAllowlist(env.OUTBOUND_ALLOWLIST) },
+    sms:
+      env.TWILIO_ACCOUNT_SID !== undefined &&
+      env.TWILIO_AUTH_TOKEN !== undefined &&
+      env.TWILIO_SMS_FROM !== undefined
+        ? {
+            accountSid: env.TWILIO_ACCOUNT_SID,
+            authToken: env.TWILIO_AUTH_TOKEN,
+            from: env.TWILIO_SMS_FROM,
+          }
+        : undefined,
     llm: env.ANTHROPIC_API_KEY
       ? { apiKey: env.ANTHROPIC_API_KEY, model: env.LLM_MODEL }
       : undefined,
