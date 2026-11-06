@@ -29,6 +29,9 @@ describe("loadConfig", () => {
         ...valid,
         NODE_ENV: "production",
         RETELL_API_KEY: "key_for_tests",
+        TWILIO_ACCOUNT_SID: "AC" + "a".repeat(32),
+        TWILIO_AUTH_TOKEN: "token_for_tests",
+        PUBLIC_BASE_URL: "https://callmate.example.com",
         PORT: "8080",
         LOG_LEVEL: "debug",
       }),
@@ -102,14 +105,58 @@ describe("loadConfig: RETELL_API_KEY", () => {
   });
 
   it("is required in production", () => {
-    expect(configErrorFor({ ...valid, NODE_ENV: "production" }).problems).toEqual([
+    expect(configErrorFor({ ...valid, NODE_ENV: "production" }).problems).toContain(
       "RETELL_API_KEY is missing",
-    ]);
+    );
   });
 
   it("is passed through when set", () => {
     expect(loadConfig({ ...valid, RETELL_API_KEY: "key_for_tests" }).retellApiKey).toBe(
       "key_for_tests",
+    );
+  });
+});
+
+describe("loadConfig: Twilio and PUBLIC_BASE_URL", () => {
+  it("are optional outside production, with purchases off by default", () => {
+    const config = loadConfig(valid);
+    expect(config.twilio).toBeUndefined();
+    expect(config.publicBaseUrl).toBeUndefined();
+  });
+
+  it("are required in production", () => {
+    expect(
+      configErrorFor({ ...valid, NODE_ENV: "production", RETELL_API_KEY: "k" }).problems,
+    ).toEqual([
+      "TWILIO_ACCOUNT_SID is missing",
+      "TWILIO_AUTH_TOKEN is missing",
+      "PUBLIC_BASE_URL is missing",
+    ]);
+  });
+
+  it("groups the Twilio settings and strips a trailing slash from the public URL", () => {
+    const config = loadConfig({
+      ...valid,
+      TWILIO_ACCOUNT_SID: "AC" + "a".repeat(32),
+      TWILIO_AUTH_TOKEN: "token_for_tests",
+      TWILIO_PURCHASES_ENABLED: "true",
+      PUBLIC_BASE_URL: "https://callmate.example.com/",
+    });
+    expect(config.twilio).toEqual({
+      accountSid: "AC" + "a".repeat(32),
+      authToken: "token_for_tests",
+      purchasesEnabled: true,
+    });
+    expect(config.publicBaseUrl).toBe("https://callmate.example.com");
+  });
+
+  it.each([
+    ["TWILIO_ACCOUNT_SID", "not-a-sid"],
+    ["TWILIO_PURCHASES_ENABLED", "yes"],
+    ["PUBLIC_BASE_URL", "ftp://example.com"],
+  ])("rejects an invalid %s", (name, value) => {
+    expect(configErrorFor({ ...valid, [name]: value }).problems[0]).toMatch(
+      new RegExp(`^${name} is invalid`),
     );
   });
 });

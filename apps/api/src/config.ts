@@ -12,10 +12,28 @@ const envSchema = z
     // Optional outside production so the API runs without a voice platform (tests use the
     // fake). Production can't answer calls without it, so there it's required.
     RETELL_API_KEY: z.string().min(1).optional(),
+    // Twilio: same rule. The webhook routes need PUBLIC_BASE_URL, because Twilio signs the
+    // exact public URL it called; it's never rebuilt from the request behind a proxy.
+    TWILIO_ACCOUNT_SID: z
+      .string()
+      .regex(/^AC[0-9a-fA-F]{32}$/, "expected AC + 32 hex characters")
+      .optional(),
+    TWILIO_AUTH_TOKEN: z.string().min(1).optional(),
+    PUBLIC_BASE_URL: z.url({ protocol: /^https?$/ }).optional(),
+    // Buying numbers costs money: off unless an environment says otherwise.
+    TWILIO_PURCHASES_ENABLED: z.enum(["true", "false"]).default("false"),
   })
   .superRefine((env, ctx) => {
-    if (env.NODE_ENV === "production" && env.RETELL_API_KEY === undefined) {
-      ctx.addIssue({ code: "custom", path: ["RETELL_API_KEY"], message: "required in production" });
+    if (env.NODE_ENV !== "production") return;
+    for (const name of [
+      "RETELL_API_KEY",
+      "TWILIO_ACCOUNT_SID",
+      "TWILIO_AUTH_TOKEN",
+      "PUBLIC_BASE_URL",
+    ] as const) {
+      if (env[name] === undefined) {
+        ctx.addIssue({ code: "custom", path: [name], message: "required in production" });
+      }
     }
   })
   .transform((env) => ({
@@ -24,6 +42,15 @@ const envSchema = z
     logLevel: env.LOG_LEVEL,
     databaseUrl: env.DATABASE_URL,
     retellApiKey: env.RETELL_API_KEY,
+    twilio:
+      env.TWILIO_ACCOUNT_SID !== undefined && env.TWILIO_AUTH_TOKEN !== undefined
+        ? {
+            accountSid: env.TWILIO_ACCOUNT_SID,
+            authToken: env.TWILIO_AUTH_TOKEN,
+            purchasesEnabled: env.TWILIO_PURCHASES_ENABLED === "true",
+          }
+        : undefined,
+    publicBaseUrl: env.PUBLIC_BASE_URL?.replace(/\/$/, ""),
   }));
 
 export type Config = z.output<typeof envSchema>;
