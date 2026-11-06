@@ -7,6 +7,9 @@ export const PROCESS_CALL_QUEUE = "process-call";
 /** Scheduled: picks up fallback voicemails whose callback never arrived. */
 export const RECONCILE_VOICEMAILS_QUEUE = "reconcile-voicemails";
 export const RECONCILE_VOICEMAILS_CRON = "*/15 * * * *";
+/** Scheduled: deletes expired recordings and transcripts (BUILD_PLAN Step 5). */
+export const RETENTION_QUEUE = "retention";
+export const RETENTION_CRON = "30 3 * * *"; // 03:30 Europe/London, every day
 /** Jobs that failed every retry land here, and anything in here raises an alert (Step 5). */
 export const DEAD_LETTER_QUEUE = "dead-letter";
 
@@ -41,6 +44,13 @@ export async function startQueue(connectionString: string): Promise<PgBoss> {
     retryDelay: 30,
     retryBackoff: true,
     expireInSeconds: 300,
+    deadLetter: DEAD_LETTER_QUEUE,
+  });
+  await ensureQueue(boss, RETENTION_QUEUE, {
+    policy: "singleton",
+    retryLimit: 2,
+    retryDelay: 300,
+    expireInSeconds: 1800,
     deadLetter: DEAD_LETTER_QUEUE,
   });
   await ensureQueue(boss, RECONCILE_VOICEMAILS_QUEUE, {

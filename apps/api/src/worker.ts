@@ -1,5 +1,6 @@
 // The worker process: runs background jobs. Same image as the API, different command.
 import { ConfigError, loadConfig } from "./config.ts";
+import { createAdminPool } from "./db/cross-tenant.ts";
 import { createPool } from "./db/pool.ts";
 import { startDeadLetterWatcher } from "./jobs/dead-letter.ts";
 import { runProcessCall, type ProcessCallJobData } from "./jobs/process-call.ts";
@@ -7,10 +8,13 @@ import {
   PROCESS_CALL_QUEUE,
   RECONCILE_VOICEMAILS_CRON,
   RECONCILE_VOICEMAILS_QUEUE,
+  RETENTION_CRON,
+  RETENTION_QUEUE,
   SYNC_AGENT_QUEUE,
   startQueue,
 } from "./jobs/queue.ts";
 import { reconcileVoicemails } from "./jobs/reconcile-voicemails.ts";
+import { runRetention } from "./jobs/retention.ts";
 import { runSyncAgent, type SyncAgentJobData } from "./jobs/sync-agent.ts";
 import { logger } from "./logger.ts";
 import { AnthropicLlmProvider } from "./providers/anthropic.ts";
@@ -52,8 +56,19 @@ try {
       tz: "Europe/London",
     });
     queues.push(RECONCILE_VOICEMAILS_QUEUE);
+
+    if (config.adminDatabaseUrl) {
+      const admin = createAdminPool(config.adminDatabaseUrl);
+      await boss.work(RETENTION_QUEUE, async () => {
+        await runRetention({ admin, voice, telephony });
+      });
+      await boss.schedule(RETENTION_QUEUE, RETENTION_CRON, null, { tz: "Europe/London" });
+      queues.push(RETENTION_QUEUE);
+    } else {
+      logger.warn("Retention disabled: ADMIN_DATABASE_URL isn't set");
+    }
   } else {
-    logger.warn("Voicemail reconciliation disabled: Twilio isn't configured");
+    logger.warn("Voicemail reconciliation and retention disabled: Twilio isn't configured");
   }
   logger.info("Worker listening", { queues, nodeEnv: config.nodeEnv });
 

@@ -28,6 +28,7 @@ export class FakeTelephonyProvider implements TelephonyProvider {
   /** What the "provider" holds; tests fill these in. */
   readonly recordings: RecordingSummary[] = [];
   readonly callDetails = new Map<string, CallDetails>();
+  readonly deletedRecordings: string[] = [];
   private readonly purchasesEnabled: boolean;
 
   constructor({ purchasesEnabled = true }: { purchasesEnabled?: boolean } = {}) {
@@ -77,6 +78,11 @@ export class FakeTelephonyProvider implements TelephonyProvider {
 
   getCall(callSid: string) {
     return Promise.resolve(this.callDetails.get(callSid) ?? null);
+  }
+
+  deleteRecording(recordingSid: string) {
+    this.deletedRecordings.push(recordingSid);
+    return Promise.resolve();
   }
 
   verifyWebhook({ url, params, signature }: WebhookRequest): boolean {

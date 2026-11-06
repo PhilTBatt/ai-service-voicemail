@@ -34,6 +34,7 @@ describe("loadConfig", () => {
         PUBLIC_BASE_URL: "https://callmate.example.com",
         FALLBACK_VOICEMAIL_URL: "https://handler.twilio.com/twiml/EH0",
         ANTHROPIC_API_KEY: "key_for_tests",
+        ADMIN_DATABASE_URL: "postgres://callmate_admin@localhost/callmate",
         PORT: "8080",
         LOG_LEVEL: "debug",
       }),
@@ -135,6 +136,7 @@ describe("loadConfig: Twilio and PUBLIC_BASE_URL", () => {
       "PUBLIC_BASE_URL is missing",
       "FALLBACK_VOICEMAIL_URL is missing",
       "ANTHROPIC_API_KEY is missing",
+      "ADMIN_DATABASE_URL is missing",
     ]);
   });
 

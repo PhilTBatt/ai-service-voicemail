@@ -87,3 +87,45 @@ export async function listTenants(admin: AdminPool): Promise<TenantSummary[]> {
   );
   return rows;
 }
+
+// ─── Retention (BUILD_PLAN Step 5) ─────────────────────────────────────────────────────
+// Runs across every tenant, so it lives here with the other cross-tenant code.
+
+export interface ExpiredRecording {
+  tenantId: string;
+  callId: string;
+  providerCallId: string;
+  recordingRef: string;
+  viaFallback: boolean;
+}
+
+/** Calls whose recording is older than the retention period and not yet deleted. */
+export async function findExpiredRecordings(
+  admin: AdminPool,
+  olderThan: Date,
+  limit = 200,
+): Promise<ExpiredRecording[]> {
+  const { rows } = await admin.query<ExpiredRecording>(
+    `SELECT tenant_id AS "tenantId", id AS "callId", provider_call_id AS "providerCallId",
+            recording_ref AS "recordingRef", via_fallback AS "viaFallback"
+     FROM calls WHERE recording_ref IS NOT NULL AND started_at < $1
+     ORDER BY started_at LIMIT $2`,
+    [olderThan, limit],
+  );
+  return rows;
+}
+
+/** Forgets a recording once the provider has deleted it. */
+export async function clearRecording(admin: AdminPool, callId: string): Promise<void> {
+  await admin.query("UPDATE calls SET recording_ref = NULL WHERE id = $1", [callId]);
+}
+
+/** Deletes transcripts, summaries and extracted fields older than the retention period. Returns the count. */
+export async function clearExpiredTranscripts(admin: AdminPool, olderThan: Date): Promise<number> {
+  const result = await admin.query(
+    `UPDATE calls SET transcript = NULL, summary = NULL, extracted_fields = '{}'
+     WHERE started_at < $1 AND (transcript IS NOT NULL OR summary IS NOT NULL OR extracted_fields <> '{}')`,
+    [olderThan],
+  );
+  return result.rowCount ?? 0;
+}

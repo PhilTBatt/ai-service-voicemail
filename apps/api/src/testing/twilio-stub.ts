@@ -14,6 +14,7 @@ export class TwilioApiStub {
   /** Tests fill these in, in Twilio's JSON shapes. */
   readonly recordings: Record<string, unknown>[] = [];
   readonly calls = new Map<string, Record<string, unknown>>();
+  readonly deletedRecordingSids = new Set<string>();
   private nextSid = 1;
 
   readonly fetch: typeof fetch = (input, init) => {
@@ -39,6 +40,14 @@ export class TwilioApiStub {
 
     if (method === "GET" && tail === "/Recordings.json") {
       return json(200, { recordings: this.recordings });
+    }
+    const recMatch = /^\/Recordings\/([^/]+)\.json$/.exec(tail);
+    if (method === "DELETE" && recMatch) {
+      const sid = decodeURIComponent(recMatch[1]!);
+      if (this.deletedRecordingSids.has(sid))
+        return json(404, { code: 20404, message: "not found" });
+      this.deletedRecordingSids.add(sid);
+      return new Response(null, { status: 204 });
     }
     const callMatch = /^\/Calls\/([^/]+)\.json$/.exec(tail);
     if (method === "GET" && callMatch) {

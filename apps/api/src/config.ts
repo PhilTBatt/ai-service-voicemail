@@ -36,6 +36,8 @@ const envSchema = z
     // The LLM for post-call extraction (BUILD_PLAN Step 5). The model is pinned here so a
     // provider-side change never silently alters what gets extracted.
     ANTHROPIC_API_KEY: z.string().min(1).optional(),
+    // Cross-tenant work (retention, seeding). The API never uses it; the worker does.
+    ADMIN_DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }).optional(),
     LLM_MODEL: z.string().min(1).default("claude-haiku-5-5"),
   })
   .superRefine((env, ctx) => {
@@ -47,6 +49,7 @@ const envSchema = z
       "PUBLIC_BASE_URL",
       "FALLBACK_VOICEMAIL_URL",
       "ANTHROPIC_API_KEY",
+      "ADMIN_DATABASE_URL",
     ] as const) {
       if (env[name] === undefined) {
         ctx.addIssue({ code: "custom", path: [name], message: "required in production" });
@@ -71,6 +74,7 @@ const envSchema = z
         : undefined,
     publicBaseUrl: env.PUBLIC_BASE_URL?.replace(/\/$/, ""),
     fallbackVoicemailUrl: env.FALLBACK_VOICEMAIL_URL,
+    adminDatabaseUrl: env.ADMIN_DATABASE_URL,
     llm: env.ANTHROPIC_API_KEY
       ? { apiKey: env.ANTHROPIC_API_KEY, model: env.LLM_MODEL }
       : undefined,

@@ -163,6 +163,14 @@ export class TwilioTelephonyProvider implements TelephonyProvider {
     }
   }
 
+  async deleteRecording(recordingSid: string): Promise<void> {
+    try {
+      await this.request("DELETE", `/Recordings/${encodeURIComponent(recordingSid)}.json`);
+    } catch (error) {
+      if (!(error instanceof TwilioApiError && error.status === 404)) throw error;
+    }
+  }
+
   verifyWebhook({ url, params, signature }: WebhookRequest): boolean {
     if (typeof signature !== "string") return false;
     // HMAC-SHA1 over the exact public URL plus the sorted form parameters, keyed with the

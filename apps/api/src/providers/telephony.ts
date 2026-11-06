@@ -81,4 +81,6 @@ export interface TelephonyProvider {
   listRecentRecordings(window: { since: Date }): Promise<RecordingSummary[]>;
   /** The numbers and times of a call, or null if the provider doesn't know it. */
   getCall(callSid: string): Promise<CallDetails | null>;
+  /** Deletes a recording held at the provider. Safe to repeat. */
+  deleteRecording(recordingSid: string): Promise<void>;
 }
