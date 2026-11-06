@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import {
   PurchaseNotAllowedError,
   type AvailableNumber,
@@ -29,7 +29,6 @@ export class FakeTelephonyProvider implements TelephonyProvider {
   readonly recordings: RecordingSummary[] = [];
   readonly callDetails = new Map<string, CallDetails>();
   private readonly purchasesEnabled: boolean;
-  private nextSid = 1;
 
   constructor({ purchasesEnabled = true }: { purchasesEnabled?: boolean } = {}) {
     this.purchasesEnabled = purchasesEnabled;
@@ -53,7 +52,8 @@ export class FakeTelephonyProvider implements TelephonyProvider {
     if (!this.available.some((n) => n.number === number)) {
       return Promise.reject(new Error(`${number} is not available`));
     }
-    const providerSid = `PNfake${String(this.nextSid++).padStart(4, "0")}`;
+    // Unique across test runs: provider SIDs are unique in the database.
+    const providerSid = `PNfake${randomUUID().replace(/-/g, "")}`;
     this.purchased.set(providerSid, { providerSid, number, config });
     return Promise.resolve({ providerSid, number });
   }

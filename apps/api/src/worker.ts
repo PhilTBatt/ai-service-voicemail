@@ -1,7 +1,9 @@
 // The worker process: runs background jobs. Same image as the API, different command.
 import { ConfigError, loadConfig } from "./config.ts";
 import { createPool } from "./db/pool.ts";
+import { runProcessCall, type ProcessCallJobData } from "./jobs/process-call.ts";
 import {
+  PROCESS_CALL_QUEUE,
   RECONCILE_VOICEMAILS_CRON,
   RECONCILE_VOICEMAILS_QUEUE,
   SYNC_AGENT_QUEUE,
@@ -22,10 +24,13 @@ try {
   const pool = createPool(config.databaseUrl);
   const boss = await startQueue(config.databaseUrl);
   const voice = new RetellVoiceProvider({ apiKey: config.retellApiKey });
-  const queues = [SYNC_AGENT_QUEUE];
+  const queues = [SYNC_AGENT_QUEUE, PROCESS_CALL_QUEUE];
 
   await boss.work<SyncAgentJobData>(SYNC_AGENT_QUEUE, async (jobs) => {
     for (const job of jobs) await runSyncAgent({ pool, voice }, job.data);
+  });
+  await boss.work<ProcessCallJobData>(PROCESS_CALL_QUEUE, async (jobs) => {
+    for (const job of jobs) await runProcessCall(job.data);
   });
 
   if (config.twilio) {

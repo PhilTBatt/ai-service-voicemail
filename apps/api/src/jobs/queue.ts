@@ -2,6 +2,8 @@ import { PgBoss } from "pg-boss";
 import { logger } from "../logger.ts";
 
 export const SYNC_AGENT_QUEUE = "sync-agent";
+/** One job per finished call, keyed by the provider's call ID (BUILD_PLAN Step 5). */
+export const PROCESS_CALL_QUEUE = "process-call";
 /** Scheduled: picks up fallback voicemails whose callback never arrived. */
 export const RECONCILE_VOICEMAILS_QUEUE = "reconcile-voicemails";
 export const RECONCILE_VOICEMAILS_CRON = "*/15 * * * *";
@@ -31,6 +33,14 @@ export async function startQueue(connectionString: string): Promise<PgBoss> {
     retryDelay: 30,
     retryBackoff: true,
     expireInSeconds: 120,
+    deadLetter: DEAD_LETTER_QUEUE,
+  });
+  await ensureQueue(boss, PROCESS_CALL_QUEUE, {
+    policy: "exclusive", // at most one job per provider call ID queued or active
+    retryLimit: 5,
+    retryDelay: 30,
+    retryBackoff: true,
+    expireInSeconds: 300,
     deadLetter: DEAD_LETTER_QUEUE,
   });
   await ensureQueue(boss, RECONCILE_VOICEMAILS_QUEUE, {

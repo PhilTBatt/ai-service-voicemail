@@ -1,13 +1,17 @@
 import { createApp } from "./app.ts";
 import { ConfigError, loadConfig, type Config } from "./config.ts";
+import { recordCallEnded } from "./db/calls.ts";
 import { createPool } from "./db/pool.ts";
+import { startQueue } from "./jobs/queue.ts";
 import { logger } from "./logger.ts";
 import { RetellVoiceProvider } from "./providers/retell.ts";
 import { TwilioTelephonyProvider } from "./providers/twilio.ts";
 
-function start(config: Config): void {
+async function start(config: Config): Promise<void> {
   logger.level = config.logLevel;
   const pool = createPool(config.databaseUrl);
+  // The API only enqueues; the worker process runs the jobs.
+  const boss = await startQueue(config.databaseUrl);
 
   const voiceProviders = config.retellApiKey
     ? { retell: new RetellVoiceProvider({ apiKey: config.retellApiKey }) }
@@ -35,14 +39,9 @@ function start(config: Config): void {
     pool,
     voiceProviders,
     telephony,
-    // Step 5 replaces this with storing the call and enqueueing its processing.
-    onCallEnded: (event) => {
-      logger.info("Voice call ended (not stored yet)", {
-        providerCallId: event.providerCallId,
-        providerAgentId: event.providerAgentId,
-        durationSeconds: event.durationSeconds,
-      });
-      return Promise.resolve();
+    onCallEnded: async (event) => {
+      const result = await recordCallEnded(pool, boss, event);
+      logger.info("Voice call ended", { providerCallId: event.providerCallId, ...result });
     },
   });
 
@@ -50,18 +49,21 @@ function start(config: Config): void {
     if (error) {
       logger.error("API failed to start", { error, port: config.port });
       process.exitCode = 1;
-      void pool.end();
+      void boss.stop({ close: true }).then(() => pool.end());
       return;
     }
     logger.info("API listening", { port: config.port, nodeEnv: config.nodeEnv });
   });
 
   // Azure sends SIGTERM before stopping a container; Ctrl+C sends SIGINT. Stop accepting
-  // connections, let in-flight requests finish, then close the database pool.
+  // connections, let in-flight requests finish, then close the queue and the pool.
   const shutdown = (signal: NodeJS.Signals) => {
     logger.info("Shutting down", { signal });
     server.close(() => {
-      void pool.end().then(() => logger.info("Shutdown complete"));
+      void boss
+        .stop({ close: true })
+        .then(() => pool.end())
+        .then(() => logger.info("Shutdown complete"));
     });
   };
   process.once("SIGTERM", shutdown);
@@ -69,7 +71,7 @@ function start(config: Config): void {
 }
 
 try {
-  start(loadConfig(process.env));
+  await start(loadConfig(process.env));
 } catch (error) {
   if (!(error instanceof ConfigError)) throw error;
   logger.error("Invalid environment configuration", { problems: error.problems });
