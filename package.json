@@ -26,7 +26,8 @@
     "db:seed": "node --env-file-if-exists=.env apps/api/src/db/seed.ts",
     "worker": "npm run worker --workspace @callmate/api",
     "demo:profile": "node --env-file-if-exists=.env apps/api/src/scripts/save-demo-profile.ts",
-    "twiml:fallback": "node --env-file-if-exists=.env apps/api/src/scripts/print-fallback-twiml.ts"
+    "twiml:fallback": "node --env-file-if-exists=.env apps/api/src/scripts/print-fallback-twiml.ts",
+    "live-buy-test-number": "node --env-file-if-exists=.env apps/api/src/scripts/live-buy-test-number.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

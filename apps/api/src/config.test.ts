@@ -32,6 +32,7 @@ describe("loadConfig", () => {
         TWILIO_ACCOUNT_SID: "AC" + "a".repeat(32),
         TWILIO_AUTH_TOKEN: "token_for_tests",
         PUBLIC_BASE_URL: "https://callmate.example.com",
+        FALLBACK_VOICEMAIL_URL: "https://handler.twilio.com/twiml/EH0",
         PORT: "8080",
         LOG_LEVEL: "debug",
       }),
@@ -131,6 +132,7 @@ describe("loadConfig: Twilio and PUBLIC_BASE_URL", () => {
       "TWILIO_ACCOUNT_SID is missing",
       "TWILIO_AUTH_TOKEN is missing",
       "PUBLIC_BASE_URL is missing",
+      "FALLBACK_VOICEMAIL_URL is missing",
     ]);
   });
 
@@ -158,5 +160,32 @@ describe("loadConfig: Twilio and PUBLIC_BASE_URL", () => {
     expect(configErrorFor({ ...valid, [name]: value }).problems[0]).toMatch(
       new RegExp(`^${name} is invalid`),
     );
+  });
+});
+
+describe("loadConfig: number purchasing", () => {
+  it("passes the regulatory bundle and address through, and the voicemail bin URL", () => {
+    const config = loadConfig({
+      ...valid,
+      TWILIO_ACCOUNT_SID: "AC" + "a".repeat(32),
+      TWILIO_AUTH_TOKEN: "token_for_tests",
+      TWILIO_BUNDLE_SID: "BU" + "b".repeat(32),
+      TWILIO_ADDRESS_SID: "AD" + "c".repeat(32),
+      FALLBACK_VOICEMAIL_URL: "https://handler.twilio.com/twiml/EH0",
+    });
+    expect(config.twilio).toMatchObject({
+      bundleSid: "BU" + "b".repeat(32),
+      addressSid: "AD" + "c".repeat(32),
+    });
+    expect(config.fallbackVoicemailUrl).toBe("https://handler.twilio.com/twiml/EH0");
+  });
+
+  it("rejects a malformed bundle SID or a non-https voicemail URL", () => {
+    expect(configErrorFor({ ...valid, TWILIO_BUNDLE_SID: "nope" }).problems[0]).toMatch(
+      /^TWILIO_BUNDLE_SID is invalid/,
+    );
+    expect(
+      configErrorFor({ ...valid, FALLBACK_VOICEMAIL_URL: "http://insecure" }).problems[0],
+    ).toMatch(/^FALLBACK_VOICEMAIL_URL is invalid/);
   });
 });

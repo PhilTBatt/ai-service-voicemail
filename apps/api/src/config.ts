@@ -22,6 +22,17 @@ const envSchema = z
     PUBLIC_BASE_URL: z.url({ protocol: /^https?$/ }).optional(),
     // Buying numbers costs money: off unless an environment says otherwise.
     TWILIO_PURCHASES_ENABLED: z.enum(["true", "false"]).default("false"),
+    // UK numbers need an approved regulatory bundle and address (decision 009).
+    TWILIO_BUNDLE_SID: z
+      .string()
+      .regex(/^BU[0-9a-fA-F]{32}$/, "expected BU + 32 hex characters")
+      .optional(),
+    TWILIO_ADDRESS_SID: z
+      .string()
+      .regex(/^AD[0-9a-fA-F]{32}$/, "expected AD + 32 hex characters")
+      .optional(),
+    // The TwiML Bin that plays the static voicemail (npm run twiml:fallback): the number's fallback URL.
+    FALLBACK_VOICEMAIL_URL: z.url({ protocol: /^https$/ }).optional(),
   })
   .superRefine((env, ctx) => {
     if (env.NODE_ENV !== "production") return;
@@ -30,6 +41,7 @@ const envSchema = z
       "TWILIO_ACCOUNT_SID",
       "TWILIO_AUTH_TOKEN",
       "PUBLIC_BASE_URL",
+      "FALLBACK_VOICEMAIL_URL",
     ] as const) {
       if (env[name] === undefined) {
         ctx.addIssue({ code: "custom", path: [name], message: "required in production" });
@@ -48,9 +60,12 @@ const envSchema = z
             accountSid: env.TWILIO_ACCOUNT_SID,
             authToken: env.TWILIO_AUTH_TOKEN,
             purchasesEnabled: env.TWILIO_PURCHASES_ENABLED === "true",
+            ...(env.TWILIO_BUNDLE_SID !== undefined && { bundleSid: env.TWILIO_BUNDLE_SID }),
+            ...(env.TWILIO_ADDRESS_SID !== undefined && { addressSid: env.TWILIO_ADDRESS_SID }),
           }
         : undefined,
     publicBaseUrl: env.PUBLIC_BASE_URL?.replace(/\/$/, ""),
+    fallbackVoicemailUrl: env.FALLBACK_VOICEMAIL_URL,
   }));
 
 export type Config = z.output<typeof envSchema>;
