@@ -25,7 +25,8 @@
     "db:new": "dbmate --migrations-dir apps/api/src/db/migrations new",
     "db:seed": "node --env-file-if-exists=.env apps/api/src/db/seed.ts",
     "worker": "npm run worker --workspace @callmate/api",
-    "demo:profile": "node --env-file-if-exists=.env apps/api/src/scripts/save-demo-profile.ts"
+    "demo:profile": "node --env-file-if-exists=.env apps/api/src/scripts/save-demo-profile.ts",
+    "twiml:fallback": "node --env-file-if-exists=.env apps/api/src/scripts/print-fallback-twiml.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

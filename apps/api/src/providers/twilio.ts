@@ -5,12 +5,15 @@ import twilio from "twilio";
 import {
   PurchaseNotAllowedError,
   type AvailableNumber,
+  type CallDetails,
   type NumberConfiguration,
   type NumberSearch,
   type PurchasedNumber,
+  type RecordingSummary,
   type TelephonyProvider,
   type WebhookRequest,
 } from "./telephony.ts";
+import { e164OrNull } from "../core/phone.ts";
 
 export interface TwilioOptions {
   accountSid: string;
@@ -38,6 +41,23 @@ interface AvailableNumberJson {
   phone_number: string;
   locality: string | null;
   region: string | null;
+}
+
+interface RecordingJson {
+  sid: string;
+  call_sid: string;
+  uri: string;
+  duration: string | null;
+  date_created: string;
+}
+
+interface CallJson {
+  sid: string;
+  from: string;
+  to: string;
+  start_time: string;
+  end_time: string | null;
+  duration: string | null;
 }
 
 export class TwilioTelephonyProvider implements TelephonyProvider {
@@ -100,6 +120,46 @@ export class TwilioTelephonyProvider implements TelephonyProvider {
     } catch (error) {
       // Already released: the outcome we wanted.
       if (!(error instanceof TwilioApiError && error.status === 404)) throw error;
+    }
+  }
+
+  async listRecentRecordings({ since }: { since: Date }): Promise<RecordingSummary[]> {
+    // Twilio filters by whole days ("DateCreated>" is on or after that date), so ask from the
+    // day before and trim to the exact instant here.
+    const dayBefore = new Date(since.getTime() - 24 * 3600_000).toISOString().slice(0, 10);
+    const query = new URLSearchParams({ "DateCreated>": dayBefore, PageSize: "100" });
+    const result = await this.request<{ recordings: RecordingJson[] }>(
+      "GET",
+      `/Recordings.json?${query}`,
+    );
+    return result.recordings
+      .map((r) => ({
+        recordingSid: r.sid,
+        callSid: r.call_sid,
+        url: `https://api.twilio.com${r.uri.replace(/\.json$/, "")}`,
+        durationSeconds: Number(r.duration) || 0,
+        createdAt: new Date(r.date_created),
+      }))
+      .filter((r) => r.createdAt >= since);
+  }
+
+  async getCall(callSid: string): Promise<CallDetails | null> {
+    try {
+      const call = await this.request<CallJson>(
+        "GET",
+        `/Calls/${encodeURIComponent(callSid)}.json`,
+      );
+      return {
+        callSid: call.sid,
+        from: e164OrNull(call.from),
+        to: call.to,
+        startedAt: new Date(call.start_time),
+        endedAt: call.end_time ? new Date(call.end_time) : null,
+        durationSeconds: Number(call.duration) || 0,
+      };
+    } catch (error) {
+      if (error instanceof TwilioApiError && error.status === 404) return null;
+      throw error;
     }
   }
 

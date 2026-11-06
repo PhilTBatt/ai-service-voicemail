@@ -1,0 +1,106 @@
+import { randomUUID } from "node:crypto";
+import { afterAll, describe, expect, it } from "vitest";
+import { TEST_ADMIN_DATABASE_URL, TEST_DATABASE_URL } from "../testing/databases.ts";
+import { assignPhoneNumber, createAdminPool, createTenant } from "./cross-tenant.ts";
+import { createPool } from "./pool.ts";
+import { withTenant } from "./tenant.ts";
+import { storeFallbackVoicemail, type FallbackVoicemail } from "./voicemails.ts";
+
+const app = createPool(TEST_DATABASE_URL);
+const admin = createAdminPool(TEST_ADMIN_DATABASE_URL);
+
+afterAll(async () => {
+  await Promise.all([app.end(), admin.end()]);
+});
+
+async function makeTenant() {
+  const tenantId = await createTenant(admin, {
+    businessName: "Voicemail Roofing",
+    trade: "roofer",
+  });
+  const number = `+441914980${String(Math.floor(Math.random() * 1000)).padStart(3, "0")}`;
+  await admin.query(
+    "UPDATE phone_numbers SET status = 'released', released_at = now() WHERE number = $1 AND status = 'active'",
+    [number],
+  );
+  await assignPhoneNumber(admin, tenantId, number, `PN${randomUUID()}`);
+  return { tenantId, number };
+}
+
+const voicemail = (to: string, overrides: Partial<FallbackVoicemail> = {}): FallbackVoicemail => ({
+  callSid: `CA${randomUUID().replace(/-/g, "")}`,
+  from: "+447700900123",
+  to,
+  recordingUrl: "https://api.twilio.com/2010-04-01/Accounts/AC0/Recordings/RE1",
+  durationSeconds: 42,
+  startedAt: new Date("2026-11-06T18:00:00Z"),
+  endedAt: new Date("2026-11-06T18:01:00Z"),
+  ...overrides,
+});
+
+describe("storeFallbackVoicemail", () => {
+  it("stores a call row for the tenant of the dialled number, marked as via the fallback", async () => {
+    const { tenantId, number } = await makeTenant();
+    const v = voicemail(number);
+    expect(await storeFallbackVoicemail(app, v)).toEqual({ outcome: "stored", tenantId });
+
+    const row = await withTenant(app, tenantId, async (client) => {
+      const { rows } = await client.query(
+        "SELECT caller_number, via_fallback, outcome, recording_ref, billable_seconds FROM calls WHERE provider_call_id = $1",
+        [v.callSid],
+      );
+      return rows[0] as unknown;
+    });
+    expect(row).toEqual({
+      caller_number: "+447700900123",
+      via_fallback: true,
+      outcome: "voicemail",
+      recording_ref: v.recordingUrl,
+      billable_seconds: 42,
+    });
+  });
+
+  it("is a no-op the second time the same call is seen", async () => {
+    const { tenantId, number } = await makeTenant();
+    const v = voicemail(number);
+    await storeFallbackVoicemail(app, v);
+    expect(await storeFallbackVoicemail(app, v)).toEqual({ outcome: "duplicate", tenantId });
+    const count = await withTenant(
+      app,
+      tenantId,
+      async (client) =>
+        (
+          await client.query<{ n: number }>(
+            "SELECT count(*)::int AS n FROM calls WHERE provider_call_id = $1",
+            [v.callSid],
+          )
+        ).rows[0],
+    );
+    expect(count).toEqual({ n: 1 });
+  });
+
+  it("stores a withheld caller number as null", async () => {
+    const { tenantId, number } = await makeTenant();
+    const v = voicemail(number, { from: null });
+    await storeFallbackVoicemail(app, v);
+    const row = await withTenant(
+      app,
+      tenantId,
+      async (client) =>
+        (
+          await client.query<{ caller_number: string | null }>(
+            "SELECT caller_number FROM calls WHERE provider_call_id = $1",
+            [v.callSid],
+          )
+        ).rows[0],
+    );
+    expect(row).toEqual({ caller_number: null });
+  });
+
+  it("reports a number nobody owns rather than storing anything", async () => {
+    expect(await storeFallbackVoicemail(app, voicemail("+441632960999"))).toEqual({
+      outcome: "unknown-number",
+      tenantId: null,
+    });
+  });
+});

@@ -1,5 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { agentDial, fallbackVoicemail, hangup, rejectCall, serviceEnded } from "./twiml.ts";
+import {
+  agentDial,
+  fallbackVoicemail,
+  fallbackVoicemailBin,
+  hangup,
+  rejectCall,
+  serviceEnded,
+  voicemailDone,
+} from "./twiml.ts";
+
+const URLS = {
+  actionUrl: "https://example.com/webhooks/twilio/voicemail-done",
+  recordingStatusCallbackUrl: "https://example.com/webhooks/twilio/recording",
+};
 
 describe("TwiML", () => {
   it("dials the agent's SIP URI and reports back when the dial ends", () => {
@@ -11,11 +24,29 @@ describe("TwiML", () => {
     expect(xml).toContain("<Sip>sip:call_123@sip.retellai.com</Sip>");
   });
 
-  it("plays the fallback greeting and records for up to two minutes", () => {
-    const xml = fallbackVoicemail("https://example.com/webhooks/twilio/recording");
+  it("plays the fallback greeting, records for up to two minutes, and reports the recording separately", () => {
+    const xml = fallbackVoicemail(URLS);
     expect(xml).toMatchSnapshot();
     expect(xml).toContain('maxLength="120"');
     expect(xml).toContain("Sorry, the assistant isn't available right now.");
+    expect(xml).toContain('action="https://example.com/webhooks/twilio/voicemail-done"');
+    expect(xml).toContain(
+      'recordingStatusCallback="https://example.com/webhooks/twilio/recording"',
+    );
+  });
+
+  it("thanks the caller and hangs up after the recording", () => {
+    expect(voicemailDone()).toMatchSnapshot();
+  });
+
+  it("builds the same voicemail as a self-contained TwiML Bin, with no API URL but the callback", () => {
+    const bin = fallbackVoicemailBin(URLS.recordingStatusCallbackUrl);
+    expect(bin).toMatchSnapshot();
+    expect(bin).toContain("{{#if RecordingUrl}}");
+    expect(bin).toContain("Sorry, the assistant isn't available right now.");
+    expect(bin).toContain("Thanks. Goodbye.");
+    expect(bin).not.toContain("action=");
+    expect(bin.match(/https:\/\//g)).toHaveLength(1);
   });
 
   it("tells callers of a cancelled tenant to ring the business mobile, digit by digit", () => {

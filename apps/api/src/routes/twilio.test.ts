@@ -128,7 +128,9 @@ describe("POST /webhooks/twilio/voice", () => {
       const { number } = await makeTenant(status);
       const xml = await (await post("/webhooks/twilio/voice", call(number))).text();
       expect(xml).toContain("Sorry, the assistant isn't available right now.");
-      expect(xml).toContain(`<Record action="${PUBLIC_BASE_URL}/webhooks/twilio/recording"`);
+      expect(xml).toContain(
+        `recordingStatusCallback="${PUBLIC_BASE_URL}/webhooks/twilio/recording"`,
+      );
     },
   );
 
@@ -226,4 +228,73 @@ describe("POST /webhooks/twilio/dial-status", () => {
       expect(xml).toContain("<Record");
     },
   );
+});
+
+describe("POST /webhooks/twilio/voicemail-done", () => {
+  it("thanks the caller and hangs up", async () => {
+    const xml = await (await post("/webhooks/twilio/voicemail-done", { CallSid: "CA1" })).text();
+    expect(xml).toContain("Thanks. Goodbye.");
+    expect(xml).toContain("<Hangup/>");
+  });
+});
+
+describe("POST /webhooks/twilio/recording", () => {
+  const callback = (callSid: string, status = "completed") => ({
+    CallSid: callSid,
+    RecordingSid: "RE" + randomUUID().replace(/-/g, ""),
+    RecordingUrl: "https://api.twilio.com/2010-04-01/Accounts/AC0/Recordings/RE1",
+    RecordingStatus: status,
+    RecordingDuration: "35",
+  });
+
+  it("stores a completed recording as a fallback voicemail for the dialled number's tenant", async () => {
+    const { tenantId, number } = await makeTenant("paused");
+    const callSid = "CA" + randomUUID().replace(/-/g, "");
+    telephony.callDetails.set(callSid, {
+      callSid,
+      from: "+447700900123",
+      to: number,
+      startedAt: new Date("2026-11-06T18:00:00Z"),
+      endedAt: new Date("2026-11-06T18:01:00Z"),
+      durationSeconds: 60,
+    });
+
+    expect((await post("/webhooks/twilio/recording", callback(callSid))).status).toBe(204);
+    const { rows } = await admin.query(
+      "SELECT tenant_id, via_fallback, billable_seconds, caller_number FROM calls WHERE provider_call_id = $1",
+      [callSid],
+    );
+    expect(rows).toEqual([
+      {
+        tenant_id: tenantId,
+        via_fallback: true,
+        billable_seconds: 35,
+        caller_number: "+447700900123",
+      },
+    ]);
+  });
+
+  it("acknowledges a failed recording without storing anything", async () => {
+    const callSid = "CA" + randomUUID().replace(/-/g, "");
+    expect((await post("/webhooks/twilio/recording", callback(callSid, "failed"))).status).toBe(
+      204,
+    );
+    expect(
+      (await admin.query("SELECT 1 FROM calls WHERE provider_call_id = $1", [callSid])).rowCount,
+    ).toBe(0);
+  });
+
+  it("acknowledges a recording for a call Twilio no longer knows", async () => {
+    const callSid = "CA" + randomUUID().replace(/-/g, "");
+    expect((await post("/webhooks/twilio/recording", callback(callSid))).status).toBe(204);
+  });
+
+  it("is signed like every other Twilio webhook", async () => {
+    const response = await post(
+      "/webhooks/twilio/recording",
+      callback("CA1"),
+      "http://localhost:3000/webhooks/twilio/recording",
+    );
+    expect(response.status).toBe(403);
+  });
 });

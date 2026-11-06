@@ -2,9 +2,11 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import {
   PurchaseNotAllowedError,
   type AvailableNumber,
+  type CallDetails,
   type NumberConfiguration,
   type NumberSearch,
   type PurchasedNumber,
+  type RecordingSummary,
   type TelephonyProvider,
   type WebhookRequest,
 } from "./telephony.ts";
@@ -23,6 +25,9 @@ export class FakeTelephonyProvider implements TelephonyProvider {
   }));
   readonly purchased = new Map<string, PurchasedNumber & { config: NumberConfiguration }>();
   readonly released: string[] = [];
+  /** What the "provider" holds; tests fill these in. */
+  readonly recordings: RecordingSummary[] = [];
+  readonly callDetails = new Map<string, CallDetails>();
   private readonly purchasesEnabled: boolean;
   private nextSid = 1;
 
@@ -64,6 +69,14 @@ export class FakeTelephonyProvider implements TelephonyProvider {
     this.purchased.delete(providerSid);
     this.released.push(providerSid);
     return Promise.resolve();
+  }
+
+  listRecentRecordings({ since }: { since: Date }) {
+    return Promise.resolve(this.recordings.filter((r) => r.createdAt >= since));
+  }
+
+  getCall(callSid: string) {
+    return Promise.resolve(this.callDetails.get(callSid) ?? null);
   }
 
   verifyWebhook({ url, params, signature }: WebhookRequest): boolean {

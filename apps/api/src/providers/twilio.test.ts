@@ -98,3 +98,59 @@ describe("TwilioTelephonyProvider", () => {
     );
   });
 });
+
+describe("TwilioTelephonyProvider recordings", () => {
+  it("lists recordings created since a point in time, trimmed to the exact instant", async () => {
+    const { provider, stub } = makeHarness();
+    stub.recordings.push(
+      {
+        sid: "RE1",
+        call_sid: "CA1",
+        uri: "/2010-04-01/Accounts/AC0/Recordings/RE1.json",
+        duration: "30",
+        date_created: "Fri, 06 Nov 2026 19:30:00 +0000",
+      },
+      {
+        sid: "RE2",
+        call_sid: "CA2",
+        uri: "/2010-04-01/Accounts/AC0/Recordings/RE2.json",
+        duration: "12",
+        date_created: "Fri, 06 Nov 2026 17:00:00 +0000",
+      },
+    );
+    const since = new Date("2026-11-06T18:00:00Z");
+    expect(await provider.listRecentRecordings({ since })).toEqual([
+      {
+        recordingSid: "RE1",
+        callSid: "CA1",
+        url: "https://api.twilio.com/2010-04-01/Accounts/AC0/Recordings/RE1",
+        durationSeconds: 30,
+        createdAt: new Date("2026-11-06T19:30:00Z"),
+      },
+    ]);
+    expect(stub.requests[0]).toMatchObject({
+      query: { "DateCreated>": "2026-11-05", PageSize: "100" },
+    });
+  });
+
+  it("fetches a call's numbers and times, treating a withheld caller as null", async () => {
+    const { provider, stub } = makeHarness();
+    stub.calls.set("CA1", {
+      sid: "CA1",
+      from: "anonymous",
+      to: "+441134960100",
+      start_time: "Fri, 06 Nov 2026 19:29:00 +0000",
+      end_time: "Fri, 06 Nov 2026 19:30:00 +0000",
+      duration: "60",
+    });
+    expect(await provider.getCall("CA1")).toEqual({
+      callSid: "CA1",
+      from: null,
+      to: "+441134960100",
+      startedAt: new Date("2026-11-06T19:29:00Z"),
+      endedAt: new Date("2026-11-06T19:30:00Z"),
+      durationSeconds: 60,
+    });
+    expect(await provider.getCall("CA_unknown")).toBeNull();
+  });
+});

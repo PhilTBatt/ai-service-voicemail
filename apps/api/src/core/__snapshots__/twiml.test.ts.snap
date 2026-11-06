@@ -1,13 +1,26 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
+exports[`TwiML > builds the same voicemail as a self-contained TwiML Bin, with no API URL but the callback 1`] = `
+"<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+{{#if RecordingUrl}}
+  <Say voice="Polly.Amy" language="en-GB">Thanks. Goodbye.</Say><Hangup/>
+{{else}}
+  <Say voice="Polly.Amy" language="en-GB">Sorry, the assistant isn't available right now. Please leave your name, your number and what you need after the tone, and you'll get a call back.</Say><Record maxLength="120" playBeep="true" recordingStatusCallback="https://example.com/webhooks/twilio/recording" recordingStatusCallbackMethod="POST"/>
+{{/if}}
+</Response>"
+`;
+
 exports[`TwiML > copes with a cancelled tenant that has no mobile on file 1`] = `"<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="Polly.Amy" language="en-GB">This service has ended. Please call the business directly. Goodbye.</Say><Hangup/></Response>"`;
 
 exports[`TwiML > dials the agent's SIP URI and reports back when the dial ends 1`] = `"<?xml version="1.0" encoding="UTF-8"?><Response><Dial action="https://example.com/webhooks/twilio/dial-status" method="POST" answerOnBridge="true"><Sip>sip:call_123@sip.retellai.com</Sip></Dial></Response>"`;
 
-exports[`TwiML > plays the fallback greeting and records for up to two minutes 1`] = `"<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="Polly.Amy" language="en-GB">Sorry, the assistant isn't available right now. Please leave your name, your number and what you need after the tone, and you'll get a call back.</Say><Record action="https://example.com/webhooks/twilio/recording" method="POST" maxLength="120" playBeep="true"/></Response>"`;
+exports[`TwiML > plays the fallback greeting, records for up to two minutes, and reports the recording separately 1`] = `"<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="Polly.Amy" language="en-GB">Sorry, the assistant isn't available right now. Please leave your name, your number and what you need after the tone, and you'll get a call back.</Say><Record action="https://example.com/webhooks/twilio/voicemail-done" method="POST" maxLength="120" playBeep="true" recordingStatusCallback="https://example.com/webhooks/twilio/recording" recordingStatusCallbackMethod="POST"/></Response>"`;
 
 exports[`TwiML > rejects and hangs up 1`] = `"<?xml version="1.0" encoding="UTF-8"?><Response><Reject reason="rejected"/></Response>"`;
 
 exports[`TwiML > rejects and hangs up 2`] = `"<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>"`;
 
 exports[`TwiML > tells callers of a cancelled tenant to ring the business mobile, digit by digit 1`] = `"<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="Polly.Amy" language="en-GB">This service has ended. Please call <say-as interpret-as="telephone">07700 900001</say-as>. Goodbye.</Say><Hangup/></Response>"`;
+
+exports[`TwiML > thanks the caller and hangs up after the recording 1`] = `"<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="Polly.Amy" language="en-GB">Thanks. Goodbye.</Say><Hangup/></Response>"`;

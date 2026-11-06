@@ -46,3 +46,6 @@ export const FALLBACK_VOICEMAIL_GREETING =
 
 /** For cancelling and cancelled tenants (BUILD_PLAN Step 4). */
 export const SERVICE_ENDED_LINE = "This service has ended. Please call";
+
+/** After a fallback voicemail has been recorded. */
+export const VOICEMAIL_THANKS = "Thanks. Goodbye.";

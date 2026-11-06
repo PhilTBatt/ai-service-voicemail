@@ -11,6 +11,9 @@ interface Captured {
 export class TwilioApiStub {
   readonly numbers = new Map<string, { phone_number: string; form: Record<string, string> }>();
   readonly requests: Captured[] = [];
+  /** Tests fill these in, in Twilio's JSON shapes. */
+  readonly recordings: Record<string, unknown>[] = [];
+  readonly calls = new Map<string, Record<string, unknown>>();
   private nextSid = 1;
 
   readonly fetch: typeof fetch = (input, init) => {
@@ -34,6 +37,14 @@ export class TwilioApiStub {
     const json = (status: number, data: unknown) => Response.json(data, { status });
     const tail = path.replace(/^\/2010-04-01\/Accounts\/[^/]+/, "");
 
+    if (method === "GET" && tail === "/Recordings.json") {
+      return json(200, { recordings: this.recordings });
+    }
+    const callMatch = /^\/Calls\/([^/]+)\.json$/.exec(tail);
+    if (method === "GET" && callMatch) {
+      const call = this.calls.get(decodeURIComponent(callMatch[1]!));
+      return call ? json(200, call) : json(404, { code: 20404, message: "not found" });
+    }
     if (method === "GET" && tail === "/AvailablePhoneNumbers/GB/Local.json") {
       return json(200, {
         available_phone_numbers: [

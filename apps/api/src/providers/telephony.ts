@@ -39,6 +39,27 @@ export interface WebhookRequest {
   signature: string | undefined;
 }
 
+/** A recording held at the provider, as listed by the reconciliation job. */
+export interface RecordingSummary {
+  recordingSid: string;
+  callSid: string;
+  /** Where the audio can be fetched (with the provider's credentials). */
+  url: string;
+  durationSeconds: number;
+  createdAt: Date;
+}
+
+export interface CallDetails {
+  callSid: string;
+  /** E.164, or null when withheld. */
+  from: string | null;
+  /** E.164: the number that was dialled. */
+  to: string;
+  startedAt: Date;
+  endedAt: Date | null;
+  durationSeconds: number;
+}
+
 export interface TelephonyProvider {
   /** UK geographic (01/02) numbers that can receive calls. */
   searchNumbers(search: NumberSearch): Promise<AvailableNumber[]>;
@@ -56,4 +77,8 @@ export interface TelephonyProvider {
   releaseNumber(providerSid: string): Promise<void>;
   /** True when the request was signed by the provider for exactly this URL and body. */
   verifyWebhook(request: WebhookRequest): boolean;
+  /** Recordings made since a point in time, for finding voicemails whose callback never arrived. */
+  listRecentRecordings(window: { since: Date }): Promise<RecordingSummary[]>;
+  /** The numbers and times of a call, or null if the provider doesn't know it. */
+  getCall(callSid: string): Promise<CallDetails | null>;
 }

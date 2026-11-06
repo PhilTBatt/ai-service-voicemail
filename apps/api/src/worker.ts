@@ -1,10 +1,17 @@
 // The worker process: runs background jobs. Same image as the API, different command.
 import { ConfigError, loadConfig } from "./config.ts";
 import { createPool } from "./db/pool.ts";
-import { SYNC_AGENT_QUEUE, startQueue } from "./jobs/queue.ts";
+import {
+  RECONCILE_VOICEMAILS_CRON,
+  RECONCILE_VOICEMAILS_QUEUE,
+  SYNC_AGENT_QUEUE,
+  startQueue,
+} from "./jobs/queue.ts";
+import { reconcileVoicemails } from "./jobs/reconcile-voicemails.ts";
 import { runSyncAgent, type SyncAgentJobData } from "./jobs/sync-agent.ts";
 import { logger } from "./logger.ts";
 import { RetellVoiceProvider } from "./providers/retell.ts";
+import { TwilioTelephonyProvider } from "./providers/twilio.ts";
 
 try {
   const config = loadConfig(process.env);
@@ -15,11 +22,25 @@ try {
   const pool = createPool(config.databaseUrl);
   const boss = await startQueue(config.databaseUrl);
   const voice = new RetellVoiceProvider({ apiKey: config.retellApiKey });
+  const queues = [SYNC_AGENT_QUEUE];
 
   await boss.work<SyncAgentJobData>(SYNC_AGENT_QUEUE, async (jobs) => {
     for (const job of jobs) await runSyncAgent({ pool, voice }, job.data);
   });
-  logger.info("Worker listening", { queues: [SYNC_AGENT_QUEUE], nodeEnv: config.nodeEnv });
+
+  if (config.twilio) {
+    const telephony = new TwilioTelephonyProvider(config.twilio);
+    await boss.work(RECONCILE_VOICEMAILS_QUEUE, async () => {
+      await reconcileVoicemails({ pool, telephony });
+    });
+    await boss.schedule(RECONCILE_VOICEMAILS_QUEUE, RECONCILE_VOICEMAILS_CRON, null, {
+      tz: "Europe/London",
+    });
+    queues.push(RECONCILE_VOICEMAILS_QUEUE);
+  } else {
+    logger.warn("Voicemail reconciliation disabled: Twilio isn't configured");
+  }
+  logger.info("Worker listening", { queues, nodeEnv: config.nodeEnv });
 
   // Let the job in hand finish, then close the queue and the pool (Azure sends SIGTERM).
   const shutdown = (signal: NodeJS.Signals) => {

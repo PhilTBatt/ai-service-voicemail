@@ -2,9 +2,18 @@ import { Router, urlencoded, type RequestHandler } from "express";
 import type pg from "pg";
 import { z } from "zod";
 import { raiseAlert } from "../alerts.ts";
+import { e164OrNull } from "../core/phone.ts";
 import { routeInboundCall } from "../core/routing.ts";
-import { agentDial, fallbackVoicemail, hangup, rejectCall, serviceEnded } from "../core/twiml.ts";
+import {
+  agentDial,
+  fallbackVoicemail,
+  hangup,
+  rejectCall,
+  serviceEnded,
+  voicemailDone,
+} from "../core/twiml.ts";
 import { loadInboundCallContext } from "../db/inbound-call.ts";
+import { storeFallbackVoicemail } from "../db/voicemails.ts";
 import { logger } from "../logger.ts";
 import type { TelephonyProvider } from "../providers/telephony.ts";
 import type { VoiceProvider } from "../providers/voice.ts";
@@ -18,7 +27,7 @@ export interface TwilioRouteOptions {
   now?: () => Date;
 }
 
-// Twilio sends more fields than these; only what the routing needs is read.
+// Twilio sends more fields than these; only what each route needs is read.
 const voiceWebhookSchema = z.object({
   CallSid: z.string().min(1),
   To: z.string().min(1),
@@ -30,13 +39,18 @@ const dialStatusSchema = z.object({
   DialCallStatus: z.string().optional(),
 });
 
-/** Twilio sends "anonymous" or similar when the caller withholds their number. */
-const callerNumber = (from: string | undefined): string | null =>
-  from !== undefined && /^\+\d+$/.test(from) ? from : null;
+const recordingCallbackSchema = z.object({
+  CallSid: z.string().min(1),
+  RecordingSid: z.string().min(1),
+  RecordingUrl: z.url(),
+  RecordingStatus: z.string(),
+  RecordingDuration: z.coerce.number().optional(),
+});
 
 /**
- * Twilio's call webhooks: /webhooks/twilio/voice decides what the caller hears, and
- * /webhooks/twilio/dial-status picks up when the agent leg ends. Both are signed.
+ * Twilio's call webhooks, all signed: /voice decides what the caller hears, /dial-status
+ * picks up when the agent leg ends, /voicemail-done closes a voicemail, and /recording
+ * stores one once Twilio has it.
  */
 export function twilioRouter({
   pool,
@@ -66,7 +80,11 @@ export function twilioRouter({
     next();
   };
 
-  const recordingUrl = `${publicBaseUrl}/webhooks/twilio/recording`;
+  const voicemail = () =>
+    fallbackVoicemail({
+      actionUrl: `${publicBaseUrl}/webhooks/twilio/voicemail-done`,
+      recordingStatusCallbackUrl: `${publicBaseUrl}/webhooks/twilio/recording`,
+    });
 
   router.post("/voice", verified, async (req, res) => {
     const parsed = voiceWebhookSchema.safeParse(req.body);
@@ -75,7 +93,7 @@ export function twilioRouter({
       return;
     }
     const { CallSid: callSid, To: to } = parsed.data;
-    const from = callerNumber(parsed.data.From);
+    const from = e164OrNull(parsed.data.From);
 
     const context = await loadInboundCallContext(pool, { to, from });
     const decision = routeInboundCall(context, now());
@@ -95,11 +113,11 @@ export function twilioRouter({
         } catch (error) {
           // The platform is unreachable: the caller still hears something.
           raiseAlert("voice-platform-unreachable", { tenantId, callSid, error });
-          twiml = fallbackVoicemail(recordingUrl);
+          twiml = voicemail();
         }
         break;
       case "voicemail":
-        twiml = fallbackVoicemail(recordingUrl);
+        twiml = voicemail();
         break;
       case "ended":
         twiml = serviceEnded(decision.mobile);
@@ -130,7 +148,44 @@ export function twilioRouter({
         status,
       });
     }
-    res.type("text/xml").send(answered ? hangup() : fallbackVoicemail(recordingUrl));
+    res.type("text/xml").send(answered ? hangup() : voicemail());
+  });
+
+  router.post("/voicemail-done", verified, (_req, res) => {
+    res.type("text/xml").send(voicemailDone());
+  });
+
+  // Twilio tells us a recording is ready. The call's numbers aren't in this callback, so
+  // they're fetched from Twilio; the tenant comes from the number that was dialled.
+  router.post("/recording", verified, async (req, res) => {
+    const parsed = recordingCallbackSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "Bad request" });
+      return;
+    }
+    const { CallSid: callSid, RecordingUrl: recordingUrl, RecordingStatus: status } = parsed.data;
+    if (status !== "completed") {
+      logger.warn("Fallback voicemail recording did not complete", { callSid, status });
+      res.status(204).end();
+      return;
+    }
+    const call = await telephony.getCall(callSid);
+    if (!call) {
+      logger.warn("Recording callback for a call Twilio doesn't know", { callSid });
+      res.status(204).end();
+      return;
+    }
+    const result = await storeFallbackVoicemail(pool, {
+      callSid,
+      from: call.from,
+      to: call.to,
+      recordingUrl,
+      durationSeconds: parsed.data.RecordingDuration ?? call.durationSeconds,
+      startedAt: call.startedAt,
+      endedAt: call.endedAt,
+    });
+    logger.info("Fallback voicemail callback handled", { callSid, ...result });
+    res.status(204).end();
   });
 
   return router;
