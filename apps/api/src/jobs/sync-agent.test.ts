@@ -174,7 +174,7 @@ describe("runSyncAgent", () => {
   // The worker drains the jobs queued by the tests above first, so this needs longer than 5 s.
   it(
     "end to end: a saved profile is synced by a worker through the queue",
-    { timeout: 20_000 },
+    { timeout: 40_000 },
     async () => {
       const voice = new FakeVoiceProvider();
       await boss.work(
@@ -193,7 +193,7 @@ describe("runSyncAgent", () => {
         const { tenantId } = await makeTenant();
         const version = await saveAgentProfile(app, boss, tenantId, PROFILE);
 
-        const deadline = Date.now() + 15_000;
+        const deadline = Date.now() + 30_000;
         let row = await profileRow(tenantId, version);
         while (!row?.synced_at && Date.now() < deadline) {
           await new Promise((resolve) => setTimeout(resolve, 250));

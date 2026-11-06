@@ -8,6 +8,7 @@ import {
   callExtractionSchema,
   type CallExtraction,
 } from "../core/extraction.ts";
+import { scanAgentTurns } from "../core/guardrails.ts";
 import { withTenant } from "../db/tenant.ts";
 import { logger } from "../logger.ts";
 import type { LlmProvider, LlmUsage } from "../providers/llm.ts";
@@ -61,7 +62,14 @@ export async function runProcessCall(
     return "no-transcript";
   }
 
-  const prompt = buildExtractionPrompt(parseTranscript(loaded.call.transcript), {
+  const transcript = parseTranscript(loaded.call.transcript);
+
+  // The agent must never quote prices or commit to times. A match flags the call for
+  // review; the excerpts stay in the tenant's row, never in the alert.
+  const guardrailHits = scanAgentTurns(transcript);
+  const guardrailFlags = [...new Set(guardrailHits.map((hit) => `guardrail:${hit.rule}`))];
+
+  const prompt = buildExtractionPrompt(transcript, {
     businessName: loaded.tenant.business_name,
     tradespersonName: loaded.tenant.contact_name ?? "the tradesperson",
   });
@@ -90,14 +98,21 @@ export async function runProcessCall(
           callId,
           jobSummary,
           urgency,
-          flags,
-          JSON.stringify({ ...fields, priceAsked: extraction.priceAsked }),
+          [...flags, ...guardrailFlags],
+          JSON.stringify({ ...fields, priceAsked: extraction.priceAsked, guardrailHits }),
         ],
       );
     } else {
       await client.query(
-        `UPDATE calls SET summary = $2, flags = array_append(flags, 'extraction_failed') WHERE id = $1`,
-        [callId, EXTRACTION_FAILED_SUMMARY],
+        `UPDATE calls SET summary = $2, flags = flags || $3::text[],
+                          extracted_fields = extracted_fields || $4::jsonb
+         WHERE id = $1`,
+        [
+          callId,
+          EXTRACTION_FAILED_SUMMARY,
+          ["extraction_failed", ...guardrailFlags],
+          JSON.stringify({ guardrailHits }),
+        ],
       );
     }
     for (const [component, units] of [
@@ -112,6 +127,9 @@ export async function runProcessCall(
     }
   });
 
+  if (guardrailHits.length > 0) {
+    alert("guardrail-hit", { tenantId, callId, rules: guardrailFlags });
+  }
   if (!extraction) {
     alert("call-extraction-failed", { tenantId, callId });
     return "extraction-failed";

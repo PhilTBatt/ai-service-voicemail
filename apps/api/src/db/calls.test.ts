@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PROCESS_CALL_QUEUE, startQueue } from "../jobs/queue.ts";
 import { TEST_ADMIN_DATABASE_URL, TEST_DATABASE_URL } from "../testing/databases.ts";
 import { sampleCallEndedEvent } from "../testing/agent-fixture.ts";
+import type { CallEndedEvent } from "../providers/voice.ts";
 import { recordCallEnded } from "./calls.ts";
 import { assignPhoneNumber, createAdminPool, createTenant } from "./cross-tenant.ts";
 import { createPool } from "./pool.ts";
@@ -33,8 +34,8 @@ async function makeTenant() {
   return { tenantId, number };
 }
 
-const event = (to: string) =>
-  sampleCallEndedEvent({ providerCallId: `call_${randomUUID()}`, dialledNumber: to });
+const event = (to: string, overrides: Partial<CallEndedEvent> = {}) =>
+  sampleCallEndedEvent({ providerCallId: `call_${randomUUID()}`, dialledNumber: to, ...overrides });
 
 const jobsFor = async (providerCallId: string) =>
   (
@@ -73,7 +74,7 @@ describe("recordCallEnded", () => {
       transcript:
         "agent: Hi, you're through to Ant's Plumbing.\ncaller: My kitchen tap is dripping.",
       recording_ref: "rec_fixture_0001",
-      billable_seconds: 0, // the worker works this out
+      billable_seconds: 90,
     });
     expect(stored.costs).toEqual([
       { component: "voice_minutes", units: "90.0000", unit_type: "seconds", is_estimated: false },
@@ -84,6 +85,49 @@ describe("recordCallEnded", () => {
         data: { tenantId, callId: result.callId, providerCallId: e.providerCallId },
       },
     ]);
+  });
+
+  it("adds billable seconds to the tenant's usage period, and bills nothing for a call under 5 s", async () => {
+    const { tenantId, number } = await makeTenant();
+    const july = new Date("2026-07-15T10:00:00Z");
+    await recordCallEnded(app, boss, event(number, { durationSeconds: 90, startedAt: july }));
+    await recordCallEnded(app, boss, event(number, { durationSeconds: 61, startedAt: july }));
+    const short = await recordCallEnded(
+      app,
+      boss,
+      event(number, { durationSeconds: 4.9, startedAt: july }),
+    );
+    if (short.outcome !== "stored") throw new Error("unreachable");
+
+    const usage = await withTenant(
+      app,
+      tenantId,
+      async (client) =>
+        (
+          await client.query<{
+            period_start: string;
+            period_end: string;
+            billable_seconds: number;
+          }>(
+            "SELECT period_start::text, period_end::text, billable_seconds::int FROM usage_periods",
+          )
+        ).rows,
+    );
+    expect(usage).toEqual([
+      { period_start: "2026-07-01", period_end: "2026-08-01", billable_seconds: 151 },
+    ]);
+    const shortRow = await withTenant(
+      app,
+      tenantId,
+      async (client) =>
+        (
+          await client.query<{ billable_seconds: number }>(
+            "SELECT billable_seconds FROM calls WHERE id = $1",
+            [short.callId],
+          )
+        ).rows[0],
+    );
+    expect(shortRow).toEqual({ billable_seconds: 0 });
   });
 
   it("does nothing for a duplicate webhook: one row, one job", async () => {

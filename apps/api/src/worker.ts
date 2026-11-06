@@ -1,6 +1,7 @@
 // The worker process: runs background jobs. Same image as the API, different command.
 import { ConfigError, loadConfig } from "./config.ts";
 import { createPool } from "./db/pool.ts";
+import { startDeadLetterWatcher } from "./jobs/dead-letter.ts";
 import { runProcessCall, type ProcessCallJobData } from "./jobs/process-call.ts";
 import {
   PROCESS_CALL_QUEUE,
@@ -25,7 +26,8 @@ try {
   const pool = createPool(config.databaseUrl);
   const boss = await startQueue(config.databaseUrl);
   const voice = new RetellVoiceProvider({ apiKey: config.retellApiKey });
-  const queues = [SYNC_AGENT_QUEUE];
+  const queues = [SYNC_AGENT_QUEUE, "dead-letter"];
+  await startDeadLetterWatcher(boss);
 
   await boss.work<SyncAgentJobData>(SYNC_AGENT_QUEUE, async (jobs) => {
     for (const job of jobs) await runSyncAgent({ pool, voice }, job.data);

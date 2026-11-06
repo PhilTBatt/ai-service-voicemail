@@ -1,5 +1,6 @@
 import type { PgBoss } from "pg-boss";
 import type pg from "pg";
+import { billableSeconds, usagePeriodFor } from "../core/usage.ts";
 import { PROCESS_CALL_QUEUE } from "../jobs/queue.ts";
 import type { CallEndedEvent } from "../providers/voice.ts";
 import { findTenantIdByNumber } from "./cross-tenant.ts";
@@ -25,10 +26,11 @@ export async function recordCallEnded(
   if (tenantId === null) return { outcome: "unknown-number" };
 
   return withTenant(pool, tenantId, async (client) => {
+    const billable = billableSeconds(event.durationSeconds);
     const { rows } = await client.query<{ id: string }>(
       `INSERT INTO calls (tenant_id, provider_call_id, caller_number, started_at, ended_at,
-                          outcome, transcript, recording_ref)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                          billable_seconds, outcome, transcript, recording_ref)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        ON CONFLICT (provider_call_id) DO NOTHING
        RETURNING id`,
       [
@@ -37,6 +39,7 @@ export async function recordCallEnded(
         event.callerNumber,
         event.startedAt,
         event.endedAt,
+        billable,
         event.endReason,
         event.transcript.map((turn) => `${turn.role}: ${turn.text}`).join("\n"),
         event.recordingRef,
@@ -44,6 +47,18 @@ export async function recordCallEnded(
     );
     const callId = rows[0]?.id;
     if (callId === undefined) return { outcome: "duplicate", tenantId };
+
+    // Billable seconds accumulate per period; overage is worked out once per period (Step 12).
+    if (billable > 0) {
+      const { periodStart, periodEnd } = usagePeriodFor(event.startedAt);
+      await client.query(
+        `INSERT INTO usage_periods (tenant_id, period_start, period_end, billable_seconds)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (tenant_id, period_start)
+         DO UPDATE SET billable_seconds = usage_periods.billable_seconds + EXCLUDED.billable_seconds`,
+        [tenantId, periodStart, periodEnd, billable],
+      );
+    }
 
     for (const cost of event.costs) {
       await client.query(

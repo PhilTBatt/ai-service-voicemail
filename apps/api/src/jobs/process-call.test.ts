@@ -85,6 +85,7 @@ describe("runProcessCall", () => {
         callbackNumber: "+447700900123",
         postcode: "XQ12 3JL",
         priceAsked: false,
+        guardrailHits: [],
       },
       costs: [
         { component: "fake-model:input_tokens", units: "100.0000" },
@@ -93,6 +94,35 @@ describe("runProcessCall", () => {
     });
     expect(llm.requests[0]?.user).toContain("Caller: It's Sam");
     expect(llm.requests[0]?.system).toContain("run by Ant");
+  });
+
+  it("flags the call for review and alerts when the agent quoted a price or committed to a time", async () => {
+    const { tenantId, callId } = await makeCall({
+      transcript: [
+        "agent: It'll cost about £90 and Ant will be there tomorrow at 9.",
+        "caller: Great.",
+      ].join("\n"),
+    });
+    const llm = new FakeLlmProvider().willReturn(GOOD);
+    const alert = vi.fn();
+    await runProcessCall({ pool: app, llm, alert }, { tenantId, callId, providerCallId: "x" });
+    expect(await callRow(tenantId, callId)).toMatchObject({
+      flags: ["mentioned gas smell", "guardrail:price", "guardrail:commitment"],
+      extracted_fields: expect.objectContaining({
+        guardrailHits: [
+          { rule: "price", excerpt: "It'll cost about £90 and Ant will be there tomorrow at 9." },
+          {
+            rule: "commitment",
+            excerpt: "It'll cost about £90 and Ant will be there tomorrow at 9.",
+          },
+        ],
+      }) as unknown,
+    });
+    expect(alert).toHaveBeenCalledWith("guardrail-hit", {
+      tenantId,
+      callId,
+      rules: ["guardrail:price", "guardrail:commitment"],
+    });
   });
 
   it("retries invalid output once, then stores the fallback summary and alerts", async () => {
