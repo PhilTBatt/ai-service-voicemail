@@ -1,35 +1,14 @@
 import type { AgentDefinition } from "../core/agent.ts";
-import type { CallEndedEvent } from "../providers/voice.ts";
+import { buildAgentDefinition } from "../core/prompt-builder.ts";
 import { SEED_TENANTS } from "../db/seed.ts";
+import type { CallEndedEvent } from "../providers/voice.ts";
+import { sampleProfile } from "./profile-fixture.ts";
 
 // Fictional data only: the seed's demo tenant and Ofcom drama numbers.
 
+/** The real builder's output for the sample profile, so fixtures can't drift from it. */
 export function sampleAgentDefinition(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
-  return {
-    tenantId: SEED_TENANTS[0]!.id,
-    profileVersion: 1,
-    language: "en-GB",
-    timezone: "Europe/London",
-    voice: { gender: "female" },
-    opening:
-      "Hi, you're through to Ant's Plumbing. I'm their AI assistant. This call is recorded and transcribed so Ant can call you back. How can I help?",
-    instructions: "Take a message for Ant. Never quote prices.",
-    scripts: [
-      {
-        id: "danger",
-        trigger: "Sparks, a burning smell, smoke or fire.",
-        text: "If anyone is in danger, or there's a fire or smoke, please hang up now and call 999.",
-      },
-    ],
-    close: "Thanks. I've passed that to Ant, who'll aim to get back to you.",
-    limits: {
-      maxCallSeconds: 480,
-      silenceReminderSeconds: 5,
-      endAfterSilenceSeconds: 10,
-      beginMessageDelayMs: 1000,
-    },
-    ...overrides,
-  };
+  return { ...buildAgentDefinition(sampleProfile()), ...overrides };
 }
 
 export function sampleCallEndedEvent(overrides: Partial<CallEndedEvent> = {}): CallEndedEvent {

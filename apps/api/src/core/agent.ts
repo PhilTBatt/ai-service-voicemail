@@ -12,6 +12,8 @@ export interface FixedScript {
 
 export interface AgentLimits {
   maxCallSeconds: number;
+  /** When to start wrapping the call up (Appendix B: 6 minutes, with the cap at 8). */
+  wrapUpAfterSeconds: number;
   /** After this much silence, prompt the caller once... */
   silenceReminderSeconds: number;
   /** ...and after this much, end the call. */
@@ -34,5 +36,10 @@ export interface AgentDefinition {
   scripts: FixedScript[];
   /** Spoken exactly, then the call ends. */
   close: string;
+  /**
+   * Values our server supplies for each call (whether the business is open right now, and
+   * so on). The instructions refer to them as {{name}}.
+   */
+  perCallVariables: { name: string; description: string }[];
   limits: AgentLimits;
 }
