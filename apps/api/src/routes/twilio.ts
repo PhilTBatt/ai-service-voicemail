@@ -1,7 +1,7 @@
 import { Router, urlencoded, type RequestHandler } from "express";
 import type pg from "pg";
 import { z } from "zod";
-import { raiseAlert } from "../alerts.ts";
+import { raiseAlert, type AlertFn } from "../alerts.ts";
 import { checkOutbound, type OutboundPolicy } from "../core/outbound-allowlist.ts";
 import { e164OrNull } from "../core/phone.ts";
 import { parseSmsCommand, ukToday } from "../core/sms-commands.ts";
@@ -17,8 +17,9 @@ import {
   smsReply,
   voicemailDone,
 } from "../core/twiml.ts";
-import { findTenantIdByMobile } from "../db/cross-tenant.ts";
+import { findTenantIdByMobile, findTenantIdByProviderRef } from "../db/cross-tenant.ts";
 import { loadInboundCallContext } from "../db/inbound-call.ts";
+import { withTenant } from "../db/tenant.ts";
 import { applySmsCommand } from "../db/tenant-commands.ts";
 import type { EnqueueNotifications } from "../jobs/enqueue-notifications.ts";
 import { storeFallbackVoicemail } from "../db/voicemails.ts";
@@ -38,6 +39,7 @@ export interface TwilioRouteOptions {
   enqueueSync: (job: { tenantId: string; profileVersion: number }) => Promise<unknown>;
   /** Queues the "new voicemail" text when a fallback voicemail is stored. */
   enqueueNotifications: EnqueueNotifications;
+  alert?: AlertFn;
   now?: () => Date;
 }
 
@@ -58,6 +60,15 @@ const inboundSmsSchema = z.object({
   From: z.string().min(1),
   Body: z.string().default(""),
 });
+
+const smsStatusSchema = z.object({
+  MessageSid: z.string().min(1),
+  MessageStatus: z.string().min(1),
+  ErrorCode: z.string().optional(),
+});
+
+/** Twilio's code for a recipient who replied STOP: texts to them fail until they reply START. */
+const OPTED_OUT_ERROR_CODE = "21610";
 
 const recordingCallbackSchema = z.object({
   CallSid: z.string().min(1),
@@ -80,6 +91,7 @@ export function twilioRouter({
   outbound,
   enqueueSync,
   enqueueNotifications,
+  alert = raiseAlert,
   now = () => new Date(),
 }: TwilioRouteOptions) {
   const router = Router();
@@ -255,6 +267,55 @@ export function twilioRouter({
       return;
     }
     res.send(smsReply(result.reply));
+  });
+
+  // Delivery receipts for the texts we send: did the handset get it? Only the final verdicts
+  // change anything; 'queued' and 'sent' are Twilio's own progress, not ours.
+  router.post("/sms-status", verified, async (req, res) => {
+    const parsed = smsStatusSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "Bad request" });
+      return;
+    }
+    const { MessageSid: messageSid, MessageStatus: status, ErrorCode: errorCode } = parsed.data;
+    const final =
+      status === "delivered"
+        ? "delivered"
+        : status === "undelivered" || status === "failed"
+          ? "undelivered"
+          : null;
+    if (final === null) {
+      res.status(204).end();
+      return;
+    }
+    const tenantId = await findTenantIdByProviderRef(pool, messageSid);
+    if (tenantId === null) {
+      logger.info("Delivery receipt for a text we don't know", { messageSid, status });
+      res.status(204).end();
+      return;
+    }
+    const row = await withTenant(
+      pool,
+      tenantId,
+      async (client) =>
+        (
+          await client.query<{ call_id: string }>(
+            `UPDATE notifications SET status = $2, failure_code = $3
+             WHERE provider_ref = $1 AND status IN ('sent', 'delivered', 'undelivered')
+             RETURNING call_id`,
+            [messageSid, final, final === "undelivered" ? (errorCode ?? null) : null],
+          )
+        ).rows[0],
+    );
+    if (row && final === "undelivered") {
+      alert(errorCode === OPTED_OUT_ERROR_CODE ? "recipient-opted-out" : "sms-undelivered", {
+        tenantId,
+        callId: row.call_id,
+        errorCode: errorCode ?? null,
+      });
+    }
+    logger.info("Delivery receipt handled", { messageSid, tenantId, status: final });
+    res.status(204).end();
   });
 
   return router;

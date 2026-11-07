@@ -14,6 +14,8 @@ export interface TwilioSmsOptions {
   fetch?: typeof fetch;
   /** Must finish well inside the job's 60-second expiry, or pg-boss re-queues a job that's still sending. */
   timeoutMs?: number;
+  /** Where Twilio posts delivery receipts (signed like every webhook). */
+  statusCallbackUrl?: string;
 }
 
 interface MessageJson {
@@ -37,7 +39,14 @@ export class TwilioSmsProvider implements SmsProvider {
         Authorization: `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString("base64")}`,
         "Content-Type": "application/x-www-form-urlencoded",
       },
-      body: new URLSearchParams({ To: to, From: from, Body: body }).toString(),
+      body: new URLSearchParams({
+        To: to,
+        From: from,
+        Body: body,
+        ...(this.options.statusCallbackUrl !== undefined && {
+          StatusCallback: this.options.statusCallbackUrl,
+        }),
+      }).toString(),
       signal: AbortSignal.timeout(this.options.timeoutMs ?? 15_000),
     });
     if (!response.ok) {

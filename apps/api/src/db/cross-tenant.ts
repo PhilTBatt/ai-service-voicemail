@@ -209,3 +209,15 @@ export async function activeNumberFor(
   );
   return rows[0] ?? null;
 }
+
+/** The tenant a notification belongs to, from the provider's message ID in a delivery receipt. */
+export async function findTenantIdByProviderRef(
+  appPool: pg.Pool,
+  providerRef: string,
+): Promise<string | null> {
+  const { rows } = await appPool.query<{ tenant_id: string | null }>(
+    "SELECT tenant_id_for_provider_ref($1) AS tenant_id",
+    [providerRef],
+  );
+  return rows[0]?.tenant_id ?? null;
+}

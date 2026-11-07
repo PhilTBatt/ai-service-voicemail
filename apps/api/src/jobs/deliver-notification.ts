@@ -10,7 +10,9 @@ import { logger } from "../logger.ts";
 /** 'sms' and 'email' are the call summaries; the other two are the emergency texts. */
 export type NotificationChannel = "sms" | "sms_emergency" | "sms_caller" | "email";
 
-export type NotificationStatus = "pending" | "sent" | "failed" | "blocked";
+/** 'delivered' and 'undelivered' come from the provider's receipt, after our 'sent'. */
+export type NotificationStatus =
+  "pending" | "sent" | "failed" | "blocked" | "delivered" | "undelivered";
 
 export type DeliveryOutcome = "sent" | "blocked" | "already-sent";
 
@@ -52,7 +54,12 @@ export async function deliverNotification(
         )
       ).rows[0],
   );
-  if (existing?.status === "sent") {
+  if (
+    existing?.status === "sent" ||
+    existing?.status === "delivered" ||
+    existing?.status === "undelivered"
+  ) {
+    // Undelivered is the carrier's verdict on a text that did go; resending would repeat it.
     logger.info("Notification already sent", { tenantId, callId, channel });
     return "already-sent";
   }

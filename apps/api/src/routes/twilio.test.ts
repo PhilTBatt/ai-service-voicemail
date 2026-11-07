@@ -21,6 +21,7 @@ const telephony = new FakeTelephonyProvider();
 const voice = new FakeVoiceProvider();
 const enqueueSync = vi.fn(() => Promise.resolve());
 const enqueueNotifications = vi.fn(() => Promise.resolve());
+const alert = vi.fn();
 // Replies only go to mobiles added here; everyone else is blocked by the allowlist.
 const allowlist = parseAllowlist(undefined);
 const outbound = { nodeEnv: "test" as const, allowlist };
@@ -42,6 +43,7 @@ beforeAll(async () => {
       outbound,
       enqueueSync,
       enqueueNotifications,
+      alert,
       now: NOW,
     },
   }).listen(0);
@@ -438,6 +440,96 @@ describe("Twilio routes given a non-form body", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ CallSid: "CA1" }),
     });
+    expect(response.status).toBe(403);
+  });
+});
+
+describe("POST /webhooks/twilio/sms-status", () => {
+  /** A tenant with one call and a sent text, as notify-sms leaves them. */
+  async function makeSentText() {
+    const { tenantId } = await makeTenant("live");
+    const { rows } = await admin.query<{ id: string }>(
+      `INSERT INTO calls (tenant_id, provider_call_id, started_at, ended_at, summary)
+       VALUES ($1, $2, now(), now(), 'A job.') RETURNING id`,
+      [tenantId, `call_${randomUUID()}`],
+    );
+    const messageSid = `SM${randomUUID().replace(/-/g, "")}`;
+    await admin.query(
+      `INSERT INTO notifications (tenant_id, call_id, channel, status, attempts, provider_ref)
+       VALUES ($1, $2, 'sms', 'sent', 1, $3)`,
+      [tenantId, rows[0]!.id, messageSid],
+    );
+    return { tenantId, callId: rows[0]!.id, messageSid };
+  }
+  const row = async (messageSid: string) =>
+    (
+      await admin.query<{ status: string; failure_code: string | null }>(
+        "SELECT status, failure_code FROM notifications WHERE provider_ref = $1",
+        [messageSid],
+      )
+    ).rows[0];
+
+  it("marks a text delivered", async () => {
+    const { messageSid } = await makeSentText();
+    const response = await post("/webhooks/twilio/sms-status", {
+      MessageSid: messageSid,
+      MessageStatus: "delivered",
+    });
+    expect(response.status).toBe(204);
+    expect(await row(messageSid)).toEqual({ status: "delivered", failure_code: null });
+  });
+
+  it("marks an undelivered text with the carrier's code and alerts, naming an opt-out", async () => {
+    alert.mockClear();
+    const { tenantId, callId, messageSid } = await makeSentText();
+    await post("/webhooks/twilio/sms-status", {
+      MessageSid: messageSid,
+      MessageStatus: "undelivered",
+      ErrorCode: "21610",
+    });
+    expect(await row(messageSid)).toEqual({ status: "undelivered", failure_code: "21610" });
+    expect(alert).toHaveBeenCalledWith("recipient-opted-out", {
+      tenantId,
+      callId,
+      errorCode: "21610",
+    });
+
+    const other = await makeSentText();
+    await post("/webhooks/twilio/sms-status", {
+      MessageSid: other.messageSid,
+      MessageStatus: "failed",
+      ErrorCode: "30003",
+    });
+    expect(alert).toHaveBeenLastCalledWith("sms-undelivered", {
+      tenantId: other.tenantId,
+      callId: other.callId,
+      errorCode: "30003",
+    });
+  });
+
+  it("ignores interim statuses and texts it doesn't know", async () => {
+    const { messageSid } = await makeSentText();
+    expect(
+      (await post("/webhooks/twilio/sms-status", { MessageSid: messageSid, MessageStatus: "sent" }))
+        .status,
+    ).toBe(204);
+    expect((await row(messageSid))?.status).toBe("sent");
+    expect(
+      (
+        await post("/webhooks/twilio/sms-status", {
+          MessageSid: "SM" + "9".repeat(32),
+          MessageStatus: "delivered",
+        })
+      ).status,
+    ).toBe(204);
+  });
+
+  it("is signed like every other Twilio webhook", async () => {
+    const response = await post(
+      "/webhooks/twilio/sms-status",
+      { MessageSid: "SM1", MessageStatus: "delivered" },
+      "http://localhost:3000/webhooks/twilio/sms-status",
+    );
     expect(response.status).toBe(403);
   });
 });

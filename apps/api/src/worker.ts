@@ -78,7 +78,10 @@ try {
   if (config.sms && config.signingSecret && config.publicBaseUrl) {
     const deps = {
       pool,
-      sms: new TwilioSmsProvider(config.sms),
+      sms: new TwilioSmsProvider({
+        ...config.sms,
+        statusCallbackUrl: `${config.publicBaseUrl}/webhooks/twilio/sms-status`,
+      }),
       outbound: config.outbound,
       signingSecret: config.signingSecret,
       publicBaseUrl: config.publicBaseUrl,

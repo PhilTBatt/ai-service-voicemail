@@ -69,7 +69,7 @@ Smaller calls, explained when they were made:
 - Extraction now sends `max_tokens: 4096` with `output_config.effort: "low"` (the model's thinking counts against the cap). Re-run the live extraction test to confirm quality is unchanged.
 - Overnight opening hours (close before open) are rejected by the profile schema until `isOpenAt` supports them.
 - Unverified against Retell until the live contract test runs: the function-node edge shape, and that custom-function requests carry `X-Retell-Signature` in the same `v=,d=` form as webhooks.
-- Unverified at Twilio: whether a UK recipient replying STOP to our sender is opted out carrier-side (error 21610). The SMS commands no longer use STOP/START; if a tradesperson replies STOP anyway, their texts will start failing until they reply START.
+- Unverified at Twilio: whether a UK recipient replying STOP to our sender is opted out carrier-side (error 21610). If it happens, the delivery receipt now raises a `recipient-opted-out` alert; the fix is for them to reply START.
 - STATUS by SMS counts every call, spam included (Phil, 2026-11-07: fine for now). Revisit once the dashboard can mark calls as dealt with, e.g. "Calls today: 6 (1 needs a reply)".
 - TypeScript 7: switch once typescript-eslint supports it (decision 001).
 - `npm audit` reports a moderate `minimatch` issue inside ESLint (dev-only; the suggested fix downgrades ESLint). It should clear when ESLint updates the dependency.
@@ -83,6 +83,7 @@ Smaller calls, explained when they were made:
 
 ## Session log (newest first)
 
+- **2026-11-08:** SMS delivery receipts: texts ask Twilio for a status callback; `POST /webhooks/twilio/sms-status` (signed) marks the notification `delivered` or `undelivered` with the carrier's code, alerts on an undelivered text, and names an opt-out (21610). A receipt can't cause a resend. Migration adds the statuses, `failure_code`, and an owner-run lookup from message ID to tenant.
 - **2026-11-08:** Postmark adapter (send over fetch, server token header, `outbound` stream, errors carry Postmark's code), config and worker registration; decision 010 accepted. Email now sends as soon as the token and From address exist.
 - **2026-11-08:** Step 8 gate: decision 011, the monthly cost estimate for staging and production from the Azure Retail Prices API (the pricing pages don't render to a script). Known unknown: a new per-hour environment management meter dated 2026-11-01 that may or may not apply to consumption-only environments.
 - **2026-11-08:** Bundle approved; bundle and address IDs appended to `.env`. Added docs/RUNBOOK.md (first-call setup, every-session start, what to expect per call, symptoms table), `live-configure-number` (repoints the demo number, or adopts a console-bought one; dry run by default), and the SMS webhook on number configuration (`SmsUrl`), so a mobile number would route texts to `/webhooks/twilio/sms` from the moment it's bought.

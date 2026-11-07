@@ -76,3 +76,20 @@ describe("TwilioSmsProvider timeouts", () => {
     );
   });
 });
+
+describe("TwilioSmsProvider receipts", () => {
+  it("asks Twilio to post delivery receipts when a callback URL is configured", async () => {
+    const api = stub();
+    const provider = new TwilioSmsProvider({
+      accountSid: ACCOUNT_SID,
+      authToken: "not-a-real-token",
+      from: "AnswerMate",
+      fetch: api.fetch,
+      statusCallbackUrl: "https://callmate.example.com/webhooks/twilio/sms-status",
+    });
+    await provider.send({ to: "+447700900001", body: "Hello" });
+    expect(api.requests[0]!.form).toMatchObject({
+      StatusCallback: "https://callmate.example.com/webhooks/twilio/sms-status",
+    });
+  });
+});

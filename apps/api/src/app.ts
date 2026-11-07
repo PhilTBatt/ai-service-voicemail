@@ -1,5 +1,6 @@
 import express, { type ErrorRequestHandler } from "express";
 import type pg from "pg";
+import type { AlertFn } from "./alerts.ts";
 import type { OutboundPolicy } from "./core/outbound-allowlist.ts";
 import type { EnqueueNotifications } from "./jobs/enqueue-notifications.ts";
 import { logger } from "./logger.ts";
@@ -33,6 +34,7 @@ export interface AppOptions {
         outbound: OutboundPolicy;
         enqueueSync: (job: { tenantId: string; profileVersion: number }) => Promise<unknown>;
         enqueueNotifications: EnqueueNotifications;
+        alert?: AlertFn;
         now?: () => Date;
       }
     | undefined;

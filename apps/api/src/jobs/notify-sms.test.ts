@@ -213,3 +213,19 @@ describe("runNotifySms for a fallback voicemail", () => {
     expect(body).not.toContain("api.twilio.com"); // provider URLs are never exposed
   });
 });
+
+describe("runNotifySms after a delivery receipt", () => {
+  it("never resends a text the carrier already reported on, delivered or not", async () => {
+    const { tenantId, callId } = await makeProcessedCall();
+    const d = deps();
+    await runNotifySms(d, { tenantId, callId });
+    for (const status of ["delivered", "undelivered"]) {
+      await admin.query("UPDATE notifications SET status = $2 WHERE call_id = $1", [
+        callId,
+        status,
+      ]);
+      expect(await runNotifySms(d, { tenantId, callId })).toBe("already-sent");
+    }
+    expect(d.sms.sent).toHaveLength(1);
+  });
+});
