@@ -37,7 +37,7 @@ export function areYouAiLine({ business, tradesperson }: ScriptNames): string {
 /** Appendix A names the caller ("Thanks, {Caller}"). Fixed text can't safely include a name
  * the model only heard, so it's left out. No times, no promises. */
 export function closingLine(tradesperson: string): string {
-  return `Thanks. I've passed that to ${tradesperson}, who'll aim to get back to you.`;
+  return `Thanks. I've passed that to ${tradesperson}, who'll aim to get back to you. Goodbye.`;
 }
 
 /** Static, so it can't include the business name: it's served even when the API is down. */

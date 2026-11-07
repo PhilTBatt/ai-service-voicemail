@@ -4,6 +4,7 @@ import {
   type AvailableNumber,
   type CallDetails,
   type NumberConfiguration,
+  type NumberPrice,
   type NumberSearch,
   type PurchasedNumber,
   type RecordingAudio,
@@ -38,6 +39,13 @@ export class FakeTelephonyProvider implements TelephonyProvider {
 
   constructor({ purchasesEnabled = true }: { purchasesEnabled?: boolean } = {}) {
     this.purchasesEnabled = purchasesEnabled;
+  }
+
+  numberPrices(): Promise<NumberPrice[]> {
+    return Promise.resolve([
+      { type: "local", monthly: "0.87", currency: "GBP" },
+      { type: "mobile", monthly: "1.89", currency: "GBP" },
+    ]);
   }
 
   searchNumbers({ contains, limit = 10 }: NumberSearch) {

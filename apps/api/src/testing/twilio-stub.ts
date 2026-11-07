@@ -35,6 +35,21 @@ export class TwilioApiStub {
       query: Object.fromEntries(url.searchParams),
       form,
     });
+    if (url.hostname === "pricing.twilio.com") {
+      return Promise.resolve(
+        Response.json({
+          country: "United Kingdom",
+          iso_country: "GB",
+          price_unit: "GBP",
+          phone_number_prices: [
+            { number_type: "local", base_price: "0.86917", current_price: "0.86917" },
+            { number_type: "mobile", base_price: "1.8895", current_price: "1.8895" },
+            { number_type: "toll free", base_price: "2.04066", current_price: "2.04066" },
+            { number_type: "something new", base_price: "9", current_price: "9" },
+          ],
+        }),
+      );
+    }
     return Promise.resolve(this.handle(method, url.pathname, form, url.searchParams));
   };
 

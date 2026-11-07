@@ -26,6 +26,14 @@ export interface NumberConfiguration {
   friendlyName?: string;
 }
 
+/** Monthly rental for a kind of UK number, as the provider prices it for this account. */
+export interface NumberPrice {
+  type: "local" | "mobile" | "national" | "toll free";
+  /** Decimal string, in `currency`, per month. */
+  monthly: string;
+  currency: string;
+}
+
 export interface PurchasedNumber {
   providerSid: string;
   number: string;
@@ -68,6 +76,8 @@ export interface CallDetails {
 export interface TelephonyProvider {
   /** UK geographic (01/02) numbers that can receive calls. */
   searchNumbers(search: NumberSearch): Promise<AvailableNumber[]>;
+  /** What UK numbers cost to rent per month, by kind. */
+  numberPrices(): Promise<NumberPrice[]>;
   /**
    * Buys a number. Costs money, so it refuses unless the adapter was created with purchases
    * enabled and the caller passes `{ live: true }`; only `live-*` scripts and admin actions do.

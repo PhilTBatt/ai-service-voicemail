@@ -19,6 +19,12 @@ import type { RecordingAudio } from "./recording.ts";
 
 export interface RetellOptions {
   apiKey: string;
+  /**
+   * Retell signs webhooks and function calls with one specific API key: the one marked with
+   * a "webhook" badge in its dashboard. When that isn't the key used for REST calls, it goes
+   * here (docs.retellai.com/features/secure-webhook, read 2026-11-08).
+   */
+  webhookKey?: string;
   /** Where Retell sends call events. Omit until there's a public URL (Step 4). */
   webhookUrl?: string;
   /** Where the flow's emergency functions POST mid-call (Step 6). Omit to build flows without them. */
@@ -220,7 +226,7 @@ export class RetellVoiceProvider implements VoiceProvider {
     const age = Math.abs((this.options.now ?? (() => new Date()))().getTime() - Number(timestamp));
     if (age > SIGNATURE_MAX_AGE_MS) throw new WebhookVerificationError("Stale webhook signature");
 
-    const expected = createHmac("sha256", this.options.apiKey)
+    const expected = createHmac("sha256", this.options.webhookKey ?? this.options.apiKey)
       .update(Buffer.concat([rawBody, Buffer.from(timestamp)]))
       .digest("hex");
     if (

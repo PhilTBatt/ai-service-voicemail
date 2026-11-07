@@ -2,7 +2,7 @@
 
 exports[`buildAgentDefinition > produces the same definition every time for a electrician 1`] = `
 {
-  "close": "Thanks. I've passed that to Ant, who'll aim to get back to you.",
+  "close": "Thanks. I've passed that to Ant, who'll aim to get back to you. Goodbye.",
   "instructions": "You are the AI phone assistant for Ant's Plumbing, an electrical business run by Ant. Speak natural British English, keep replies short, and ask one question at a time.
 
 ## Your job
@@ -112,7 +112,7 @@ If the caller asks something not covered here, say Ant will answer when they cal
 
 exports[`buildAgentDefinition > produces the same definition every time for a general_builder 1`] = `
 {
-  "close": "Thanks. I've passed that to Ant, who'll aim to get back to you.",
+  "close": "Thanks. I've passed that to Ant, who'll aim to get back to you. Goodbye.",
   "instructions": "You are the AI phone assistant for Ant's Plumbing, a building business run by Ant. Speak natural British English, keep replies short, and ask one question at a time.
 
 ## Your job
@@ -222,7 +222,7 @@ If the caller asks something not covered here, say Ant will answer when they cal
 
 exports[`buildAgentDefinition > produces the same definition every time for a heating_engineer 1`] = `
 {
-  "close": "Thanks. I've passed that to Ant, who'll aim to get back to you.",
+  "close": "Thanks. I've passed that to Ant, who'll aim to get back to you. Goodbye.",
   "instructions": "You are the AI phone assistant for Ant's Plumbing, a heating and gas engineering business run by Ant. Speak natural British English, keep replies short, and ask one question at a time.
 
 ## Your job
@@ -332,7 +332,7 @@ If the caller asks something not covered here, say Ant will answer when they cal
 
 exports[`buildAgentDefinition > produces the same definition every time for a locksmith 1`] = `
 {
-  "close": "Thanks. I've passed that to Ant, who'll aim to get back to you.",
+  "close": "Thanks. I've passed that to Ant, who'll aim to get back to you. Goodbye.",
   "instructions": "You are the AI phone assistant for Ant's Plumbing, a locksmith business run by Ant. Speak natural British English, keep replies short, and ask one question at a time.
 
 ## Your job
@@ -442,7 +442,7 @@ If the caller asks something not covered here, say Ant will answer when they cal
 
 exports[`buildAgentDefinition > produces the same definition every time for a plumber 1`] = `
 {
-  "close": "Thanks. I've passed that to Ant, who'll aim to get back to you.",
+  "close": "Thanks. I've passed that to Ant, who'll aim to get back to you. Goodbye.",
   "instructions": "You are the AI phone assistant for Ant's Plumbing, a plumbing business run by Ant. Speak natural British English, keep replies short, and ask one question at a time.
 
 ## Your job
@@ -552,7 +552,7 @@ If the caller asks something not covered here, say Ant will answer when they cal
 
 exports[`buildAgentDefinition > produces the same definition every time for a roofer 1`] = `
 {
-  "close": "Thanks. I've passed that to Ant, who'll aim to get back to you.",
+  "close": "Thanks. I've passed that to Ant, who'll aim to get back to you. Goodbye.",
   "instructions": "You are the AI phone assistant for Ant's Plumbing, a roofing business run by Ant. Speak natural British English, keep replies short, and ask one question at a time.
 
 ## Your job

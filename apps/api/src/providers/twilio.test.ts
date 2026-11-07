@@ -215,3 +215,14 @@ describe("TwilioTelephonyProvider number settings", () => {
     });
   });
 });
+
+describe("TwilioTelephonyProvider prices", () => {
+  it("reads the monthly rental per kind of UK number in the account's currency", async () => {
+    const { provider } = makeHarness();
+    expect(await provider.numberPrices()).toEqual([
+      { type: "local", monthly: "0.86917", currency: "GBP" },
+      { type: "mobile", monthly: "1.8895", currency: "GBP" },
+      { type: "toll free", monthly: "2.04066", currency: "GBP" },
+    ]);
+  });
+});

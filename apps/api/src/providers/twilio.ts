@@ -7,6 +7,7 @@ import {
   type AvailableNumber,
   type CallDetails,
   type NumberConfiguration,
+  type NumberPrice,
   type NumberSearch,
   type PurchasedNumber,
   type RecordingAudio,
@@ -122,6 +123,33 @@ export class TwilioTelephonyProvider implements TelephonyProvider {
       // Already released: the outcome we wanted.
       if (!(error instanceof TwilioApiError && error.status === 404)) throw error;
     }
+  }
+
+  /** Twilio's pricing API lives on its own host, priced in the account's currency. */
+  async numberPrices(): Promise<NumberPrice[]> {
+    const credentials = Buffer.from(
+      `${this.options.accountSid}:${this.options.authToken}`,
+    ).toString("base64");
+    const response = await (this.options.fetch ?? fetch)(
+      "https://pricing.twilio.com/v1/PhoneNumbers/Countries/GB",
+      { headers: { Authorization: `Basic ${credentials}` }, signal: AbortSignal.timeout(15_000) },
+    );
+    if (!response.ok) {
+      throw new TwilioApiError(
+        response.status,
+        "/v1/PhoneNumbers/Countries/GB",
+        (await response.text()).slice(0, 300),
+      );
+    }
+    const body = (await response.json()) as {
+      price_unit: string;
+      phone_number_prices: { number_type: string; current_price: string }[];
+    };
+    return body.phone_number_prices
+      .filter((p): p is { number_type: NumberPrice["type"]; current_price: string } =>
+        ["local", "mobile", "national", "toll free"].includes(p.number_type),
+      )
+      .map((p) => ({ type: p.number_type, monthly: p.current_price, currency: body.price_unit }));
   }
 
   async listRecentRecordings({ since }: { since: Date }): Promise<RecordingSummary[]> {

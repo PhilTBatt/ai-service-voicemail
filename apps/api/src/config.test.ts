@@ -294,3 +294,15 @@ describe("loadConfig: email", () => {
     );
   });
 });
+
+describe("loadConfig: RETELL_WEBHOOK_KEY", () => {
+  it("is passed through separately from the REST key", () => {
+    const config = loadConfig({
+      ...valid,
+      RETELL_API_KEY: "key_for_tests",
+      RETELL_WEBHOOK_KEY: "badge_key_for_tests",
+    });
+    expect(config.retellWebhookKey).toBe("badge_key_for_tests");
+    expect(loadConfig(valid).retellWebhookKey).toBeUndefined();
+  });
+});

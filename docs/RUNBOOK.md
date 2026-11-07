@@ -49,16 +49,17 @@ Text the notification number from the demo tenant's registered mobile: `OFF`, `O
 
 ## 5. When something's wrong
 
-| Symptom                                              | Likely cause                                                         | Check                                                                                 |
-| ---------------------------------------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| Caller hears the fallback voicemail on every call    | API unreachable from Twilio, or tenant not live, or agent not synced | ngrok terminal; API log "Inbound call routed" reason; worker log for sync errors      |
-| "Rejected Twilio webhook" in the API log             | `PUBLIC_BASE_URL` doesn't match the URL Twilio called                | Compare the ngrok domain with `.env`, re-run `live-configure-number`                  |
-| Call ended but no "Voice call ended" line            | Retell couldn't reach the webhook                                    | Wait 15 minutes for reconciliation, or check the tunnel                               |
-| "SMS blocked by the outbound allowlist"              | Your mobile isn't in `OUTBOUND_ALLOWLIST`                            | Add it in E.164 (`+44...`) and restart the worker                                     |
-| "notification-no-mobile" alert                       | The tenant has no notification mobile                                | Set it on the demo tenant                                                             |
-| Jobs piling up in `notify-email`                     | Expected until the email adapter exists                              | Nothing                                                                               |
-| `ALERT dead-letter` in the worker log                | A job failed every retry                                             | The alert names the queue and job; the row's `sync_error` or the job's error says why |
-| Tests fail with "Couldn't migrate the test database" | Docker isn't running                                                 | `npm run db:up`                                                                       |
+| Symptom                                                               | Likely cause                                                                                                    | Check                                                                                          |
+| --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Caller hears the fallback voicemail on every call                     | API unreachable from Twilio, or tenant not live, or agent not synced                                            | ngrok terminal; API log "Inbound call routed" reason; worker log for sync errors               |
+| "Rejected voice webhook ... Invalid webhook signature" in the API log | Retell signs with the API key that carries the "webhook" badge in its dashboard, and `.env` has a different key | Put the badged key in `RETELL_WEBHOOK_KEY` (or use it as `RETELL_API_KEY`) and restart the API |
+| "Rejected Twilio webhook" in the API log                              | `PUBLIC_BASE_URL` doesn't match the URL Twilio called                                                           | Compare the ngrok domain with `.env`, re-run `live-configure-number`                           |
+| Call ended but no "Voice call ended" line                             | Retell couldn't reach the webhook                                                                               | Wait 15 minutes for reconciliation, or check the tunnel                                        |
+| "SMS blocked by the outbound allowlist"                               | Your mobile isn't in `OUTBOUND_ALLOWLIST`                                                                       | Add it in E.164 (`+44...`) and restart the worker                                              |
+| "notification-no-mobile" alert                                        | The tenant has no notification mobile                                                                           | Set it on the demo tenant                                                                      |
+| Jobs piling up in `notify-email`                                      | Expected until the email adapter exists                                                                         | Nothing                                                                                        |
+| `ALERT dead-letter` in the worker log                                 | A job failed every retry                                                                                        | The alert names the queue and job; the row's `sync_error` or the job's error says why          |
+| Tests fail with "Couldn't migrate the test database"                  | Docker isn't running                                                                                            | `npm run db:up`                                                                                |
 
 Logs never contain phone numbers, emails, transcripts or summaries: look things up by the IDs they carry.
 

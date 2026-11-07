@@ -398,7 +398,13 @@ describe.runIf(process.env.RETELL_LIVE_TESTS === "1" && process.env.RETELL_API_K
     describeVoiceProviderContract(
       "Retell (live)",
       () => {
-        const real = new RetellVoiceProvider({ apiKey });
+        // With a function URL, so the live run creates the flow with the emergency function nodes
+        // (their edge shape is only documented, never confirmed, until this passes).
+        const real = new RetellVoiceProvider({
+          apiKey,
+          webhookUrl: "https://example.com/webhooks/voice/retell",
+          functionUrl: "https://example.com/webhooks/voice/retell/function",
+        });
         const provider: typeof real = Object.assign(Object.create(real) as typeof real, {
           upsertAgent: async (input: Parameters<typeof real.upsertAgent>[0]) => {
             const result = await real.upsertAgent(input);
@@ -493,6 +499,25 @@ describe("RetellVoiceProvider edge cases", () => {
       WebhookVerificationError,
     );
     expect(() => provider().verifyAndParseFunctionCall(rawBody, headers)).toThrow(
+      WebhookVerificationError,
+    );
+  });
+});
+
+describe("RetellVoiceProvider webhook key", () => {
+  it("verifies with the dedicated webhook key when one is configured, not the REST key", () => {
+    const provider = new RetellVoiceProvider({
+      apiKey: "rest-key-without-the-badge",
+      webhookKey: TEST_API_KEY,
+      now: () => NOW,
+    });
+    const { rawBody, headers } = signed(retellPayload(retellShapedEvent()));
+    expect(provider.verifyAndParseWebhook(rawBody, headers)).toMatchObject({ type: "call_ended" });
+    const wrongKey = new RetellVoiceProvider({
+      apiKey: "rest-key-without-the-badge",
+      now: () => NOW,
+    });
+    expect(() => wrongKey.verifyAndParseWebhook(rawBody, headers)).toThrow(
       WebhookVerificationError,
     );
   });

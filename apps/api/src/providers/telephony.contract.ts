@@ -32,6 +32,15 @@ export function describeTelephonyProviderContract(
       for (const n of numbers) expect(n.number).toMatch(/^\+44[1-9]\d{8,9}$/);
     });
 
+    it("quotes a monthly rental for local numbers", async () => {
+      const { provider } = makeHarness();
+      const prices = await provider.numberPrices();
+      const local = prices.find((p) => p.type === "local");
+      expect(local).toBeDefined();
+      expect(Number(local!.monthly)).toBeGreaterThan(0);
+      expect(local!.currency).toMatch(/^[A-Z]{3}$/);
+    });
+
     it("refuses to buy without live: true", async () => {
       const { provider } = makeHarness();
       const [first] = await provider.searchNumbers({ limit: 1 });

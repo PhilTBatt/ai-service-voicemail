@@ -13,6 +13,9 @@ const envSchema = z
     // Optional outside production so the API runs without a voice platform (tests use the
     // fake). Production can't answer calls without it, so there it's required.
     RETELL_API_KEY: z.string().min(1).optional(),
+    // The Retell key marked "webhook" in its dashboard, if that isn't RETELL_API_KEY: only that
+    // one verifies the signatures on Retell's webhooks and mid-call function requests.
+    RETELL_WEBHOOK_KEY: z.string().min(1).optional(),
     // Twilio: same rule. The webhook routes need PUBLIC_BASE_URL, because Twilio signs the
     // exact public URL it called; it's never rebuilt from the request behind a proxy.
     TWILIO_ACCOUNT_SID: z
@@ -88,6 +91,7 @@ const envSchema = z
     logLevel: env.LOG_LEVEL,
     databaseUrl: env.DATABASE_URL,
     retellApiKey: env.RETELL_API_KEY,
+    retellWebhookKey: env.RETELL_WEBHOOK_KEY,
     twilio:
       env.TWILIO_ACCOUNT_SID !== undefined && env.TWILIO_AUTH_TOKEN !== undefined
         ? {
@@ -159,11 +163,16 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
   throw new ConfigError(problems);
 }
 
-/** Where Retell sends call events and mid-call function requests, once there's a public URL. */
-export function retellUrls(config: Pick<Config, "publicBaseUrl">) {
-  if (!config.publicBaseUrl) return {};
+/**
+ * The Retell adapter's settings beyond the API key: where Retell sends call events and
+ * mid-call function requests once there's a public URL, and the key that verifies them.
+ */
+export function retellUrls(config: Pick<Config, "publicBaseUrl" | "retellWebhookKey">) {
   return {
-    webhookUrl: `${config.publicBaseUrl}/webhooks/voice/retell`,
-    functionUrl: `${config.publicBaseUrl}/webhooks/voice/retell/function`,
+    ...(config.retellWebhookKey !== undefined && { webhookKey: config.retellWebhookKey }),
+    ...(config.publicBaseUrl && {
+      webhookUrl: `${config.publicBaseUrl}/webhooks/voice/retell`,
+      functionUrl: `${config.publicBaseUrl}/webhooks/voice/retell/function`,
+    }),
   };
 }
