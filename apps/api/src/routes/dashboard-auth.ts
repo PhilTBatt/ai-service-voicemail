@@ -31,7 +31,8 @@ export function principalOf(res: Response): Principal {
  * Turns the Authorization header into a principal. 401 when there's no usable token (the
  * dashboard should send the person to log in); 403 when the token is fine but nobody has
  * invited that person (they're logged in with the provider, but have no account here). A
- * first login claims the invitation that matches the provider's verified email.
+ * first login claims the invitation that matches the provider's verified email; only then is
+ * the provider asked for the email, so an ordinary request costs no call to it.
  */
 export function authenticate(pool: pg.Pool, auth: AuthProvider): RequestHandler {
   return async (req, res, next) => {
@@ -46,9 +47,11 @@ export function authenticate(pool: pg.Pool, auth: AuthProvider): RequestHandler 
       res.status(401).json({ error: "Login required" });
       return;
     }
-    const account =
-      (await findAccountBySubject(pool, identity.subject)) ??
-      (await claimAccountByEmail(pool, identity.subject, identity.email));
+    let account = await findAccountBySubject(pool, identity.subject);
+    if (account === null) {
+      const email = await auth.verifiedEmail(identity.subject);
+      if (email !== null) account = await claimAccountByEmail(pool, identity.subject, email);
+    }
     if (account === null) {
       // The subject is opaque, so it's safe to log; the email isn't, and the logger would
       // redact it anyway.

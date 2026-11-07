@@ -1,11 +1,13 @@
 import { createApp } from "./app.ts";
 import { ConfigError, loadConfig, retellUrls, type Config } from "./config.ts";
 import { recordCallEnded, recordMidCallEmergency } from "./db/calls.ts";
+import { createAdminPool } from "./db/cross-tenant.ts";
 import { createPool } from "./db/pool.ts";
 import { enqueueNotificationsWith } from "./jobs/enqueue-notifications.ts";
 import { startQueue } from "./jobs/queue.ts";
 import { enqueueSyncAgent, type SyncAgentJobData } from "./jobs/sync-agent.ts";
 import { logger } from "./logger.ts";
+import { ClerkAuthProvider } from "./providers/clerk.ts";
 import { RetellVoiceProvider } from "./providers/retell.ts";
 import { TwilioTelephonyProvider } from "./providers/twilio.ts";
 
@@ -41,14 +43,33 @@ async function start(config: Config): Promise<void> {
   }
 
   if (!config.signingSecret) logger.warn("Call pages disabled: SIGNING_SECRET isn't set");
-  // The login provider is still to be chosen (decision 012). Once it is, its adapter goes in
-  // here with the admin pool and the queue, and createApp gets a `dashboard` option.
-  logger.warn("Dashboard API disabled: no login provider configured yet (decision 012)");
+  // The dashboard API (/api) needs Clerk to say who is calling, and the admin pool for the
+  // views that span tenants (the tenant list, the admin screens).
+  const admin =
+    config.clerkSecretKey && config.adminDatabaseUrl
+      ? createAdminPool(config.adminDatabaseUrl)
+      : undefined;
+  const dashboard =
+    admin && config.clerkSecretKey
+      ? {
+          admin,
+          auth: new ClerkAuthProvider({
+            secretKey: config.clerkSecretKey,
+            authorizedParties: [config.dashboardOrigin],
+          }),
+          boss,
+          voice: retell,
+          telephony: telephony?.provider,
+        }
+      : undefined;
+  if (dashboard) logger.info("Dashboard API on", { dashboardOrigin: config.dashboardOrigin });
+  else logger.warn("Dashboard API disabled: needs CLERK_SECRET_KEY and ADMIN_DATABASE_URL");
 
   const app = createApp({
     pool,
     voiceProviders,
     telephony,
+    dashboard,
     postmark: config.postmarkWebhookSecret
       ? { webhookSecret: config.postmarkWebhookSecret }
       : undefined,
@@ -73,7 +94,7 @@ async function start(config: Config): Promise<void> {
     if (error) {
       logger.error("API failed to start", { error, port: config.port });
       process.exitCode = 1;
-      void boss.stop({ close: true }).then(() => pool.end());
+      void boss.stop({ close: true }).then(() => Promise.all([pool.end(), admin?.end()]));
       return;
     }
     logger.info("API listening", { port: config.port, nodeEnv: config.nodeEnv });
@@ -86,7 +107,7 @@ async function start(config: Config): Promise<void> {
     server.close(() => {
       void boss
         .stop({ close: true })
-        .then(() => pool.end())
+        .then(() => Promise.all([pool.end(), admin?.end()]))
         .then(() => logger.info("Shutdown complete"));
     });
   };

@@ -516,6 +516,21 @@ describe("invitations", () => {
     ).toBe(403);
   });
 
+  it("won't hand an invitation to an address the provider hasn't verified", async () => {
+    const email = `unverified-${randomUUID()}@example.com`;
+    await inviteUser(admin, { email, role: "admin" });
+    // The provider knows who this is but hasn't confirmed they own the address.
+    const unverified = auth.tokenFor({ subject: `sub_${randomUUID()}`, email: null });
+    expect((await get("/me", unverified)).status).toBe(403);
+    const row = (
+      await admin.query<{ auth_subject: string | null }>(
+        "SELECT auth_subject FROM users WHERE email = $1",
+        [email],
+      )
+    ).rows[0]!;
+    expect(row.auth_subject).toBeNull();
+  });
+
   it("refuses to invite an address twice", async () => {
     const email = `twice-${randomUUID()}@example.com`;
     expect((await inviteUser(admin, { email, role: "owner" })).outcome).toBe("invited");

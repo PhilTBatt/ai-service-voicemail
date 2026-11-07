@@ -1,8 +1,8 @@
 # 012: Login provider for the dashboard (Step 10 gate)
 
 - **Date:** 2026-11-08
-- **Status:** proposed. 🛑 Phil picks and creates the account.
-- **Code:** `apps/api/src/providers/auth.ts` (the seam and fake, provider-neutral). The adapter follows the pick.
+- **Status:** accepted 2026-11-08: **Clerk**. Phil created the development instance (email codes and links, Google; passwords off).
+- **Code:** `apps/api/src/providers/auth.ts` (the seam), `auth.fake.ts`, `clerk.ts` (the adapter).
 
 ## 1. What login is for
 
@@ -57,3 +57,13 @@ At 10, 100 or 500 users every hosted option is **£0**. Clerk charges nothing un
 ## 6. What the code assumes
 
 The seam built alongside this record asks the provider for one thing: given a bearer token, who is this (a stable subject ID and an email)? Everything else, roles, tenant membership and the reseller's blindfold, lives in our tables and is enforced in our middleware, so the provider can be swapped without touching the rest.
+
+## 7. How the Clerk adapter works (2026-11-08)
+
+Docs read: [verifyToken](https://clerk.com/docs/reference/backend/verify-token), [getUser](https://clerk.com/docs/reference/backend/user/get-user), [session tokens](https://clerk.com/docs/guides/sessions/session-tokens), [restricting access](https://clerk.com/docs/guides/secure/restricting-access), [secret keys shown once](https://clerk.com/changelog/2026-10-19-secret-keys-visible-only-on-creation).
+
+- **Every request:** `verifyToken` from `@clerk/backend` checks the token's signature against Clerk's public keys, which the SDK fetches once with the secret key and caches. The token's `sub` claim is the Clerk user ID, our `users.auth_subject`. Tokens made for any site other than `DASHBOARD_ORIGIN` are refused (Clerk's `authorizedParties` check on the `azp` claim).
+- **First login only:** the session token carries no email, so the adapter asks Clerk for the person's primary address and uses it only if Clerk has verified it. A matching invitation is claimed; after that the user ID alone finds the account, and no further call to Clerk is made.
+- **Outages:** if Clerk's keys can't be loaded or the secret key is wrong, the request fails with a 500 instead of a 401. A 401 would send every user back to the sign-in page in a loop.
+- **Access mode stays Open.** Clerk's Invite-only mode lets in only people holding a _Clerk_ invitation link, and our invitations live in our own database (`npm run invite-user`), so it would lock out the people we invite. Open is safe: anyone can create a Clerk login, but our API answers 403 to anyone we haven't invited. Switching to Invite-only becomes worthwhile once `invite-user` also creates the Clerk invitation (Step 11's onboarding).
+- **Secret keys:** since 2026-10-19 Clerk shows a secret key in full only when it's added, so the key created automatically with the application can't be read. Add a new key instead.

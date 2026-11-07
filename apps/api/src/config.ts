@@ -61,8 +61,18 @@ const envSchema = z
     POSTMARK_WEBHOOK_SECRET: z.string().min(16).optional(),
     // Signs the call links in texts and emails (core/signed-links.ts). 32+ random characters.
     SIGNING_SECRET: z.string().min(32, "expected at least 32 characters").optional(),
-    // Cross-tenant work (retention, seeding). The API never uses it; the worker does.
+    // Cross-tenant work: the worker (retention, reconciliation) and the API's dashboard views
+    // that span tenants (the tenant list, the admin screens). Only db/cross-tenant.ts uses it.
     ADMIN_DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }).optional(),
+    // Dashboard login (decision 012: Clerk). Verifies session tokens, and looks up a person's
+    // email on their first login. Without it (or ADMIN_DATABASE_URL) the dashboard API is off.
+    CLERK_SECRET_KEY: z
+      .string()
+      .startsWith("sk_", "expected a Clerk secret key (sk_...)")
+      .optional(),
+    // The site the dashboard is served from. Login tokens made for any other site are refused.
+    // Defaults to the local dev server (npm run dev:web).
+    DASHBOARD_ORIGIN: z.url().optional(),
     LLM_MODEL: z.string().min(1).default("claude-haiku-5-5"),
     // Share of processed calls whose summary is checked by the hallucination judge (Step 7):
     // 0 (off) to 1 (every call). Off by default; each check is one more model call.
@@ -109,6 +119,9 @@ const envSchema = z
     fallbackVoicemailUrl: env.FALLBACK_VOICEMAIL_URL,
     adminDatabaseUrl: env.ADMIN_DATABASE_URL,
     signingSecret: env.SIGNING_SECRET,
+    clerkSecretKey: env.CLERK_SECRET_KEY,
+    // An origin is scheme, host and port: a trailing slash or path would never match a token.
+    dashboardOrigin: new URL(env.DASHBOARD_ORIGIN ?? "http://localhost:5173").origin,
     email:
       env.POSTMARK_SERVER_TOKEN !== undefined && env.EMAIL_FROM !== undefined
         ? {

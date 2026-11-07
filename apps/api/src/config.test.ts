@@ -21,6 +21,7 @@ describe("loadConfig", () => {
       logLevel: "info",
       databaseUrl: valid.DATABASE_URL,
       outbound: { nodeEnv: "development", allowlist: new Set() },
+      dashboardOrigin: "http://localhost:5173",
     });
   });
 
@@ -315,5 +316,23 @@ describe("loadConfig: POSTMARK_WEBHOOK_SECRET", () => {
     expect(configErrorFor({ ...valid, POSTMARK_WEBHOOK_SECRET: "short" }).problems[0]).toMatch(
       /^POSTMARK_WEBHOOK_SECRET is invalid/,
     );
+  });
+});
+
+describe("loadConfig: dashboard login", () => {
+  it("takes a Clerk secret key only in its sk_ form", () => {
+    expect(loadConfig({ ...valid, CLERK_SECRET_KEY: "sk_test_fake" }).clerkSecretKey).toBe(
+      "sk_test_fake",
+    );
+    expect(configErrorFor({ ...valid, CLERK_SECRET_KEY: "pk_test_fake" }).problems[0]).toMatch(
+      /^CLERK_SECRET_KEY is invalid/,
+    );
+  });
+
+  it("reduces DASHBOARD_ORIGIN to an origin, defaulting to the local dev server", () => {
+    expect(loadConfig(valid).dashboardOrigin).toBe("http://localhost:5173");
+    expect(
+      loadConfig({ ...valid, DASHBOARD_ORIGIN: "https://app.brockersby.co.uk/" }).dashboardOrigin,
+    ).toBe("https://app.brockersby.co.uk");
   });
 });
