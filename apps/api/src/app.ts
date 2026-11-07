@@ -1,5 +1,6 @@
 import express, { type ErrorRequestHandler } from "express";
 import type pg from "pg";
+import type { OutboundPolicy } from "./core/outbound-allowlist.ts";
 import { logger } from "./logger.ts";
 import type { TelephonyProvider } from "./providers/telephony.ts";
 import type { CallEndedEvent, VoiceProvider } from "./providers/voice.ts";
@@ -16,6 +17,8 @@ export interface AppOptions {
         provider: TelephonyProvider;
         voice: VoiceProvider;
         publicBaseUrl: string;
+        outbound: OutboundPolicy;
+        enqueueSync: (job: { tenantId: string; profileVersion: number }) => Promise<unknown>;
         now?: () => Date;
       }
     | undefined;

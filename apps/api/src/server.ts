@@ -3,6 +3,7 @@ import { ConfigError, loadConfig, type Config } from "./config.ts";
 import { recordCallEnded } from "./db/calls.ts";
 import { createPool } from "./db/pool.ts";
 import { startQueue } from "./jobs/queue.ts";
+import { enqueueSyncAgent, type SyncAgentJobData } from "./jobs/sync-agent.ts";
 import { logger } from "./logger.ts";
 import { RetellVoiceProvider } from "./providers/retell.ts";
 import { TwilioTelephonyProvider } from "./providers/twilio.ts";
@@ -27,6 +28,8 @@ async function start(config: Config): Promise<void> {
           provider: new TwilioTelephonyProvider(config.twilio),
           voice: retell,
           publicBaseUrl: config.publicBaseUrl,
+          outbound: config.outbound,
+          enqueueSync: (job: SyncAgentJobData) => enqueueSyncAgent(boss, job),
         }
       : undefined;
   if (!telephony) {

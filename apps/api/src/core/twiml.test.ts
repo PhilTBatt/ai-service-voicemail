@@ -4,7 +4,9 @@ import {
   fallbackVoicemail,
   fallbackVoicemailBins,
   hangup,
+  noSmsReply,
   rejectCall,
+  smsReply,
   serviceEnded,
   voicemailDone,
 } from "./twiml.ts";
@@ -70,6 +72,11 @@ describe("TwiML", () => {
   it("rejects and hangs up", () => {
     expect(rejectCall()).toMatchSnapshot();
     expect(hangup()).toMatchSnapshot();
+  });
+
+  it("replies to a text, or deliberately says nothing", () => {
+    expect(smsReply("AnswerMate is ON & answering <calls>.")).toMatchSnapshot();
+    expect(noSmsReply()).toBe('<?xml version="1.0" encoding="UTF-8"?><Response/>');
   });
 
   it("escapes anything that could break the XML", () => {

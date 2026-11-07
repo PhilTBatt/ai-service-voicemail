@@ -2,17 +2,23 @@ import { Router, urlencoded, type RequestHandler } from "express";
 import type pg from "pg";
 import { z } from "zod";
 import { raiseAlert } from "../alerts.ts";
+import { checkOutbound, type OutboundPolicy } from "../core/outbound-allowlist.ts";
 import { e164OrNull } from "../core/phone.ts";
+import { parseSmsCommand, ukToday } from "../core/sms-commands.ts";
 import { routeInboundCall } from "../core/routing.ts";
 import {
   agentDial,
   fallbackVoicemail,
   hangup,
+  noSmsReply,
   rejectCall,
   serviceEnded,
+  smsReply,
   voicemailDone,
 } from "../core/twiml.ts";
+import { findTenantIdByMobile } from "../db/cross-tenant.ts";
 import { loadInboundCallContext } from "../db/inbound-call.ts";
+import { applySmsCommand } from "../db/tenant-commands.ts";
 import { storeFallbackVoicemail } from "../db/voicemails.ts";
 import { logger } from "../logger.ts";
 import type { TelephonyProvider } from "../providers/telephony.ts";
@@ -24,6 +30,10 @@ export interface TwilioRouteOptions {
   voice: VoiceProvider;
   /** Twilio signs the exact public URL it called; this is that URL's origin. */
   publicBaseUrl: string;
+  /** Replies to SMS commands go through the outbound allowlist like every other message. */
+  outbound: OutboundPolicy;
+  /** Re-syncs a profile whose holiday dates changed, so the agent's prompt names the new date. */
+  enqueueSync: (job: { tenantId: string; profileVersion: number }) => Promise<unknown>;
   now?: () => Date;
 }
 
@@ -37,6 +47,12 @@ const voiceWebhookSchema = z.object({
 const dialStatusSchema = z.object({
   CallSid: z.string().min(1),
   DialCallStatus: z.string().optional(),
+});
+
+const inboundSmsSchema = z.object({
+  MessageSid: z.string().min(1),
+  From: z.string().min(1),
+  Body: z.string().default(""),
 });
 
 const recordingCallbackSchema = z.object({
@@ -57,6 +73,8 @@ export function twilioRouter({
   telephony,
   voice,
   publicBaseUrl,
+  outbound,
+  enqueueSync,
   now = () => new Date(),
 }: TwilioRouteOptions) {
   const router = Router();
@@ -186,6 +204,43 @@ export function twilioRouter({
     });
     logger.info("Fallback voicemail callback handled", { callSid, ...result });
     res.status(204).end();
+  });
+
+  // A text to the notification number. Only a tenant's registered mobile gets a reply;
+  // anything else is dropped silently, so the number can't be used to probe for tenants.
+  router.post("/sms", verified, async (req, res) => {
+    const parsed = inboundSmsSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "Bad request" });
+      return;
+    }
+    const { MessageSid: messageSid, Body: body } = parsed.data;
+    const from = e164OrNull(parsed.data.From);
+    const tenantId = from === null ? null : await findTenantIdByMobile(pool, from);
+    res.type("text/xml");
+    if (tenantId === null || from === null) {
+      logger.info("Ignored SMS from an unknown sender", { messageSid });
+      res.send(noSmsReply());
+      return;
+    }
+
+    const command = parseSmsCommand(body, ukToday(now()));
+    const result = await applySmsCommand(pool, tenantId, command, now());
+    if (result.resyncProfileVersion !== undefined) {
+      await enqueueSync({ tenantId, profileVersion: result.resyncProfileVersion });
+    }
+    logger.info("SMS command handled", { messageSid, tenantId, command: command.kind });
+
+    const decision = checkOutbound(outbound, from);
+    if (!decision.allowed) {
+      logger.warn("SMS reply blocked by the outbound allowlist", {
+        tenantId,
+        reason: decision.reason,
+      });
+      res.send(noSmsReply());
+      return;
+    }
+    res.send(smsReply(result.reply));
   });
 
   return router;

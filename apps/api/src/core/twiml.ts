@@ -4,6 +4,7 @@ import twilio from "twilio";
 import { FALLBACK_VOICEMAIL_GREETING, SERVICE_ENDED_LINE, VOICEMAIL_THANKS } from "./scripts.ts";
 
 const VoiceResponse = twilio.twiml.VoiceResponse;
+const MessagingResponse = twilio.twiml.MessagingResponse;
 /** A British voice for the messages Twilio speaks itself. */
 const SAY = { voice: "Polly.Amy" as const, language: "en-GB" as const };
 export const VOICEMAIL_MAX_SECONDS = 120;
@@ -97,6 +98,18 @@ export function hangup(): string {
   const response = new VoiceResponse();
   response.hangup();
   return response.toString();
+}
+
+/** Replies to an inbound text (Twilio sends it from the number that was texted). */
+export function smsReply(text: string): string {
+  const response = new MessagingResponse();
+  response.message(text);
+  return response.toString();
+}
+
+/** No reply at all: for unknown senders and for replies the outbound allowlist blocks. */
+export function noSmsReply(): string {
+  return new MessagingResponse().toString();
 }
 
 /** +447700900123 → 07700 900123, which is how a UK caller expects to hear it. */

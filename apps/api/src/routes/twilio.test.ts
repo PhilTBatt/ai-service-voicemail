@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { createApp } from "../app.ts";
+import { parseAllowlist } from "../core/outbound-allowlist.ts";
 import { assignPhoneNumber, createAdminPool, createTenant } from "../db/cross-tenant.ts";
 import { createPool } from "../db/pool.ts";
 import { FakeTelephonyProvider } from "../providers/telephony.fake.ts";
@@ -18,6 +19,10 @@ const app = createPool(TEST_DATABASE_URL);
 const admin = createAdminPool(TEST_ADMIN_DATABASE_URL);
 const telephony = new FakeTelephonyProvider();
 const voice = new FakeVoiceProvider();
+const enqueueSync = vi.fn(() => Promise.resolve());
+// Replies only go to mobiles added here; everyone else is blocked by the allowlist.
+const allowlist = parseAllowlist(undefined);
+const outbound = { nodeEnv: "test" as const, allowlist };
 let post: (
   path: string,
   params: Record<string, string>,
@@ -29,7 +34,14 @@ let baseUrl: string;
 beforeAll(async () => {
   const server = createApp({
     pool: app,
-    telephony: { provider: telephony, voice, publicBaseUrl: PUBLIC_BASE_URL, now: NOW },
+    telephony: {
+      provider: telephony,
+      voice,
+      publicBaseUrl: PUBLIC_BASE_URL,
+      outbound,
+      enqueueSync,
+      now: NOW,
+    },
   }).listen(0);
   await once(server, "listening");
   const { port } = server.address() as AddressInfo;
@@ -295,6 +307,74 @@ describe("POST /webhooks/twilio/recording", () => {
       callback("CA1"),
       "http://localhost:3000/webhooks/twilio/recording",
     );
+    expect(response.status).toBe(403);
+  });
+});
+
+describe("POST /webhooks/twilio/sms", () => {
+  const sms = (from: string, body: string) => ({
+    MessageSid: `SM${randomUUID().replace(/-/g, "")}`,
+    From: from,
+    To: "+447700900900",
+    Body: body,
+  });
+  const status = async (tenantId: string) =>
+    (await admin.query<{ status: string }>("SELECT status FROM tenants WHERE id = $1", [tenantId]))
+      .rows[0]!.status;
+  /** A tenant whose registered mobile is unique, and allowlisted unless told otherwise. */
+  async function makeTexter(status: "live" | "paused" = "live", { allowed = true } = {}) {
+    const { tenantId } = await makeTenant(status);
+    const mobile = `+4477009${String(Math.floor(Math.random() * 100000)).padStart(5, "0")}`;
+    await admin.query("UPDATE tenants SET notification_mobile = $2 WHERE id = $1", [
+      tenantId,
+      mobile,
+    ]);
+    if (allowed) allowlist.add(mobile);
+    return { tenantId, mobile };
+  }
+
+  it("applies a command from the tenant's registered mobile and replies", async () => {
+    const { tenantId, mobile } = await makeTexter();
+    const response = await post("/webhooks/twilio/sms", sms(mobile, "off"));
+    expect(response.status).toBe(200);
+    const xml = await response.text();
+    expect(xml).toContain("<Message>AnswerMate is now OFF.");
+    expect(await status(tenantId)).toBe("paused");
+  });
+
+  it("re-syncs the agent when holiday mode changes", async () => {
+    const { tenantId, mobile } = await makeTexter();
+    enqueueSync.mockClear();
+    const xml = await (await post("/webhooks/twilio/sms", sms(mobile, "HOLIDAY 12/12"))).text();
+    expect(xml).toContain("Holiday mode is on until 12 Dec 2026");
+    expect(enqueueSync).toHaveBeenCalledWith({ tenantId, profileVersion: 1 });
+  });
+
+  it("ignores an unknown sender with no reply and no change", async () => {
+    const { tenantId } = await makeTenant("live");
+    const xml = await (await post("/webhooks/twilio/sms", sms("+447700900555", "OFF"))).text();
+    expect(xml).toBe('<?xml version="1.0" encoding="UTF-8"?><Response/>');
+    expect(await status(tenantId)).toBe("live");
+  });
+
+  it("ignores a withheld sender", async () => {
+    const xml = await (await post("/webhooks/twilio/sms", sms("anonymous", "OFF"))).text();
+    expect(xml).toBe('<?xml version="1.0" encoding="UTF-8"?><Response/>');
+  });
+
+  it("applies the command but sends no reply when the allowlist blocks the mobile", async () => {
+    const { tenantId, mobile } = await makeTexter("live", { allowed: false });
+    const xml = await (await post("/webhooks/twilio/sms", sms(mobile, "OFF"))).text();
+    expect(xml).not.toContain("<Message>");
+    expect(await status(tenantId)).toBe("paused");
+  });
+
+  it("rejects an unsigned text", async () => {
+    const response = await fetch(`${baseUrl}/webhooks/twilio/sms`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams(sms("+447700900001", "OFF")).toString(),
+    });
     expect(response.status).toBe(403);
   });
 });

@@ -1,0 +1,84 @@
+import { describe, expect, it } from "vitest";
+import { isGsm7 } from "./sms.ts";
+import {
+  HELP_REPLY,
+  HOLIDAY_INVALID_REPLY,
+  UNKNOWN_REPLY,
+  formatUkDate,
+  parseHolidayDate,
+  parseSmsCommand,
+  ukToday,
+} from "./sms-commands.ts";
+
+const TODAY = Temporal.PlainDate.from("2026-07-15");
+
+describe("parseSmsCommand", () => {
+  it.each([
+    ["OFF", { kind: "off" }],
+    ["off", { kind: "off" }],
+    [" Off. ", { kind: "off" }],
+    ["pause", { kind: "off" }],
+    ["ON", { kind: "on" }],
+    ["resume!", { kind: "on" }],
+    ["STATUS", { kind: "status" }],
+    ["HELP", { kind: "help" }],
+    ["?", { kind: "help" }],
+    ["HOLIDAY 12/12", { kind: "holiday", until: "2026-12-12" }],
+    ["holiday 2027-01-05", { kind: "holiday", until: "2027-01-05" }],
+    ["Hols 3 Aug", { kind: "holiday", until: "2026-08-03" }],
+    ["HOLIDAY", { kind: "holiday-invalid" }],
+    ["HOLIDAY tomorrow", { kind: "holiday-invalid" }],
+    ["HOLIDAY 31/02", { kind: "holiday-invalid" }],
+    ["HOLIDAY 01/01", { kind: "holiday", until: "2027-01-01" }], // already passed this year
+    ["Thanks mate", { kind: "unknown" }],
+    ["", { kind: "unknown" }],
+    ["OFFICE", { kind: "unknown" }],
+  ])("parses %j", (body, expected) => {
+    expect(parseSmsCommand(body, TODAY)).toEqual(expected);
+  });
+});
+
+describe("parseHolidayDate", () => {
+  it.each([
+    ["2026-12-12", "2026-12-12"],
+    ["12/12/2026", "2026-12-12"],
+    ["12/12/26", "2026-12-12"],
+    ["12.12.26", "2026-12-12"],
+    ["12-12", "2026-12-12"],
+    ["15/07", "2026-07-15"], // today counts
+    ["14/07", "2027-07-14"], // yesterday means next year
+    ["29/02", "2028-02-29"], // next leap day
+    ["1st Sept", "2026-09-01"],
+    ["25 December 2026", "2026-12-25"],
+  ])("reads %s as %s", (text, iso) => {
+    expect(parseHolidayDate(text, TODAY)).toBe(iso);
+  });
+
+  it.each(["", "soon", "32/01", "12/13", "2025-01-01", "12/12/2025", "5 Octember"])(
+    "rejects %s",
+    (text) => {
+      expect(parseHolidayDate(text, TODAY)).toBeNull();
+    },
+  );
+});
+
+describe("ukToday", () => {
+  it("uses the UK date, not UTC", () => {
+    // 23:30 UTC on 14 July is 00:30 BST on 15 July.
+    expect(ukToday(new Date("2026-07-14T23:30:00Z")).toString()).toBe("2026-07-15");
+    expect(ukToday(new Date("2026-01-14T23:30:00Z")).toString()).toBe("2026-01-14");
+  });
+});
+
+describe("replies", () => {
+  it("formats dates the British way", () => {
+    expect(formatUkDate("2026-12-12")).toBe("12 Dec 2026");
+  });
+
+  it("are plain GSM-7 text", () => {
+    for (const reply of [HELP_REPLY, UNKNOWN_REPLY, HOLIDAY_INVALID_REPLY]) {
+      expect(isGsm7(reply)).toBe(true);
+      expect(reply.length).toBeLessThanOrEqual(160);
+    }
+  });
+});
