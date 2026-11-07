@@ -34,10 +34,15 @@ export function principalOf(res: Response): Principal {
  * first login claims the invitation that matches the provider's verified email; only then is
  * the provider asked for the email, so an ordinary request costs no call to it.
  */
+/** The token in an "Authorization: Bearer ..." header, or "" when there isn't one. */
+export function bearerToken(header: string | undefined): string {
+  const value = header ?? "";
+  return value.startsWith("Bearer ") ? value.slice("Bearer ".length).trim() : "";
+}
+
 export function authenticate(pool: pg.Pool, auth: AuthProvider): RequestHandler {
   return async (req, res, next) => {
-    const header = req.headers.authorization ?? "";
-    const token = header.startsWith("Bearer ") ? header.slice("Bearer ".length).trim() : "";
+    const token = bearerToken(req.headers.authorization);
     if (token === "") {
       res.status(401).json({ error: "Login required" });
       return;

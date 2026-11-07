@@ -488,3 +488,18 @@ table.usage tfoot th {
 .checks li.ok {
   color: #067647;
 }
+
+.signup-url {
+  word-break: break-all;
+  font-size: 0.9rem;
+}
+
+fieldset.stacked {
+  border: none;
+  padding: 0;
+}
+
+.document {
+  border-top: 1px solid var(--line);
+  padding: 0.5rem 0;
+}

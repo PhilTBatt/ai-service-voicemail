@@ -2,7 +2,13 @@
 // │ CROSS-TENANT ACCESS. Everything that can reach more than one tenant's data lives      │
 // │ here, and only here. Tenant-facing code uses withTenant() (./tenant.ts) instead.       │
 // └──────────────────────────────────────────────────────────────────────────────────────┘
-import type { Trade } from "@callmate/shared";
+import { createHash, randomBytes } from "node:crypto";
+import {
+  LEGAL_DOCUMENT_TYPES,
+  LEGAL_DOCUMENTS,
+  type SignupInput,
+  type Trade,
+} from "@callmate/shared";
 import type pg from "pg";
 import type { CostPrices } from "../core/prices.ts";
 import { createPool } from "./pool.ts";
@@ -425,6 +431,158 @@ export async function inviteUser(
   ).rows[0];
   if (existing) return { outcome: "exists", role: existing.role };
   return { outcome: "invited", userId: await createUser(admin, user) };
+}
+
+// ─── Signup links (BUILD_PLAN Step 11) ─────────────────────────────────────────────────
+
+export const SIGNUP_LINK_TTL_MS = 14 * 24 * 60 * 60 * 1000;
+
+/** Only a hash of a link's code is stored, so a copy of the table can't be used to sign up. */
+function hashSignupCode(code: string): string {
+  return createHash("sha256").update(code).digest("hex");
+}
+
+/** Makes a single-use signup link's code (144 random bits), valid for 14 days. Audited. */
+export async function createSignupLink(
+  admin: AdminPool,
+  link: { createdBy: string; forTest: boolean; now: Date },
+): Promise<{ code: string; expiresAt: Date }> {
+  const code = randomBytes(18).toString("base64url");
+  const expiresAt = new Date(link.now.getTime() + SIGNUP_LINK_TTL_MS);
+  const { rows } = await admin.query<{ id: string }>(
+    `INSERT INTO signup_links (code_hash, created_by, for_test, expires_at)
+     VALUES ($1, $2, $3, $4) RETURNING id`,
+    [hashSignupCode(code), link.createdBy, link.forTest, expiresAt],
+  );
+  await admin.query(
+    "INSERT INTO audit_log (tenant_id, actor_user_id, action, details) VALUES (NULL, $1, 'signup-link.created', $2)",
+    [link.createdBy, { linkId: rows[0]!.id, forTest: link.forTest }],
+  );
+  return { code, expiresAt };
+}
+
+export async function findSignupLink(
+  admin: AdminPool,
+  code: string,
+): Promise<{ forTest: boolean; expiresAt: Date; usedAt: Date | null } | null> {
+  const { rows } = await admin.query<{ forTest: boolean; expiresAt: Date; usedAt: Date | null }>(
+    `SELECT for_test AS "forTest", expires_at AS "expiresAt", used_at AS "usedAt"
+     FROM signup_links WHERE code_hash = $1`,
+    [hashSignupCode(code)],
+  );
+  return rows[0] ?? null;
+}
+
+export type SignupOutcome =
+  { outcome: "created"; tenantId: string; userId: string } | { outcome: "refused"; reason: string };
+
+/**
+ * Follows a signup link (BUILD_PLAN Step 11): creates the business, its owner account for the
+ * person signed in, their membership, and an acceptance of each document at the version they
+ * saw, then marks the link used. All in one transaction, with the link locked, so a link can
+ * only ever make one business. The business starts at "terms accepted".
+ */
+export async function completeSignup(
+  admin: AdminPool,
+  signup: { input: SignupInput; subject: string; loginEmail: string; now: Date },
+): Promise<SignupOutcome> {
+  const { input, subject, loginEmail, now } = signup;
+  const client = await admin.connect();
+  let open = false;
+  try {
+    await client.query("BEGIN");
+    open = true;
+    const refuse = async (reason: string): Promise<SignupOutcome> => {
+      await client.query("ROLLBACK");
+      open = false;
+      return { outcome: "refused", reason };
+    };
+
+    const link = (
+      await client.query<{ id: string; for_test: boolean; expires_at: Date; used_at: Date | null }>(
+        "SELECT id, for_test, expires_at, used_at FROM signup_links WHERE code_hash = $1 FOR UPDATE",
+        [hashSignupCode(input.code)],
+      )
+    ).rows[0];
+    if (!link) return await refuse("This signup link isn't valid");
+    if (link.used_at) return await refuse("This signup link has already been used");
+    if (link.expires_at <= now)
+      return await refuse("This signup link has expired; ask for a new one");
+    for (const type of LEGAL_DOCUMENT_TYPES) {
+      if (input.accepted[type] !== LEGAL_DOCUMENTS[type].version) {
+        return await refuse(
+          "The documents have changed since this page opened. Reload it to see the current versions.",
+        );
+      }
+    }
+    const existing = await client.query(
+      "SELECT 1 FROM users WHERE auth_subject = $1 OR lower(email) = lower($2)",
+      [subject, loginEmail],
+    );
+    if (existing.rowCount !== 0) {
+      return await refuse("You already have an AnswerMate account. Sign in to see it.");
+    }
+
+    const tenantId = (
+      await client.query<{ id: string }>(
+        `INSERT INTO tenants (business_name, trade, status, notification_mobile, notification_email,
+                              contact_name, mobile_network, uses_network_voicemail, is_test,
+                              onboarding_state)
+         VALUES ($1, $2, 'onboarding', $3, $4, $5, $6, $7, $8, 'terms_accepted')
+         RETURNING id`,
+        [
+          input.businessName,
+          input.trade,
+          input.mobile,
+          input.email ?? loginEmail,
+          input.contactName,
+          input.mobileNetwork,
+          input.usesNetworkVoicemail,
+          link.for_test,
+        ],
+      )
+    ).rows[0]!.id;
+    const userId = (
+      await client.query<{ id: string }>(
+        "INSERT INTO users (auth_subject, email, role) VALUES ($1, $2, 'owner') RETURNING id",
+        [subject, loginEmail],
+      )
+    ).rows[0]!.id;
+    await client.query("INSERT INTO tenant_memberships (tenant_id, user_id) VALUES ($1, $2)", [
+      tenantId,
+      userId,
+    ]);
+    for (const type of LEGAL_DOCUMENT_TYPES) {
+      await client.query(
+        `INSERT INTO terms_acceptances (tenant_id, document_type, document_version, accepted_by, accepted_at)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [tenantId, type, input.accepted[type], userId, now],
+      );
+    }
+    await client.query("UPDATE signup_links SET used_at = $2, tenant_id = $3 WHERE id = $1", [
+      link.id,
+      now,
+      tenantId,
+    ]);
+    await client.query(
+      `INSERT INTO audit_log (tenant_id, actor_user_id, action, details)
+       VALUES ($1, $2, 'tenant.signed-up', $3), ($1, $2, 'onboarding.advanced', $4)`,
+      [
+        tenantId,
+        userId,
+        { via: "signup-link", linkId: link.id, forTest: link.for_test },
+        { via: "signup-link", from: "created", to: "terms_accepted" },
+      ],
+    );
+    await client.query("COMMIT");
+    open = false;
+    return { outcome: "created", tenantId, userId };
+  } catch (error) {
+    if (open) await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 /** Makes a user a member of a tenant. Owners see only the tenants they're members of. */

@@ -39,7 +39,7 @@ export function Show({
   return (when === "signed-in") === signedIn ? <>{children}</> : null;
 }
 
-export function SignIn() {
+export function SignIn(_props: { forceRedirectUrl?: string; signUpForceRedirectUrl?: string }) {
   const [email, setEmail] = useState("");
   return (
     <form

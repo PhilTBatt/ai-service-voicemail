@@ -9,6 +9,13 @@ import { ONBOARDING_LABELS, ONBOARDING_STATES, type OnboardingState } from "@cal
 export interface OnboardingFacts {
   /** All three documents accepted: terms, DPA and privacy notice. */
   termsAccepted: boolean;
+  /**
+   * The versions accepted are the solicitor-approved ones. Until Phil uploads them they're
+   * placeholders, and only a test business may go live (BUILD_PLAN Step 11 🛑).
+   */
+  documentsApproved: boolean;
+  /** Signed up from a test link: Phil trying the service out. */
+  isTest: boolean;
   /** A payment method is ready. Billing is Step 12, so nothing sets this yet. */
   paymentReady: boolean;
   /** A free pilot: allowed past "payment set up" without one (BUILD_PLAN Step 11). */
@@ -30,11 +37,18 @@ export function nextState(state: OnboardingState): OnboardingState | null {
 }
 
 /**
- * The go-live rule: accepted terms, payment ready (or a pilot), and a test call. Checked again
+ * The go-live rule: accepted terms (approved ones, unless it's a test business), payment ready
+ * (or a pilot), and a test call. Checked again
  * at the last step even though earlier steps implied it, because those facts can change.
  */
 export function goLiveVerdict(facts: OnboardingFacts): Verdict {
   if (!facts.termsAccepted) return { ok: false, reason: "The terms haven't all been accepted" };
+  if (!facts.documentsApproved && !facts.isTest) {
+    return {
+      ok: false,
+      reason: "The legal documents are still placeholders, so only a test business can go live",
+    };
+  }
   if (!facts.paymentReady && !facts.isPilot) {
     return { ok: false, reason: "No payment is set up, and this isn't a pilot" };
   }

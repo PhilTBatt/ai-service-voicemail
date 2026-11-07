@@ -9,6 +9,7 @@ import type { CallEndedEvent, FunctionCallEvent, VoiceProvider } from "./provide
 import { callPageRouter } from "./routes/calls.ts";
 import { dashboardRouter, type DashboardOptions } from "./routes/dashboard.ts";
 import { postmarkRouter } from "./routes/postmark.ts";
+import { signupRouter } from "./routes/signup.ts";
 import { twilioRouter } from "./routes/twilio.ts";
 import { voiceWebhookRouter } from "./routes/webhooks.ts";
 
@@ -94,7 +95,19 @@ export function createApp({
 
   if (postmark) app.use("/webhooks/postmark", postmarkRouter({ pool, ...postmark }));
   if (callPages) app.use("/c", callPageRouter({ pool, ...callPages }));
-  if (dashboard) app.use("/api", dashboardRouter({ pool, ...dashboard }));
+  if (dashboard) {
+    // First: following a signup link needs a login but no account, so it can't sit behind the
+    // dashboard's account check.
+    app.use(
+      "/api/signup",
+      signupRouter({
+        admin: dashboard.admin,
+        auth: dashboard.auth,
+        ...(dashboard.now && { now: dashboard.now }),
+      }),
+    );
+    app.use("/api", dashboardRouter({ pool, ...dashboard }));
+  }
 
   // Last: Express's own handler prints the stack with console.error, unredacted, and shows
   // it to the client outside production. Log through the redacting logger instead, and

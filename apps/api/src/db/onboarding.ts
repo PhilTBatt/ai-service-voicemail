@@ -3,6 +3,8 @@
 // inside the business's own transaction (withTenant), so row-level security applies; the row is
 // locked while a step is taken, so two clicks can't both move it on.
 import {
+  LEGAL_DOCUMENT_TYPES,
+  LEGAL_DOCUMENTS,
   ONBOARDING_LABELS,
   ONBOARDING_STATES,
   type OnboardingState,
@@ -16,7 +18,9 @@ interface FactsRow {
   onboarding_state: OnboardingState;
   status: string;
   is_pilot: boolean;
+  is_test: boolean;
   documents_accepted: number;
+  accepted_versions: Record<string, string>;
   has_number: boolean;
   has_profile: boolean;
   has_contact_name: boolean;
@@ -32,7 +36,11 @@ async function loadFacts(
 ): Promise<{ state: OnboardingState; status: string; facts: OnboardingFacts } | null> {
   const row = (
     await client.query<FactsRow>(
-      `SELECT t.onboarding_state, t.status, t.is_pilot,
+      `SELECT t.onboarding_state, t.status, t.is_pilot, t.is_test,
+              (SELECT coalesce(json_object_agg(latest.document_type, latest.document_version), '{}')
+               FROM (SELECT DISTINCT ON (document_type) document_type, document_version
+                     FROM terms_acceptances a WHERE a.tenant_id = t.id
+                     ORDER BY document_type, accepted_at DESC) latest) AS accepted_versions,
               (SELECT count(DISTINCT document_type)::int FROM terms_acceptances a
                WHERE a.tenant_id = t.id) AS documents_accepted,
               EXISTS (SELECT 1 FROM phone_numbers n
@@ -56,6 +64,13 @@ async function loadFacts(
     status: row.status,
     facts: {
       termsAccepted: row.documents_accepted === 3, // terms, DPA and privacy notice
+      // Each accepted version is the current one, and the current one is solicitor-approved.
+      documentsApproved: LEGAL_DOCUMENT_TYPES.every(
+        (type) =>
+          row.accepted_versions[type] === LEGAL_DOCUMENTS[type].version &&
+          LEGAL_DOCUMENTS[type].approved,
+      ),
+      isTest: row.is_test,
       paymentReady: false, // Step 12
       isPilot: row.is_pilot,
       hasNumber: row.has_number,
@@ -97,6 +112,11 @@ export async function onboardingStatus(
           : null,
       checks: [
         { label: "Terms, DPA and privacy notice accepted", ok: facts.termsAccepted },
+        {
+          label: "Accepted documents are the solicitor-approved ones (not placeholders)",
+          ok: facts.documentsApproved,
+        },
+        { label: "Test business (may go live on placeholder documents)", ok: facts.isTest },
         { label: "Payment set up (billing comes in Step 12)", ok: facts.paymentReady },
         { label: "Pilot (free, so no payment needed)", ok: facts.isPilot },
         { label: "Has an AnswerMate number", ok: facts.hasNumber },

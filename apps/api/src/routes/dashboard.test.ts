@@ -223,6 +223,8 @@ describe("authorisation matrix", () => {
       method: "POST",
     },
     { name: "PUT /admin/tenants/:id/pilot", path: `/admin/tenants/${tenantA}/pilot`, body: {} },
+    // Making a signup link changes nothing but the links table.
+    { name: "POST /signup-links", path: "/signup-links", body: {}, method: "POST" },
   ];
   // What tenant A's data looks like to each person. "allowed" means the door opened: the
   // request may still 400, 404 or 409 on its merits (no audio at the fake, invalid body).
@@ -240,10 +242,16 @@ describe("authorisation matrix", () => {
       "GET /admin/tenants/:id/onboarding": 403,
       "POST /admin/tenants/:id/onboarding/advance": 403,
       "PUT /admin/tenants/:id/pilot": 403,
+      "POST /signup-links": 403,
     },
     ownerB: { "GET /me": "allowed", "GET /tenants": "allowed", default: 403 },
     admin: { default: "allowed" },
-    reseller: { "GET /me": "allowed", "GET /tenants": "allowed", default: 403 },
+    reseller: {
+      "GET /me": "allowed",
+      "GET /tenants": "allowed",
+      "POST /signup-links": "allowed",
+      default: 403,
+    },
     stranger: { default: 403 },
   };
 
@@ -256,7 +264,9 @@ describe("authorisation matrix", () => {
             ? await get(endpoint.path, tokens[who])
             : await send(endpoint.method ?? "PUT", endpoint.path, endpoint.body, tokens[who]);
         if (want === "allowed") {
-          expect([200, 400, 404, 409], `${who} ${endpoint.name} → ${status}`).toContain(status);
+          expect([200, 201, 400, 404, 409], `${who} ${endpoint.name} → ${status}`).toContain(
+            status,
+          );
         } else {
           expect(status, `${who} ${endpoint.name}`).toBe(want);
         }
@@ -995,6 +1005,9 @@ describe("admin screens", () => {
     );
     expect((await advance("test_call_received")).status).toBe(200);
 
+    // Live, once allowed: the documents are placeholders, so only a test business may go.
+    expect(await refusal("live")).toMatch(/still placeholders/);
+    await admin.query("UPDATE tenants SET is_test = true WHERE id = $1", [tenant]);
     // Live: the business is switched on, and there's nowhere further to go.
     const live = await advance("live");
     expect(live.status).toBe(200);
@@ -1031,7 +1044,7 @@ describe("admin screens", () => {
       [demo, `call_${randomUUID()}`],
     );
     await admin.query(
-      "UPDATE tenants SET onboarding_state = 'test_call_received', is_pilot = true WHERE id = $1",
+      "UPDATE tenants SET onboarding_state = 'test_call_received', is_pilot = true, is_test = true WHERE id = $1",
       [demo],
     );
     const response = await send(

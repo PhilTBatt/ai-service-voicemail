@@ -68,7 +68,7 @@ Logs never contain phone numbers, emails, transcripts or summaries: look things 
 
 ## 6. Dashboard accounts
 
-Nobody can sign up to the dashboard. Every account is an invitation, made from the repo root:
+A new business signs up through a link: on the business list, "Create a signup link", then send it. It works once, for 14 days, and only you can tick "Test business" (allowed to go live while the legal documents are placeholders). Ant can make links too. Other accounts are invitations, made from the repo root:
 
 ```powershell
 npm run invite-user -- --email <address> --role admin

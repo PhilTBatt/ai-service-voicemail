@@ -5,6 +5,8 @@ import { canAdvance, goLiveVerdict, nextState, type OnboardingFacts } from "./on
 /** Every fact in place, except that payment and pilot are tested on their own. */
 const EVERYTHING: OnboardingFacts = {
   termsAccepted: true,
+  documentsApproved: true,
+  isTest: false,
   paymentReady: true,
   isPilot: false,
   hasNumber: true,
@@ -60,6 +62,8 @@ describe("canAdvance: every legal and illegal transition", () => {
   it("takes an admin's word that the divert instructions were sent", () => {
     const nothing: OnboardingFacts = {
       termsAccepted: false,
+      documentsApproved: false,
+      isTest: false,
       paymentReady: false,
       isPilot: false,
       hasNumber: false,
@@ -83,5 +87,16 @@ describe("going live", () => {
     expect(goLiveVerdict({ ...EVERYTHING, paymentReady: false }).ok).toBe(false);
     expect(goLiveVerdict({ ...EVERYTHING, paymentReady: false, isPilot: true }).ok).toBe(true);
     expect(canAdvance("test_call_received", "live", EVERYTHING).ok).toBe(true);
+  });
+});
+
+describe("going live on placeholder documents", () => {
+  it("is only for a test business", () => {
+    const placeholders = { ...EVERYTHING, documentsApproved: false };
+    expect(goLiveVerdict(placeholders)).toEqual({
+      ok: false,
+      reason: "The legal documents are still placeholders, so only a test business can go live",
+    });
+    expect(goLiveVerdict({ ...placeholders, isTest: true }).ok).toBe(true);
   });
 });

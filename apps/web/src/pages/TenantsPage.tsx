@@ -4,6 +4,7 @@ import { ONBOARDING_LABELS, type MeView, type TenantListView } from "@callmate/s
 import { Link } from "react-router";
 import { useApi, useLoad } from "../api.ts";
 import { humanise } from "../format.ts";
+import { SignupLinkPanel } from "../signup-link-panel.tsx";
 import { ErrorNote, StatusBadge } from "../ui.tsx";
 
 export function TenantsPage({ me }: { me: MeView }) {
@@ -18,6 +19,7 @@ export function TenantsPage({ me }: { me: MeView }) {
   return (
     <>
       <h1>Businesses</h1>
+      <SignupLinkPanel me={me} />
       {tenants.length === 0 && <p className="muted">No businesses yet.</p>}
       <ul className="list">
         {tenants.map((tenant) => {

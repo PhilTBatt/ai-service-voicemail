@@ -9,6 +9,7 @@ import {
   URGENCIES,
   type CallListView,
   type AgentProfileInput,
+  type CreatedSignupLinkView,
   type CancellationView,
   type MeView,
   type NotificationSettings,
@@ -26,6 +27,7 @@ import { z } from "zod";
 import { agentProfileInputSchema, saveAgentProfile } from "../db/agent-profiles.ts";
 import { adminRouter, type NumberProvisioning } from "./admin.ts";
 import {
+  createSignupLink,
   listTenantsWithCallCounts,
   type AdminPool,
   type TenantWithCallCounts,
@@ -107,6 +109,7 @@ interface ProfileRow {
 }
 
 const switchBody = z.object({ on: z.boolean() });
+const signupLinkBody = z.object({ forTest: z.boolean().default(false) });
 
 export function dashboardRouter({
   pool,
@@ -146,6 +149,31 @@ export function dashboardRouter({
   });
 
   router.use("/admin", adminRouter({ pool, admin, numbers, ...(now && { now }) }));
+
+  // A single-use signup link for a new business (BUILD_PLAN Step 11): Phil or Ant hands it
+  // to a tradesperson. Only the admin can make a test link, because a test business may go
+  // live while the legal documents are placeholders.
+  router.post("/signup-links", requireRole("admin", "reseller"), async (req, res) => {
+    const body = signupLinkBody.safeParse(req.body ?? {});
+    if (!body.success) {
+      res
+        .status(400)
+        .json({ error: "Invalid body", issues: z.flattenError(body.error).fieldErrors });
+      return;
+    }
+    const principal = principalOf(res);
+    const forTest = principal.role === "admin" && body.data.forTest;
+    const link = await createSignupLink(admin, {
+      createdBy: principal.userId,
+      forTest,
+      now: now?.() ?? new Date(),
+    });
+    res.status(201).json({
+      code: link.code,
+      expiresAt: link.expiresAt.toISOString(),
+      forTest,
+    } satisfies CreatedSignupLinkView);
+  });
 
   const tenant = Router({ mergeParams: true });
   router.use("/tenants/:tenantId", requireTenantAccess(), tenant);

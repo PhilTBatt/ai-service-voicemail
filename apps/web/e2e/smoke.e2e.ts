@@ -83,3 +83,31 @@ test("the admin opens a business's onboarding checklist and sees what's missing"
     page.getByText("Not yet: The terms, DPA and privacy notice haven't all been accepted."),
   ).toBeVisible();
 });
+
+test("a new tradesperson signs up through a link and lands on their business", async ({ page }) => {
+  await signIn(page, "admin@example.com");
+  await page.getByRole("button", { name: "Create a signup link" }).click();
+  const url = await page.locator("code.signup-url").innerText();
+  await page.getByRole("button", { name: "Sign out" }).click();
+
+  await page.goto(new URL(url).pathname + new URL(url).search);
+  await page.getByLabel("Email").fill("newbie@example.com");
+  await page.getByRole("button", { name: "Sign in" }).click();
+
+  await page.getByLabel("Business name").fill("Kestrel Roofing");
+  await page.getByLabel("Trade").selectOption("roofer");
+  await page.getByLabel(/^Your name/).fill("Jo");
+  await page.getByLabel(/^Mobile, for texts/).fill("07700 900777");
+  await page.getByLabel(/^Mobile network/).selectOption("ee");
+  await page.getByLabel("No", { exact: true }).check();
+  // Not ticking everything is caught before anything is sent.
+  await page.getByRole("button", { name: "Set up my business" }).click();
+  await expect(page.getByText("Documents: tick all three to continue")).toBeVisible();
+
+  await page.getByLabel("I accept the Terms of service").check();
+  await page.getByLabel("I accept the Data processing agreement").check();
+  await page.getByLabel("I accept the Privacy notice").check();
+  await page.getByRole("button", { name: "Set up my business" }).click();
+
+  await expect(page.getByRole("heading", { name: "Kestrel Roofing" })).toBeVisible();
+});

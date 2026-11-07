@@ -3,18 +3,22 @@
 // API's decision, not this file's: hiding a link here is convenience, never security.
 import type { MeView } from "@callmate/shared";
 import { Show, SignIn, UserButton } from "@clerk/react";
-import { Link, Navigate, Route, Routes } from "react-router";
+import { Link, Navigate, Route, Routes, useLocation } from "react-router";
 import { ApiError, useApi, useLoad } from "./api.ts";
 import { AdminPage } from "./pages/AdminPage.tsx";
 import { CallPage } from "./pages/CallPage.tsx";
 import { OnboardingPage } from "./pages/OnboardingPage.tsx";
 import { ProfilePage } from "./pages/ProfilePage.tsx";
 import { SettingsPage } from "./pages/SettingsPage.tsx";
+import { SignupPage } from "./pages/SignupPage.tsx";
 import { TenantPage } from "./pages/TenantPage.tsx";
 import { TenantsPage } from "./pages/TenantsPage.tsx";
 import { ErrorNote } from "./ui.tsx";
 
+/** Every page, except the signup page, which someone with no account yet must be able to use. */
 export function App() {
+  const { pathname } = useLocation();
+  if (pathname === "/signup") return <SignupPage />;
   return (
     <>
       <Show when="signed-out">
