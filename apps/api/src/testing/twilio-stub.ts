@@ -15,6 +15,8 @@ export class TwilioApiStub {
   readonly recordings: Record<string, unknown>[] = [];
   readonly calls = new Map<string, Record<string, unknown>>();
   readonly deletedRecordingSids = new Set<string>();
+  /** Recording audio by SID, for the .mp3 media endpoint. */
+  readonly recordingAudio = new Map<string, Uint8Array<ArrayBuffer>>();
   private nextSid = 1;
 
   readonly fetch: typeof fetch = (input, init) => {
@@ -40,6 +42,13 @@ export class TwilioApiStub {
 
     if (method === "GET" && tail === "/Recordings.json") {
       return json(200, { recordings: this.recordings });
+    }
+    const mediaMatch = /^\/Recordings\/([^/]+)\.mp3$/.exec(tail);
+    if (method === "GET" && mediaMatch) {
+      const bytes = this.recordingAudio.get(decodeURIComponent(mediaMatch[1]!));
+      return bytes
+        ? new Response(bytes, { status: 200, headers: { "content-type": "audio/mpeg" } })
+        : json(404, { code: 20404, message: "not found" });
     }
     const recMatch = /^\/Recordings\/([^/]+)\.json$/.exec(tail);
     if (method === "DELETE" && recMatch) {

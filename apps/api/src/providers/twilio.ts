@@ -9,6 +9,7 @@ import {
   type NumberConfiguration,
   type NumberSearch,
   type PurchasedNumber,
+  type RecordingAudio,
   type RecordingSummary,
   type TelephonyProvider,
   type WebhookRequest,
@@ -169,6 +170,29 @@ export class TwilioTelephonyProvider implements TelephonyProvider {
     } catch (error) {
       if (!(error instanceof TwilioApiError && error.status === 404)) throw error;
     }
+  }
+
+  // The stored reference is the recording's resource URL; adding .mp3 asks for the audio.
+  // Twilio recordings need the account's credentials, which is why the API streams them.
+  async fetchRecording(recordingUrl: string): Promise<RecordingAudio | null> {
+    const credentials = Buffer.from(
+      `${this.options.accountSid}:${this.options.authToken}`,
+    ).toString("base64");
+    const response = await (this.options.fetch ?? fetch)(`${recordingUrl}.mp3`, {
+      headers: { Authorization: `Basic ${credentials}` },
+    });
+    if (response.status === 404) return null;
+    if (!response.ok || !response.body) {
+      throw new TwilioApiError(
+        response.status,
+        "/Recordings/*.mp3",
+        (await response.text()).slice(0, 300),
+      );
+    }
+    return {
+      contentType: response.headers.get("content-type") ?? "audio/mpeg",
+      body: response.body,
+    };
   }
 
   verifyWebhook({ url, params, signature }: WebhookRequest): boolean {

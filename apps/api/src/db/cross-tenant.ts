@@ -36,6 +36,15 @@ export async function findTenantIdByMobile(
   return rows[0]?.tenant_id ?? null;
 }
 
+/** Finds the tenant a call belongs to, for the signed call page (the link carries only the call ID). */
+export async function findTenantIdByCall(appPool: pg.Pool, callId: string): Promise<string | null> {
+  const { rows } = await appPool.query<{ tenant_id: string | null }>(
+    "SELECT tenant_id_for_call($1) AS tenant_id",
+    [callId],
+  );
+  return rows[0]?.tenant_id ?? null;
+}
+
 // The admin pool is "branded": a plain pg.Pool (like the app's) doesn't fit this type, so
 // admin functions can't be handed the wrong connection by mistake.
 export type AdminPool = pg.Pool & { readonly __brand: "AdminPool" };

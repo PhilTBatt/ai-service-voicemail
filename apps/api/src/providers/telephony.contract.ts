@@ -8,6 +8,8 @@ export interface TelephonyHarness {
   providerWithoutPurchases: TelephonyProvider;
   /** Signs a request as the provider would, for the webhook tests. */
   sign: (url: string, params: Record<string, string>) => string;
+  /** Puts a recording's audio at the "provider" under this URL. */
+  seedRecording: (recordingUrl: string, bytes: Uint8Array<ArrayBuffer>) => void;
 }
 
 const CONFIG = {
@@ -60,6 +62,18 @@ export function describeTelephonyProviderContract(
       ).resolves.toBeUndefined();
       await expect(provider.releaseNumber(bought.providerSid)).resolves.toBeUndefined();
       await expect(provider.releaseNumber(bought.providerSid)).resolves.toBeUndefined(); // repeatable
+    });
+
+    it("streams a recording's audio, and returns null for one it no longer has", async () => {
+      const { provider, seedRecording } = makeHarness();
+      const url = "https://api.twilio.com/2010-04-01/Accounts/AC0/Recordings/REcontract";
+      seedRecording(url, new Uint8Array([1, 2, 3]));
+      const audio = await provider.fetchRecording(url);
+      expect(audio?.contentType).toContain("audio/mpeg");
+      expect(new Uint8Array(await new Response(audio!.body).arrayBuffer())).toEqual(
+        new Uint8Array([1, 2, 3]),
+      );
+      expect(await provider.fetchRecording(url + "_gone")).toBeNull();
     });
 
     describe("verifyWebhook", () => {

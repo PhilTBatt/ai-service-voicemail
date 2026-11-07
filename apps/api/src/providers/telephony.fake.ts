@@ -6,6 +6,7 @@ import {
   type NumberConfiguration,
   type NumberSearch,
   type PurchasedNumber,
+  type RecordingAudio,
   type RecordingSummary,
   type TelephonyProvider,
   type WebhookRequest,
@@ -29,6 +30,8 @@ export class FakeTelephonyProvider implements TelephonyProvider {
   readonly recordings: RecordingSummary[] = [];
   readonly callDetails = new Map<string, CallDetails>();
   readonly deletedRecordings: string[] = [];
+  /** Audio by recording URL; tests fill this in. */
+  readonly recordingAudio = new Map<string, Uint8Array<ArrayBuffer>>();
   private readonly purchasesEnabled: boolean;
 
   constructor({ purchasesEnabled = true }: { purchasesEnabled?: boolean } = {}) {
@@ -83,6 +86,12 @@ export class FakeTelephonyProvider implements TelephonyProvider {
   deleteRecording(recordingSid: string) {
     this.deletedRecordings.push(recordingSid);
     return Promise.resolve();
+  }
+
+  fetchRecording(recordingUrl: string): Promise<RecordingAudio | null> {
+    const bytes = this.recordingAudio.get(recordingUrl);
+    if (!bytes) return Promise.resolve(null);
+    return Promise.resolve({ contentType: "audio/mpeg", body: new Blob([bytes]).stream() });
   }
 
   verifyWebhook({ url, params, signature }: WebhookRequest): boolean {

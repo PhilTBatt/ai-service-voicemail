@@ -49,6 +49,12 @@ export interface RecordingSummary {
   createdAt: Date;
 }
 
+/** A recording's audio, as the provider serves it. */
+export interface RecordingAudio {
+  contentType: string;
+  body: ReadableStream<Uint8Array>;
+}
+
 export interface CallDetails {
   callSid: string;
   /** E.164, or null when withheld. */
@@ -83,4 +89,6 @@ export interface TelephonyProvider {
   getCall(callSid: string): Promise<CallDetails | null>;
   /** Deletes a recording held at the provider. Safe to repeat. */
   deleteRecording(recordingSid: string): Promise<void>;
+  /** The audio of a recording, by the reference stored on the call, or null if the provider no longer has it. */
+  fetchRecording(recordingUrl: string): Promise<RecordingAudio | null>;
 }

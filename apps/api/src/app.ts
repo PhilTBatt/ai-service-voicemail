@@ -5,11 +5,16 @@ import type { EnqueueNotifications } from "./jobs/enqueue-notifications.ts";
 import { logger } from "./logger.ts";
 import type { TelephonyProvider } from "./providers/telephony.ts";
 import type { CallEndedEvent, VoiceProvider } from "./providers/voice.ts";
+import { callPageRouter } from "./routes/calls.ts";
 import { twilioRouter } from "./routes/twilio.ts";
 import { voiceWebhookRouter } from "./routes/webhooks.ts";
 
 export interface AppOptions {
   pool: pg.Pool;
+  /** The signed call pages (/c/:token). Absent until SIGNING_SECRET is configured. */
+  callPages?:
+    | { signingSecret: string; telephony?: TelephonyProvider | undefined; now?: () => Date }
+    | undefined;
   voiceProviders?: Record<string, VoiceProvider>;
   onCallEnded?: (event: CallEndedEvent) => Promise<void>;
   /** Call routing. Absent until Twilio and PUBLIC_BASE_URL are configured. */
@@ -31,6 +36,7 @@ export function createApp({
   voiceProviders = {},
   onCallEnded = () => Promise.resolve(),
   telephony,
+  callPages,
 }: AppOptions) {
   const app = express();
   app.disable("x-powered-by");
@@ -60,6 +66,8 @@ export function createApp({
       twilioRouter({ pool, telephony: telephony.provider, ...telephony }),
     );
   }
+
+  if (callPages) app.use("/c", callPageRouter({ pool, ...callPages }));
 
   // Last: Express's own handler prints the stack with console.error, unredacted, and shows
   // it to the client outside production. Log through the redacting logger instead, and

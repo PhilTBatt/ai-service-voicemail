@@ -40,10 +40,15 @@ async function start(config: Config): Promise<void> {
     );
   }
 
+  if (!config.signingSecret) logger.warn("Call pages disabled: SIGNING_SECRET isn't set");
+
   const app = createApp({
     pool,
     voiceProviders,
     telephony,
+    callPages: config.signingSecret
+      ? { signingSecret: config.signingSecret, telephony: telephony?.provider }
+      : undefined,
     onCallEnded: async (event) => {
       const result = await recordCallEnded(pool, boss, event);
       logger.info("Voice call ended", { providerCallId: event.providerCallId, ...result });

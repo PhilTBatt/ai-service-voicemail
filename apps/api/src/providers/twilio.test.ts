@@ -25,6 +25,8 @@ function makeHarness() {
     providerWithoutPurchases: make(false),
     sign: (url: string, params: Record<string, string>) =>
       twilio.getExpectedTwilioSignature(AUTH_TOKEN, url, params),
+    seedRecording: (url: string, bytes: Uint8Array<ArrayBuffer>) =>
+      stub.recordingAudio.set(url.slice(url.lastIndexOf("/") + 1), bytes),
   };
 }
 

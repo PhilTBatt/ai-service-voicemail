@@ -147,7 +147,7 @@ export async function runProcessCall(
 }
 
 /** The transcript as stored by recordCallEnded: one "role: text" line per turn. */
-function parseTranscript(stored: string): TranscriptTurn[] {
+export function parseTranscript(stored: string): TranscriptTurn[] {
   return stored.split("\n").map((line) => {
     const match = /^(agent|caller): (.*)$/.exec(line);
     return match
