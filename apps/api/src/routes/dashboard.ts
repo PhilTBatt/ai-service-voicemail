@@ -24,7 +24,7 @@ import type { PgBoss } from "pg-boss";
 import type pg from "pg";
 import { z } from "zod";
 import { agentProfileInputSchema, saveAgentProfile } from "../db/agent-profiles.ts";
-import { adminRouter } from "./admin.ts";
+import { adminRouter, type NumberProvisioning } from "./admin.ts";
 import {
   listTenantsWithCallCounts,
   type AdminPool,
@@ -61,6 +61,8 @@ export interface DashboardOptions extends RecordingSources {
   auth: AuthProvider;
   /** Profile saves queue their agent sync through here. */
   boss: PgBoss;
+  /** Buying numbers from the admin screens. Absent until Twilio and the public URLs are set. */
+  numbers?: NumberProvisioning | undefined;
   now?: () => Date;
 }
 
@@ -87,6 +89,7 @@ interface TenantRow {
   notification_email: string | null;
   service_region: string;
   created_at: Date;
+  number: string | null;
 }
 
 interface ProfileRow {
@@ -112,6 +115,7 @@ export function dashboardRouter({
   boss,
   telephony,
   voice,
+  numbers,
   now,
 }: DashboardOptions) {
   const router = Router();
@@ -141,7 +145,7 @@ export function dashboardRouter({
     res.json({ tenants: visible.map(presentTenantSummary) } satisfies TenantListView);
   });
 
-  router.use("/admin", adminRouter({ pool, admin, ...(now && { now }) }));
+  router.use("/admin", adminRouter({ pool, admin, numbers, ...(now && { now }) }));
 
   const tenant = Router({ mergeParams: true });
   router.use("/tenants/:tenantId", requireTenantAccess(), tenant);
@@ -155,7 +159,9 @@ export function dashboardRouter({
         (
           await client.query<TenantRow>(
             `SELECT id, business_name, trade, status, contact_name, notification_mobile,
-                    notification_email, service_region, created_at
+                    notification_email, service_region, created_at,
+                    (SELECT number FROM phone_numbers
+                     WHERE tenant_id = tenants.id AND status = 'active') AS number
              FROM tenants WHERE id = $1`,
             [tenantId],
           )
@@ -175,6 +181,7 @@ export function dashboardRouter({
       notificationEmail: row.notification_email,
       serviceRegion: row.service_region,
       createdAt: row.created_at.toISOString(),
+      number: row.number,
     } satisfies TenantView);
   });
 

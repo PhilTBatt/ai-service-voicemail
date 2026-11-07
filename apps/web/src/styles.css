@@ -443,3 +443,15 @@ table.usage td {
 table.usage tfoot th {
   border-top: 2px solid var(--line);
 }
+
+.big-number {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin: 0.25rem 0;
+}
+
+.offer {
+  align-items: center;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--line);
+}

@@ -42,6 +42,8 @@ export interface TenantView {
   notificationEmail: string | null;
   serviceRegion: string;
   createdAt: string;
+  /** The business's AnswerMate number (E.164), or null before one is bought. */
+  number: string | null;
 }
 
 /** A call as a list shows it: no transcript, no recording. */
@@ -177,4 +179,19 @@ export interface CostsView {
   assumptions: string[];
   /** Cost lines the price list doesn't cover, so they're missing from the figures. */
   unpriced: string[];
+}
+
+/** GET /api/admin/numbers/available: UK local numbers that can be bought now. */
+export interface AvailableNumbersView {
+  numbers: { number: string; locality: string | null; region: string | null }[];
+  /** Monthly rental for a local number, in whole pence; null if the supplier prices it in another currency. */
+  monthlyPence: number | null;
+  /** False when this server refuses purchases (TWILIO_PURCHASES_ENABLED isn't true). */
+  purchasesEnabled: boolean;
+}
+
+/** POST /api/admin/tenants/:id/number */
+export interface ProvisionedNumberView {
+  number: string;
+  providerSid: string;
 }

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { assignPhoneNumber, createAdminPool, createTenant } from "../db/cross-tenant.ts";
 import { PurchaseNotAllowedError } from "../providers/telephony.ts";
 import { FakeTelephonyProvider } from "../providers/telephony.fake.ts";
@@ -87,6 +87,34 @@ describe("buyNumberForTenant", () => {
     ).rejects.toThrow(PurchaseNotAllowedError);
     expect(telephony.purchased.size).toBe(0);
     expect(await numbersOf(tenantId)).toMatchObject([{ number: placeholder, status: "active" }]);
+  });
+
+  it("raises an alert when a number is bought but can't be recorded, so nobody pays for it unawares", async () => {
+    const { tenantId } = await makeTenant();
+    const telephony = new FakeTelephonyProvider();
+    const candidate = telephony.available[2]!.number;
+    // Another tenant already holds this number in our records, so recording it fails: each
+    // number can be active for one tenant only.
+    const holder = await createTenant(admin, { businessName: "Holder Plumbing", trade: "plumber" });
+    await admin.query(
+      "UPDATE phone_numbers SET status = 'released', released_at = now() WHERE number = $1 AND status = 'active'",
+      [candidate],
+    );
+    await assignPhoneNumber(admin, holder, candidate, `PN${randomUUID()}`);
+    const alert = vi.fn();
+
+    await expect(
+      buyNumberForTenant(
+        { telephony, ...DEPS, alert },
+        { tenantId, number: candidate, confirm: true },
+      ),
+    ).rejects.toMatchObject({ code: "23505" });
+
+    const [providerSid] = [...telephony.purchased.keys()];
+    expect(alert).toHaveBeenCalledWith(
+      "number-bought-not-recorded",
+      expect.objectContaining({ tenantId, providerSid }),
+    );
   });
 
   it("is still refused by the adapter when purchases are disabled in the environment", async () => {

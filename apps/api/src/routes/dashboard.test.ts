@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { AvailableNumbersView, ProvisionedNumberView, TenantView } from "@callmate/shared";
 import type { PgBoss } from "pg-boss";
 import { createApp } from "../app.ts";
 import type { AgentProfileInput } from "../db/agent-profiles.ts";
@@ -18,6 +19,12 @@ import { FakeTelephonyProvider } from "../providers/telephony.fake.ts";
 import { startQueue } from "../jobs/queue.ts";
 import { FakeVoiceProvider } from "../providers/voice.fake.ts";
 import { TEST_ADMIN_DATABASE_URL, TEST_DATABASE_URL } from "../testing/databases.ts";
+
+/** Where a bought number sends its calls, in these tests. */
+const NUMBER_URLS = {
+  publicBaseUrl: "https://callmate.example.com",
+  fallbackVoicemailUrl: "https://handler.twilio.com/twiml/EHfake",
+};
 
 const app = createPool(TEST_DATABASE_URL);
 const admin = createAdminPool(TEST_ADMIN_DATABASE_URL);
@@ -63,7 +70,15 @@ beforeAll(async () => {
   boss = await startQueue(TEST_DATABASE_URL);
   const server = createApp({
     pool: app,
-    dashboard: { admin, auth, boss, voice, telephony, now: () => new Date("2026-11-07T10:00:00Z") },
+    dashboard: {
+      admin,
+      auth,
+      boss,
+      voice,
+      telephony,
+      numbers: { telephony, ...NUMBER_URLS, purchasesEnabled: true },
+      now: () => new Date("2026-11-07T10:00:00Z"),
+    },
   }).listen(0);
   await once(server, "listening");
   const { port } = server.address() as AddressInfo;
@@ -185,6 +200,14 @@ describe("authorisation matrix", () => {
     { name: "GET /admin/review-queue", path: "/admin/review-queue" },
     { name: "GET /admin/usage", path: "/admin/usage" },
     { name: "GET /admin/costs", path: "/admin/costs" },
+    { name: "GET /admin/numbers/available", path: "/admin/numbers/available" },
+    // An empty body: refused (400) even for the admin, so the matrix never buys anything.
+    {
+      name: "POST /admin/tenants/:id/number",
+      path: `/admin/tenants/${tenantA}/number`,
+      body: {},
+      method: "POST",
+    },
   ];
   // What tenant A's data looks like to each person. "allowed" means the door opened: the
   // request may still 400, 404 or 409 on its merits (no audio at the fake, invalid body).
@@ -197,6 +220,8 @@ describe("authorisation matrix", () => {
       "GET /admin/review-queue": 403,
       "GET /admin/usage": 403,
       "GET /admin/costs": 403,
+      "GET /admin/numbers/available": 403,
+      "POST /admin/tenants/:id/number": 403,
     },
     ownerB: { "GET /me": "allowed", "GET /tenants": "allowed", default: 403 },
     admin: { default: "allowed" },
@@ -744,6 +769,127 @@ describe("admin screens", () => {
     });
     expect(calls.map((call) => call.callId)).not.toContain(callA);
     expect((await get("/admin/review-queue?limit=0", tokens.admin)).status).toBe(400);
+  });
+
+  it("finds numbers to buy and what one costs a month", async () => {
+    const found = await json<AvailableNumbersView>(
+      get("/admin/numbers/available?contains=0113", tokens.admin),
+    );
+    expect(found.numbers.length).toBeGreaterThan(0);
+    for (const offer of found.numbers) expect(offer.number).toMatch(/^\+44113/);
+    expect(found.monthlyPence).toBe(87); // the fake prices a local number at £0.87
+    expect(found.purchasesEnabled).toBe(true);
+    expect((await get("/admin/numbers/available?contains=01-13", tokens.admin)).status).toBe(400);
+  });
+
+  it("buys a number for a business with none, points it at the API and records who did it", async () => {
+    const tenant = await createTenant(admin, { businessName: "New Line Roofing", trade: "roofer" });
+    // The fake's stock is shared with other test files; this one uses the last number, freed first.
+    const candidate = telephony.available.at(-1)!.number;
+    await admin.query(
+      "UPDATE phone_numbers SET status = 'released', released_at = now() WHERE number = $1 AND status = 'active'",
+      [candidate],
+    );
+
+    const response = await send(
+      "POST",
+      `/admin/tenants/${tenant}/number`,
+      { number: candidate, confirm: true },
+      tokens.admin,
+    );
+    expect(response.status).toBe(200);
+    const bought = (await response.json()) as ProvisionedNumberView;
+    expect(bought.number).toBe(candidate);
+    expect(telephony.purchased.get(bought.providerSid)?.config).toMatchObject({
+      voiceUrl: "https://callmate.example.com/webhooks/twilio/voice",
+      voiceFallbackUrl: "https://handler.twilio.com/twiml/EHfake",
+    });
+    expect((await json<TenantView>(get(`/tenants/${tenant}`, tokens.admin))).number).toBe(
+      candidate,
+    );
+    const audit = await admin.query<{ actor_user_id: string | null; details: unknown }>(
+      "SELECT actor_user_id, details FROM audit_log WHERE tenant_id = $1 AND action = 'number.provisioned'",
+      [tenant],
+    );
+    expect(audit.rows).toHaveLength(1);
+    expect(audit.rows[0]!.actor_user_id).not.toBeNull();
+    expect(audit.rows[0]!.details).toEqual({
+      via: "dashboard",
+      number: candidate,
+      providerSid: bought.providerSid,
+    });
+
+    // A second number would carry on costing money at Twilio: refused, and nothing bought.
+    const before = telephony.purchased.size;
+    const again = await send(
+      "POST",
+      `/admin/tenants/${tenant}/number`,
+      { number: telephony.available[0]!.number, confirm: true },
+      tokens.admin,
+    );
+    expect(again.status).toBe(409);
+    expect(telephony.purchased.size).toBe(before);
+  });
+
+  it("refuses a purchase without the confirmation, or for a business that doesn't exist", async () => {
+    const before = telephony.purchased.size;
+    const number = telephony.available[1]!.number;
+    expect(
+      (await send("POST", `/admin/tenants/${tenantB}/number`, { number }, tokens.admin)).status,
+    ).toBe(400);
+    expect(
+      (
+        await send(
+          "POST",
+          `/admin/tenants/${randomUUID()}/number`,
+          { number, confirm: true },
+          tokens.admin,
+        )
+      ).status,
+    ).toBe(404);
+    expect(telephony.purchased.size).toBe(before);
+  });
+
+  it("buys nothing while purchases are switched off on the server, but still searches", async () => {
+    const locked = new FakeTelephonyProvider({ purchasesEnabled: false });
+    const server = createApp({
+      pool: app,
+      dashboard: {
+        admin,
+        auth,
+        boss,
+        numbers: { telephony: locked, ...NUMBER_URLS, purchasesEnabled: false },
+      },
+    }).listen(0);
+    await once(server, "listening");
+    try {
+      const { port } = server.address() as AddressInfo;
+      const headers = {
+        authorization: `Bearer ${tokens.admin}`,
+        "content-type": "application/json",
+      };
+      const tenant = await createTenant(admin, {
+        businessName: "Locked Sparks",
+        trade: "electrician",
+      });
+      const response = await fetch(`http://127.0.0.1:${port}/api/admin/tenants/${tenant}/number`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ number: locked.available[0]!.number, confirm: true }),
+      });
+      expect(response.status).toBe(409);
+      expect(await response.json()).toEqual({
+        error: "Buying numbers is switched off on this server (TWILIO_PURCHASES_ENABLED)",
+      });
+      expect(locked.purchased.size).toBe(0);
+      const search = (await (
+        await fetch(`http://127.0.0.1:${port}/api/admin/numbers/available`, { headers })
+      ).json()) as AvailableNumbersView;
+      expect(search.purchasesEnabled).toBe(false);
+      expect(search.numbers.length).toBeGreaterThan(0);
+    } finally {
+      await new Promise((resolve) => server.close(() => resolve(undefined)));
+    }
   });
 
   it("estimates this month's costs per business, saying what it assumed", async () => {

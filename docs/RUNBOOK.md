@@ -84,6 +84,16 @@ http://localhost:5173 and sign in. The API logs "Dashboard API on" at startup wh
 dashboard must stay on port 5173 (`DASHBOARD_ORIGIN`): Clerk's login tokens name the site they
 were made for, and the API refuses tokens from any other.
 
-## 7. Spending
+## 7. Buying a number for a business
+
+As admin, open the business, then its Account tab. With no number yet, there's a search: type an
+area code such as 0113, pick a number, and confirm the monthly price. The API only buys when it
+was started with `TWILIO_PURCHASES_ENABLED=true`, the same switch the `live-*` scripts use;
+otherwise the page lets you look but not buy. Turn it back off afterwards. A business can't get a
+second number this way: the old one would carry on costing money at Twilio. If a number is bought
+but can't be recorded, the API raises a `number-bought-not-recorded` alert with its SID: record
+it by hand or release it in the Twilio console.
+
+## 8. Spending
 
 Anything named `live-*` touches a paid service and asks for `--confirm`. Day to day the only money that moves is per call (Retell and Twilio per minute, Anthropic per extraction, Twilio per text segment). Evals (`npm run evals`) cost a few pence per run under their cap.

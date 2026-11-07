@@ -60,6 +60,17 @@ async function start(config: Config): Promise<void> {
           boss,
           voice: retell,
           telephony: telephony?.provider,
+          // Buying numbers from the admin screen: it still refuses unless
+          // TWILIO_PURCHASES_ENABLED is true, as the live-* scripts do.
+          numbers:
+            config.twilio && config.publicBaseUrl && config.fallbackVoicemailUrl
+              ? {
+                  telephony: telephony?.provider ?? new TwilioTelephonyProvider(config.twilio),
+                  publicBaseUrl: config.publicBaseUrl,
+                  fallbackVoicemailUrl: config.fallbackVoicemailUrl,
+                  purchasesEnabled: config.twilio.purchasesEnabled,
+                }
+              : undefined,
         }
       : undefined;
   if (dashboard) logger.info("Dashboard API on", { dashboardOrigin: config.dashboardOrigin });

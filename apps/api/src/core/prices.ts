@@ -51,6 +51,18 @@ export const CURRENT_PRICES: CostPrices = {
   models: MODEL_PRICES_USD_PER_MTOK,
 };
 
+/**
+ * A pounds amount as a supplier writes it ("0.86917") to whole pence, rounding half up, using
+ * string arithmetic so no floating point is involved: 0.86917 → 87, 0.8649 → 86.
+ */
+export function poundsToPence(amount: string): number {
+  const match = /^(\d+)(?:\.(\d+))?$/.exec(amount.trim());
+  if (!match) throw new Error(`Not an amount of money: "${amount}"`);
+  const decimals = (match[2] ?? "").padEnd(3, "0");
+  const roundUp = Number(decimals[2]) >= 5 ? 1 : 0;
+  return Number(match[1]) * 100 + Number(decimals.slice(0, 2)) + roundUp;
+}
+
 /** The assumptions, in words, for the admin screen to print under the figures. */
 export function describePrices(prices: CostPrices): string[] {
   return [

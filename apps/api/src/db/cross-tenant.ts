@@ -195,6 +195,17 @@ export async function setKillSwitch(
   }
 }
 
+/** Records something an admin did to a tenant, and who did it (decision 006: every admin action). */
+export async function auditAdminAction(
+  admin: AdminPool,
+  entry: { tenantId: string; actorUserId: string; action: string; details: object },
+): Promise<void> {
+  await admin.query(
+    "INSERT INTO audit_log (tenant_id, actor_user_id, action, details) VALUES ($1, $2, $3, $4)",
+    [entry.tenantId, entry.actorUserId, entry.action, entry.details],
+  );
+}
+
 /** A flagged call with the tenant it belongs to, for the admin's review queue. */
 export type FlaggedCall = import("../routes/call-view.ts").CallRow & {
   tenant: { id: string; businessName: string };

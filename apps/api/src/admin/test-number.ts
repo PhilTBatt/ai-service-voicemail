@@ -1,4 +1,5 @@
-// Buying and assigning a number: the live-* script now, an admin action in Step 10.
+// Buying and assigning a number: used by the live-* script and the admin screen's "buy".
+import { raiseAlert, type AlertFn } from "../alerts.ts";
 import { reassignNumber, type AdminPool } from "../db/cross-tenant.ts";
 import { logger } from "../logger.ts";
 import {
@@ -21,6 +22,7 @@ export interface BuyNumberDeps {
   publicBaseUrl: string;
   /** The TwiML Bin that plays the static voicemail when the API can't be reached. */
   fallbackVoicemailUrl: string;
+  alert?: AlertFn;
 }
 
 /**
@@ -29,7 +31,7 @@ export interface BuyNumberDeps {
  * Costs money: refuses without `confirm`, on top of the adapter's own two guards.
  */
 export async function buyNumberForTenant(
-  { telephony, admin, publicBaseUrl, fallbackVoicemailUrl }: BuyNumberDeps,
+  { telephony, admin, publicBaseUrl, fallbackVoicemailUrl, alert = raiseAlert }: BuyNumberDeps,
   { tenantId, number, confirm }: { tenantId: string; number: string; confirm: boolean },
 ): Promise<PurchasedNumber> {
   if (!confirm) throw new PurchaseNotAllowedError("Buying a number costs money: pass confirm");
@@ -44,9 +46,15 @@ export async function buyNumberForTenant(
     },
     { live: true },
   );
-  // From here the number exists at the provider; if recording it fails, the log has the SID.
+  // From here the number exists at the provider and is being paid for. If recording it fails,
+  // a person must sort it out (record it by hand, or release it), so that's an alert, not a log.
   logger.info("Number bought", { tenantId, providerSid: bought.providerSid });
 
-  await reassignNumber(admin, tenantId, bought.number, bought.providerSid);
+  try {
+    await reassignNumber(admin, tenantId, bought.number, bought.providerSid);
+  } catch (error) {
+    alert("number-bought-not-recorded", { tenantId, providerSid: bought.providerSid, error });
+    throw error;
+  }
   return bought;
 }

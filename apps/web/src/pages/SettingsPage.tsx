@@ -1,4 +1,5 @@
-// The business's account: where messages go, a download of everything we hold, and leaving.
+// The business's account: its number, where messages go, a download of everything we hold,
+// and leaving.
 import {
   notificationSettingsSchema,
   type CancellationView,
@@ -10,6 +11,7 @@ import { useState } from "react";
 import { useParams } from "react-router";
 import { asError, useApi, useLoad } from "../api.ts";
 import { formatPhone, toUkMobileE164 } from "../format.ts";
+import { NumberSection } from "../number-section.tsx";
 import { TenantHeader } from "../tenant-header.tsx";
 import { ukDate } from "../time.ts";
 import { ErrorNote } from "../ui.tsx";
@@ -25,6 +27,7 @@ export function SettingsPage({ me }: { me: MeView }) {
   return (
     <>
       <TenantHeader me={me} tenant={tenant.data} />
+      <NumberSection tenant={tenant.data} isAdmin={me.role === "admin"} onBought={tenant.reload} />
       <Notifications key={`n-${tenant.data.id}`} tenant={tenant.data} />
       <DataDownload tenantId={tenant.data.id} />
       <Cancel tenant={tenant.data} onCancelled={tenant.reload} />
