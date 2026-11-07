@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { TEST_ADMIN_DATABASE_URL, TEST_DATABASE_URL } from "../testing/databases.ts";
 import { assignPhoneNumber, createAdminPool, createTenant } from "./cross-tenant.ts";
 import { createPool } from "./pool.ts";
@@ -95,6 +95,24 @@ describe("storeFallbackVoicemail", () => {
         ).rows[0],
     );
     expect(row).toEqual({ caller_number: null });
+  });
+
+  it("queues the voicemail text through the same transaction, and only once", async () => {
+    const { tenantId, number } = await makeTenant();
+    const v = voicemail(number);
+    const enqueue = vi.fn(async (client: import("pg").ClientBase, call: { callId: string }) => {
+      // Inside the transaction: this client already sees the new row.
+      const { rowCount } = await client.query("SELECT 1 FROM calls WHERE id = $1", [call.callId]);
+      expect(rowCount).toBe(1);
+    });
+    await storeFallbackVoicemail(app, v, enqueue);
+    expect(enqueue).toHaveBeenCalledWith(expect.anything(), {
+      tenantId,
+      callId: expect.any(String) as string,
+      urgency: null,
+    });
+    await storeFallbackVoicemail(app, v, enqueue);
+    expect(enqueue).toHaveBeenCalledTimes(1);
   });
 
   it("reports a number nobody owns rather than storing anything", async () => {

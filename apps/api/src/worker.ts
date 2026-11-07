@@ -3,11 +3,11 @@ import { ConfigError, loadConfig } from "./config.ts";
 import { createAdminPool } from "./db/cross-tenant.ts";
 import { createPool } from "./db/pool.ts";
 import { startDeadLetterWatcher } from "./jobs/dead-letter.ts";
+import { enqueueNotificationsWith } from "./jobs/enqueue-notifications.ts";
 import { runNotifyEmergency, type NotifyEmergencyJobData } from "./jobs/notify-emergency.ts";
 import { runNotifySms, type NotifySmsJobData } from "./jobs/notify-sms.ts";
 import { runProcessCall, type ProcessCallJobData } from "./jobs/process-call.ts";
 import {
-  EMERGENCY_PRIORITY,
   NOTIFY_EMERGENCY_QUEUE,
   NOTIFY_SMS_QUEUE,
   PROCESS_CALL_QUEUE,
@@ -38,6 +38,7 @@ try {
   const voice = new RetellVoiceProvider({ apiKey: config.retellApiKey });
   const queues = [SYNC_AGENT_QUEUE, "dead-letter"];
   await startDeadLetterWatcher(boss);
+  const enqueueNotifications = enqueueNotificationsWith(boss);
 
   await boss.work<SyncAgentJobData>(SYNC_AGENT_QUEUE, async (jobs) => {
     for (const job of jobs) await runSyncAgent({ pool, voice }, job.data);
@@ -51,21 +52,7 @@ try {
           {
             pool,
             llm,
-            // The text is queued in the extraction's transaction; it waits there until a
-            // worker with SMS configured picks it up.
-            enqueueNotifications: async (client, { tenantId, callId, urgency }) => {
-              const db = {
-                executeSql: (text: string, values?: unknown[]) => client.query(text, values),
-              };
-              if (urgency === "emergency") {
-                await boss.send(
-                  NOTIFY_EMERGENCY_QUEUE,
-                  { tenantId, callId },
-                  { singletonKey: callId, priority: EMERGENCY_PRIORITY, db },
-                );
-              }
-              await boss.send(NOTIFY_SMS_QUEUE, { tenantId, callId }, { singletonKey: callId, db });
-            },
+            enqueueNotifications,
           },
           job.data,
         );
@@ -100,7 +87,7 @@ try {
   if (config.twilio) {
     const telephony = new TwilioTelephonyProvider(config.twilio);
     await boss.work(RECONCILE_VOICEMAILS_QUEUE, async () => {
-      await reconcileVoicemails({ pool, telephony });
+      await reconcileVoicemails({ pool, telephony, enqueueNotifications });
     });
     await boss.schedule(RECONCILE_VOICEMAILS_QUEUE, RECONCILE_VOICEMAILS_CRON, null, {
       tz: "Europe/London",

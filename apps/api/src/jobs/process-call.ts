@@ -9,6 +9,7 @@ import {
   type CallExtraction,
 } from "../core/extraction.ts";
 import { scanAgentTurns } from "../core/guardrails.ts";
+import type { EnqueueNotifications } from "./enqueue-notifications.ts";
 import { withTenant } from "../db/tenant.ts";
 import { logger } from "../logger.ts";
 import type { LlmProvider, LlmUsage } from "../providers/llm.ts";
@@ -19,15 +20,6 @@ export interface ProcessCallJobData {
   callId: string;
   providerCallId: string;
 }
-
-/**
- * Queues the notify-sms (and later notify-email) jobs for a processed call, through the
- * transaction's client so they commit with the extraction (BUILD_PLAN Step 5, item 3).
- */
-export type EnqueueNotifications = (
-  client: pg.ClientBase,
-  call: { tenantId: string; callId: string; urgency: CallExtraction["urgency"] | null },
-) => Promise<void>;
 
 export interface ProcessCallDeps {
   pool: pg.Pool;

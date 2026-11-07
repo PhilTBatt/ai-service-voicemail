@@ -19,6 +19,7 @@ import {
 import { findTenantIdByMobile } from "../db/cross-tenant.ts";
 import { loadInboundCallContext } from "../db/inbound-call.ts";
 import { applySmsCommand } from "../db/tenant-commands.ts";
+import type { EnqueueNotifications } from "../jobs/enqueue-notifications.ts";
 import { storeFallbackVoicemail } from "../db/voicemails.ts";
 import { logger } from "../logger.ts";
 import type { TelephonyProvider } from "../providers/telephony.ts";
@@ -34,6 +35,8 @@ export interface TwilioRouteOptions {
   outbound: OutboundPolicy;
   /** Re-syncs a profile whose holiday dates changed, so the agent's prompt names the new date. */
   enqueueSync: (job: { tenantId: string; profileVersion: number }) => Promise<unknown>;
+  /** Queues the "new voicemail" text when a fallback voicemail is stored. */
+  enqueueNotifications: EnqueueNotifications;
   now?: () => Date;
 }
 
@@ -75,6 +78,7 @@ export function twilioRouter({
   publicBaseUrl,
   outbound,
   enqueueSync,
+  enqueueNotifications,
   now = () => new Date(),
 }: TwilioRouteOptions) {
   const router = Router();
@@ -193,15 +197,19 @@ export function twilioRouter({
       res.status(204).end();
       return;
     }
-    const result = await storeFallbackVoicemail(pool, {
-      callSid,
-      from: call.from,
-      to: call.to,
-      recordingUrl,
-      durationSeconds: parsed.data.RecordingDuration ?? call.durationSeconds,
-      startedAt: call.startedAt,
-      endedAt: call.endedAt,
-    });
+    const result = await storeFallbackVoicemail(
+      pool,
+      {
+        callSid,
+        from: call.from,
+        to: call.to,
+        recordingUrl,
+        durationSeconds: parsed.data.RecordingDuration ?? call.durationSeconds,
+        startedAt: call.startedAt,
+        endedAt: call.endedAt,
+      },
+      enqueueNotifications,
+    );
     logger.info("Fallback voicemail callback handled", { callSid, ...result });
     res.status(204).end();
   });

@@ -2,6 +2,7 @@ import { createApp } from "./app.ts";
 import { ConfigError, loadConfig, type Config } from "./config.ts";
 import { recordCallEnded } from "./db/calls.ts";
 import { createPool } from "./db/pool.ts";
+import { enqueueNotificationsWith } from "./jobs/enqueue-notifications.ts";
 import { startQueue } from "./jobs/queue.ts";
 import { enqueueSyncAgent, type SyncAgentJobData } from "./jobs/sync-agent.ts";
 import { logger } from "./logger.ts";
@@ -30,6 +31,7 @@ async function start(config: Config): Promise<void> {
           publicBaseUrl: config.publicBaseUrl,
           outbound: config.outbound,
           enqueueSync: (job: SyncAgentJobData) => enqueueSyncAgent(boss, job),
+          enqueueNotifications: enqueueNotificationsWith(boss),
         }
       : undefined;
   if (!telephony) {

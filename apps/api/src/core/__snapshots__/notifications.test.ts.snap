@@ -37,3 +37,20 @@ exports[`emergency texts > match the agreed wording 4`] = `
   "segments": 1,
 }
 `;
+
+exports[`voicemailSms > matches the agreed wording 1`] = `
+{
+  "body": "New voicemail (42 sec) from 07700 900123. The assistant wasn't available, so the caller left a message.
+Call back: tel:+447700900123
+Listen: https://callmate.example.com/c/abc123.1799999999.sig",
+  "segments": 2,
+}
+`;
+
+exports[`voicemailSms > matches the agreed wording 2`] = `
+{
+  "body": "New voicemail (42 sec) from a withheld number. The assistant wasn't available, so the caller left a message.
+Listen: https://callmate.example.com/c/abc123.1799999999.sig",
+  "segments": 2,
+}
+`;

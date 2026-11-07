@@ -20,6 +20,7 @@ const admin = createAdminPool(TEST_ADMIN_DATABASE_URL);
 const telephony = new FakeTelephonyProvider();
 const voice = new FakeVoiceProvider();
 const enqueueSync = vi.fn(() => Promise.resolve());
+const enqueueNotifications = vi.fn(() => Promise.resolve());
 // Replies only go to mobiles added here; everyone else is blocked by the allowlist.
 const allowlist = parseAllowlist(undefined);
 const outbound = { nodeEnv: "test" as const, allowlist };
@@ -40,6 +41,7 @@ beforeAll(async () => {
       publicBaseUrl: PUBLIC_BASE_URL,
       outbound,
       enqueueSync,
+      enqueueNotifications,
       now: NOW,
     },
   }).listen(0);
@@ -284,6 +286,11 @@ describe("POST /webhooks/twilio/recording", () => {
         caller_number: "+447700900123",
       },
     ]);
+    expect(enqueueNotifications).toHaveBeenCalledWith(expect.anything(), {
+      tenantId,
+      callId: expect.any(String) as string,
+      urgency: null,
+    });
   });
 
   it("acknowledges a failed recording without storing anything", async () => {

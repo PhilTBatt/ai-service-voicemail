@@ -1,9 +1,11 @@
-// The notify-sms job (BUILD_PLAN Step 6): one text to the tradesperson per processed call.
-// Composes the text; deliver-sms.ts applies the allowlist and records the send.
+// The notify-sms job (BUILD_PLAN Step 6): one text to the tradesperson per call. An agent
+// call gets the summary once process-call has extracted it; a fallback voicemail gets a
+// "new voicemail" text with a link to listen. deliver-sms.ts applies the allowlist and
+// records the send.
 import type pg from "pg";
 import { z } from "zod";
 import { raiseAlert, type AlertFn } from "../alerts.ts";
-import { callSms } from "../core/notifications.ts";
+import { callSms, voicemailSms } from "../core/notifications.ts";
 import type { OutboundPolicy } from "../core/outbound-allowlist.ts";
 import { CALL_LINK_TTL_MS, callPageUrl, signCallLink } from "../core/signed-links.ts";
 import { withTenant } from "../db/tenant.ts";
@@ -53,9 +55,13 @@ export async function runNotifySms(
         urgency: "emergency" | "urgent" | "routine" | "spam" | "other" | null;
         extracted_fields: unknown;
         caller_number: string | null;
-      }>("SELECT summary, urgency, extracted_fields, caller_number FROM calls WHERE id = $1", [
-        callId,
-      ])
+        via_fallback: boolean;
+        billable_seconds: number;
+      }>(
+        `SELECT summary, urgency, extracted_fields, caller_number, via_fallback, billable_seconds
+         FROM calls WHERE id = $1`,
+        [callId],
+      )
     ).rows[0];
     if (!call) throw new Error(`Call ${callId} not found for tenant ${tenantId}`);
     const tenant = (
@@ -67,10 +73,13 @@ export async function runNotifySms(
     if (!tenant) throw new Error(`Tenant ${tenantId} not found`);
     return { call, tenant };
   });
+  const { call } = loaded;
 
   // process-call writes the summary before this job exists; a missing one means the job
   // was enqueued some other way. Failing lets the queue retry, then dead-letter it.
-  if (loaded.call.summary === null) throw new Error(`Call ${callId} has not been processed`);
+  if (!call.via_fallback && call.summary === null) {
+    throw new Error(`Call ${callId} has not been processed`);
+  }
 
   const to = loaded.tenant.notification_mobile;
   if (!to) {
@@ -79,23 +88,32 @@ export async function runNotifySms(
     return "no-mobile";
   }
 
-  const parsed = storedFields.safeParse(loaded.call.extracted_fields);
-  const fields = parsed.success ? parsed.data : {};
   const token = signCallLink(
     { callId, expiresAt: new Date(now().getTime() + CALL_LINK_TTL_MS) },
     signingSecret,
   );
-  const { body, segments } = callSms({
-    urgency: loaded.call.urgency,
-    callerName: fields.callerName ?? null,
-    callbackNumber: fields.callbackNumber ?? loaded.call.caller_number,
-    postcode: fields.postcode ?? null,
-    summary: loaded.call.summary,
-    callUrl: callPageUrl(publicBaseUrl, token),
-  });
+  const callUrl = callPageUrl(publicBaseUrl, token);
 
-  return deliverSms(
-    { pool, sms, outbound },
-    { tenantId, callId, channel: "sms", to, body, segments },
-  );
+  let text: { body: string; segments: number };
+  if (call.via_fallback) {
+    // A voicemail: the recording's length is what was stored as billable seconds.
+    text = voicemailSms({
+      callbackNumber: call.caller_number,
+      durationSeconds: call.billable_seconds,
+      callUrl,
+    });
+  } else {
+    const parsed = storedFields.safeParse(call.extracted_fields);
+    const fields = parsed.success ? parsed.data : {};
+    text = callSms({
+      urgency: call.urgency,
+      callerName: fields.callerName ?? null,
+      callbackNumber: fields.callbackNumber ?? call.caller_number,
+      postcode: fields.postcode ?? null,
+      summary: call.summary ?? "",
+      callUrl,
+    });
+  }
+
+  return deliverSms({ pool, sms, outbound }, { tenantId, callId, channel: "sms", to, ...text });
 }

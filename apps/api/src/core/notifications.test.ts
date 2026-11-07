@@ -5,6 +5,7 @@ import {
   emergencyCallerSms,
   emergencyTradespersonSms,
   nationalNumber,
+  voicemailSms,
   type CallNotificationInput,
 } from "./notifications.ts";
 
@@ -92,5 +93,26 @@ describe("emergency texts", () => {
       emergencyCallerSms({ businessName: "Battersby & Brockway Heating Services", region: "GB" })
         .segments,
     ).toBe(2);
+  });
+});
+
+describe("voicemailSms", () => {
+  const input = { callbackNumber: "+447700900123", durationSeconds: 42, callUrl: INPUT.callUrl };
+
+  it("matches the agreed wording", () => {
+    expect(voicemailSms(input)).toMatchSnapshot();
+    expect(voicemailSms({ ...input, callbackNumber: null })).toMatchSnapshot();
+  });
+
+  it("names the caller's number, or says it was withheld, and links to the recording", () => {
+    expect(voicemailSms(input).body.split("\n")).toEqual([
+      "New voicemail (42 sec) from 07700 900123. The assistant wasn't available, so the caller left a message.",
+      "Call back: tel:+447700900123",
+      `Listen: ${INPUT.callUrl}`,
+    ]);
+    const withheld = voicemailSms({ ...input, callbackNumber: null }).body;
+    expect(withheld).toContain("from a withheld number");
+    expect(withheld).not.toContain("tel:");
+    expect(isGsm7(withheld)).toBe(true);
   });
 });

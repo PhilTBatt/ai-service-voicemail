@@ -186,3 +186,29 @@ describe("runNotifySms", () => {
     );
   });
 });
+
+describe("runNotifySms for a fallback voicemail", () => {
+  it("texts a 'new voicemail' message with a link, without needing a summary", async () => {
+    const tenantId = await createTenant(admin, {
+      businessName: "Voicemail Plumbing",
+      trade: "plumber",
+      notificationMobile: MOBILE,
+    });
+    const { rows } = await admin.query<{ id: string }>(
+      `INSERT INTO calls (tenant_id, provider_call_id, caller_number, started_at, ended_at,
+                          billable_seconds, outcome, recording_ref, via_fallback)
+       VALUES ($1, $2, '+447700900123', now() - interval '2 minutes', now(), 42, 'voicemail',
+               'https://api.twilio.com/2010-04-01/Accounts/AC0/Recordings/RE1', true)
+       RETURNING id`,
+      [tenantId, `CA${randomUUID().replace(/-/g, "")}`],
+    );
+    const callId = rows[0]!.id;
+    const d = deps();
+    expect(await runNotifySms(d, { tenantId, callId })).toBe("sent");
+    const body = d.sms.sent[0]!.body;
+    expect(body).toMatch(/^New voicemail \(42 sec\) from 07700 900123\./);
+    expect(body).toContain("Call back: tel:+447700900123");
+    expect(body).toContain("Listen: https://callmate.example.com/c/");
+    expect(body).not.toContain("api.twilio.com"); // provider URLs are never exposed
+  });
+});

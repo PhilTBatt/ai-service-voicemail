@@ -86,3 +86,23 @@ export function emergencyCallerSms({
   );
   return { body, segments: smsEncoding(body).segments };
 }
+
+/** The text for a fallback voicemail: who, how long, and where to listen. */
+export function voicemailSms({
+  callbackNumber,
+  durationSeconds,
+  callUrl,
+}: {
+  callbackNumber: string | null;
+  durationSeconds: number;
+  callUrl: string;
+}): { body: string; segments: number } {
+  const from = callbackNumber ? nationalNumber(callbackNumber) : "a withheld number";
+  const lines = [
+    `New voicemail (${durationSeconds} sec) from ${from}. The assistant wasn't available, so the caller left a message.`,
+    ...(callbackNumber ? [`Call back: tel:${callbackNumber}`] : []),
+    `Listen: ${callUrl}`,
+  ];
+  const body = toGsm7(lines.join("\n"));
+  return { body, segments: smsEncoding(body).segments };
+}

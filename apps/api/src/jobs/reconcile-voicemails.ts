@@ -5,10 +5,13 @@ import type pg from "pg";
 import { storeFallbackVoicemail } from "../db/voicemails.ts";
 import { logger } from "../logger.ts";
 import type { TelephonyProvider } from "../providers/telephony.ts";
+import type { EnqueueNotifications } from "./enqueue-notifications.ts";
 
 export interface ReconcileDeps {
   pool: pg.Pool;
   telephony: TelephonyProvider;
+  /** Queues the "new voicemail" text for each one stored. */
+  enqueueNotifications?: EnqueueNotifications;
   now?: () => Date;
   lookbackHours?: number;
 }
@@ -24,6 +27,7 @@ export interface ReconcileCounts {
 export async function reconcileVoicemails({
   pool,
   telephony,
+  enqueueNotifications,
   now = () => new Date(),
   lookbackHours = 24,
 }: ReconcileDeps): Promise<ReconcileCounts> {
@@ -43,15 +47,19 @@ export async function reconcileVoicemails({
       counts.noCallDetails += 1;
       continue;
     }
-    const { outcome } = await storeFallbackVoicemail(pool, {
-      callSid: call.callSid,
-      from: call.from,
-      to: call.to,
-      recordingUrl: recording.url,
-      durationSeconds: recording.durationSeconds,
-      startedAt: call.startedAt,
-      endedAt: call.endedAt,
-    });
+    const { outcome } = await storeFallbackVoicemail(
+      pool,
+      {
+        callSid: call.callSid,
+        from: call.from,
+        to: call.to,
+        recordingUrl: recording.url,
+        durationSeconds: recording.durationSeconds,
+        startedAt: call.startedAt,
+        endedAt: call.endedAt,
+      },
+      enqueueNotifications,
+    );
     if (outcome === "stored") counts.stored += 1;
     else if (outcome === "duplicate") counts.duplicate += 1;
     else counts.unknownNumber += 1;

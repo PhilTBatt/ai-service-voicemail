@@ -62,6 +62,7 @@ Smaller calls, explained when they were made:
 
 ## Watch list
 
+- STATUS by SMS counts every call, spam included (Phil, 2026-11-07: fine for now). Revisit once the dashboard can mark calls as dealt with, e.g. "Calls today: 6 (1 needs a reply)".
 - TypeScript 7: switch once typescript-eslint supports it (decision 001).
 - `npm audit` reports a moderate `minimatch` issue inside ESLint (dev-only; the suggested fix downgrades ESLint). It should clear when ESLint updates the dependency.
 - Docker base image: decide in Step 8 whether to pin `node:26-slim` to a digest.
@@ -74,6 +75,7 @@ Smaller calls, explained when they were made:
 
 ## Session log (newest first)
 
+- **2026-11-07:** Step 6: fallback voicemails now text the tradesperson too (queued in the voicemail's transaction from both the recording callback and reconciliation; OFF therefore diverts calls without hiding them, per Phil).
 - **2026-11-07:** Step 6: emergency texts after the call (notify-emergency job, two new notification channels, shared deliver-sms helper). Mid-call sending deferred to a Retell custom-function commit.
 - **2026-11-07:** Step 6: SMS commands. Sender matched to a tenant by registered mobile through a SECURITY DEFINER lookup (ambiguous = unknown); replies through the allowlist; holiday mode changed in place on every profile version plus a re-sync; status changes audited.
 - **2026-11-06:** Step 6: SMS notifications. Twilio Messages adapter over fetch, GSM-7 segment counter and normaliser, SMS wording, outbound allowlist (non-production only), signed call links, notify-sms job enqueued from process-call in its transaction. A UK mobile is needed as `TWILIO_SMS_FROM` (01/02 numbers can't send SMS), which needs the Mobile/Individual bundle recreated.

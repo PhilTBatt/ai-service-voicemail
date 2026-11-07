@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { assignPhoneNumber, createAdminPool, createTenant } from "../db/cross-tenant.ts";
 import { createPool } from "../db/pool.ts";
 import { withTenant } from "../db/tenant.ts";
@@ -77,7 +77,10 @@ describe("reconcileVoicemails", () => {
       endedAt: details.endedAt,
     });
 
-    expect(await reconcileVoicemails({ pool: app, telephony, now: () => NOW })).toEqual({
+    const enqueueNotifications = vi.fn(() => Promise.resolve());
+    expect(
+      await reconcileVoicemails({ pool: app, telephony, enqueueNotifications, now: () => NOW }),
+    ).toEqual({
       checked: 2,
       stored: 1,
       duplicate: 1,
@@ -85,6 +88,8 @@ describe("reconcileVoicemails", () => {
       noCallDetails: 0,
     });
     expect(await callRows(tenantId)).toEqual([alreadyStored, missed]);
+    // One text: for the voicemail that was missing, not the one already stored.
+    expect(enqueueNotifications).toHaveBeenCalledTimes(1);
 
     // A second run finds nothing new.
     expect(await reconcileVoicemails({ pool: app, telephony, now: () => NOW })).toMatchObject({

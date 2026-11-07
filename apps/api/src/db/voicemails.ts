@@ -1,4 +1,5 @@
 import type pg from "pg";
+import type { EnqueueNotifications } from "../jobs/enqueue-notifications.ts";
 import { findTenantIdByNumber } from "./cross-tenant.ts";
 import { withTenant } from "./tenant.ts";
 
@@ -25,16 +26,18 @@ export type StoreVoicemailResult =
 export async function storeFallbackVoicemail(
   pool: pg.Pool,
   voicemail: FallbackVoicemail,
+  enqueueNotifications?: EnqueueNotifications,
 ): Promise<StoreVoicemailResult> {
   const tenantId = await findTenantIdByNumber(pool, voicemail.to);
   if (tenantId === null) return { outcome: "unknown-number", tenantId: null };
 
   const inserted = await withTenant(pool, tenantId, async (client) => {
-    const result = await client.query(
+    const result = await client.query<{ id: string }>(
       `INSERT INTO calls (tenant_id, provider_call_id, caller_number, started_at, ended_at,
                           billable_seconds, outcome, recording_ref, via_fallback)
        VALUES ($1, $2, $3, $4, $5, $6, 'voicemail', $7, true)
-       ON CONFLICT (provider_call_id) DO NOTHING`,
+       ON CONFLICT (provider_call_id) DO NOTHING
+       RETURNING id`,
       [
         tenantId,
         voicemail.callSid,
@@ -45,7 +48,11 @@ export async function storeFallbackVoicemail(
         voicemail.recordingUrl,
       ],
     );
-    return result.rowCount === 1;
+    const callId = result.rows[0]?.id;
+    if (callId === undefined) return false;
+    // The "new voicemail" text, committed with the row (BUILD_PLAN Step 6).
+    await enqueueNotifications?.(client, { tenantId, callId, urgency: null });
+    return true;
   });
   return { outcome: inserted ? "stored" : "duplicate", tenantId };
 }
