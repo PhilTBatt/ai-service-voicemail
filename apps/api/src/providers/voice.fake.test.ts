@@ -11,6 +11,7 @@ describeVoiceProviderContract("Fake", () => {
     ignorableWebhook: () => provider.webhookFor({ event: "call_started" }),
     seedRecording: (callId, bytes) => provider.recordingAudio.set(callId, bytes),
     signedFunctionCall: (event) => provider.functionCallFor(event),
+    seedEndedCall: (event) => provider.endedCalls.push(event),
   };
 });
 

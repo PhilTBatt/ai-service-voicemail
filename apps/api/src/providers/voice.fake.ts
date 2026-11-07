@@ -55,6 +55,8 @@ export class FakeVoiceProvider implements VoiceProvider {
   /** Every call registered for dialling, in order. */
   readonly calls: InboundCallRegistration[] = [];
   readonly deleteCalls: string[] = [];
+  /** Calls the "platform" knows have ended; tests fill this in. */
+  readonly endedCalls: CallEndedEvent[] = [];
   /** Recording audio by provider call ID; tests fill this in. */
   readonly recordingAudio = new Map<string, Uint8Array<ArrayBuffer>>();
   private nextId = 1;
@@ -124,6 +126,10 @@ export class FakeVoiceProvider implements VoiceProvider {
     this.deleteCalls.push(providerCallId);
     this.recordingAudio.delete(providerCallId);
     return Promise.resolve();
+  }
+
+  listEndedCalls({ since }: { since: Date }): Promise<CallEndedEvent[]> {
+    return Promise.resolve(this.endedCalls.filter((call) => call.endedAt >= since));
   }
 
   fetchRecording(providerCallId: string): Promise<RecordingAudio | null> {

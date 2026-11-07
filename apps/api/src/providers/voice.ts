@@ -102,4 +102,9 @@ export interface VoiceProvider {
   deleteCallData(providerCallId: string): Promise<void>;
   /** The call's recording, fetched fresh from the platform, or null if it has none (or no longer). */
   fetchRecording(providerCallId: string): Promise<RecordingAudio | null>;
+  /**
+   * Phone calls that ended since a point in time, as the webhook would have reported them.
+   * For finding calls whose webhook never arrived.
+   */
+  listEndedCalls(window: { since: Date }): Promise<CallEndedEvent[]>;
 }

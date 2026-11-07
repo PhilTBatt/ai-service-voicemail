@@ -7,6 +7,9 @@ export const PROCESS_CALL_QUEUE = "process-call";
 /** Scheduled: picks up fallback voicemails whose callback never arrived. */
 export const RECONCILE_VOICEMAILS_QUEUE = "reconcile-voicemails";
 export const RECONCILE_VOICEMAILS_CRON = "*/15 * * * *";
+/** Scheduled: stores agent calls whose call-ended webhook never arrived (Step 7 review). */
+export const RECONCILE_CALLS_QUEUE = "reconcile-calls";
+export const RECONCILE_CALLS_CRON = "7-59/15 * * * *"; // staggered from the voicemail run
 /** Scheduled: deletes expired recordings and transcripts (BUILD_PLAN Step 5). */
 export const RETENTION_QUEUE = "retention";
 export const RETENTION_CRON = "30 3 * * *"; // 03:30 Europe/London, every day
@@ -87,6 +90,13 @@ export async function startQueue(connectionString: string): Promise<PgBoss> {
     retryLimit: 2,
     retryDelay: 300,
     expireInSeconds: 1800,
+    deadLetter: DEAD_LETTER_QUEUE,
+  });
+  await ensureQueue(boss, RECONCILE_CALLS_QUEUE, {
+    policy: "singleton",
+    retryLimit: 2,
+    retryDelay: 60,
+    expireInSeconds: 600,
     deadLetter: DEAD_LETTER_QUEUE,
   });
   await ensureQueue(boss, RECONCILE_VOICEMAILS_QUEUE, {

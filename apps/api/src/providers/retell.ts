@@ -144,6 +144,42 @@ export class RetellVoiceProvider implements VoiceProvider {
   }
 
   /**
+   * Retell's list endpoint (POST /v3/list-calls, read 2026-11-07) leaves transcripts out, so
+   * each listed call is fetched in full and mapped exactly as a webhook would be. Web calls
+   * and calls still in progress are filtered out server-side.
+   */
+  async listEndedCalls({ since }: { since: Date }): Promise<CallEndedEvent[]> {
+    const events: CallEndedEvent[] = [];
+    let paginationKey: string | undefined;
+    do {
+      const page = await this.request<{
+        items: { call_id: string }[];
+        has_more: boolean;
+        pagination_key?: string;
+      }>("POST", "/v3/list-calls", {
+        filter_criteria: {
+          call_type: { type: "enum", op: "in", value: ["phone_call"] },
+          call_status: { type: "enum", op: "in", value: ["ended"] },
+          start_timestamp: { type: "range", op: "bt", value: [since.getTime(), Date.now()] },
+        },
+        sort_order: "descending",
+        limit: 1000,
+        ...(paginationKey !== undefined && { pagination_key: paginationKey }),
+      });
+      for (const item of page.items) {
+        const call = callSchema.safeParse(
+          await this.request("GET", `/v2/get-call/${encodeURIComponent(item.call_id)}`),
+        );
+        if (call.success && call.data.to_number) {
+          events.push(toCallEndedEvent(call.data, call.data.to_number));
+        }
+      }
+      paginationKey = page.has_more ? page.pagination_key : undefined;
+    } while (paginationKey);
+    return events;
+  }
+
+  /**
    * Recording URLs are signed and expire after 24 hours (buildAgent opts the agent in), so
    * the one stored at call end is useless later. Ask Retell for the call again and follow
    * the fresh URL, which needs no further credentials. Null when Retell has no recording

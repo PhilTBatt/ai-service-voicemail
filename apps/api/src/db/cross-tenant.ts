@@ -153,3 +153,16 @@ export async function clearExpiredTranscripts(admin: AdminPool, olderThan: Date)
   );
   return result.rowCount ?? 0;
 }
+
+/** Of these provider call IDs, the ones whose call row exists and has ended (across tenants). */
+export async function findCompletedProviderCallIds(
+  admin: AdminPool,
+  providerCallIds: string[],
+): Promise<Set<string>> {
+  if (providerCallIds.length === 0) return new Set();
+  const { rows } = await admin.query<{ provider_call_id: string }>(
+    "SELECT provider_call_id FROM calls WHERE provider_call_id = ANY($1) AND ended_at IS NOT NULL",
+    [providerCallIds],
+  );
+  return new Set(rows.map((r) => r.provider_call_id));
+}

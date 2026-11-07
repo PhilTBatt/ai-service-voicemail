@@ -9,6 +9,8 @@ import { runNotifySms, type NotifySmsJobData } from "./jobs/notify-sms.ts";
 import { runProcessCall, type ProcessCallJobData } from "./jobs/process-call.ts";
 import {
   NOTIFY_EMERGENCY_QUEUE,
+  RECONCILE_CALLS_CRON,
+  RECONCILE_CALLS_QUEUE,
   NOTIFY_SMS_QUEUE,
   PROCESS_CALL_QUEUE,
   RECONCILE_VOICEMAILS_CRON,
@@ -18,6 +20,7 @@ import {
   SYNC_AGENT_QUEUE,
   startQueue,
 } from "./jobs/queue.ts";
+import { reconcileCalls } from "./jobs/reconcile-calls.ts";
 import { reconcileVoicemails } from "./jobs/reconcile-voicemails.ts";
 import { runRetention } from "./jobs/retention.ts";
 import { runSyncAgent, type SyncAgentJobData } from "./jobs/sync-agent.ts";
@@ -95,6 +98,18 @@ try {
     "Email notifications disabled: no email provider configured yet (jobs wait in the queue)",
   );
 
+  const admin = config.adminDatabaseUrl ? createAdminPool(config.adminDatabaseUrl) : null;
+  if (admin) {
+    // Agent calls whose webhook never arrived (and provisional mid-call rows): stored every 15 min.
+    await boss.work(RECONCILE_CALLS_QUEUE, async () => {
+      await reconcileCalls({ pool, admin, boss, voice });
+    });
+    await boss.schedule(RECONCILE_CALLS_QUEUE, RECONCILE_CALLS_CRON, null, { tz: "Europe/London" });
+    queues.push(RECONCILE_CALLS_QUEUE);
+  } else {
+    logger.warn("Call reconciliation disabled: ADMIN_DATABASE_URL isn't set");
+  }
+
   if (config.twilio) {
     const telephony = new TwilioTelephonyProvider(config.twilio);
     await boss.work(RECONCILE_VOICEMAILS_QUEUE, async () => {
@@ -105,8 +120,7 @@ try {
     });
     queues.push(RECONCILE_VOICEMAILS_QUEUE);
 
-    if (config.adminDatabaseUrl) {
-      const admin = createAdminPool(config.adminDatabaseUrl);
+    if (admin) {
       await boss.work(RETENTION_QUEUE, async () => {
         await runRetention({ admin, voice, telephony });
       });

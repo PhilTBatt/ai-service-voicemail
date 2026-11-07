@@ -64,7 +64,6 @@ Smaller calls, explained when they were made:
 
 ## Watch list
 
-- A provisional call row opened by a mid-call emergency stays open if Retell's call-ended webhook never arrives (no transcript, no summary text). Only Twilio voicemails are reconciled today; a Retell reconciliation (list recent calls) would close the gap.
 - Unverified against Retell until the live contract test runs: the function-node edge shape, and that custom-function requests carry `X-Retell-Signature` in the same `v=,d=` form as webhooks.
 - Unverified at Twilio: whether a UK recipient replying STOP to our sender is opted out carrier-side (error 21610). The SMS commands no longer use STOP/START; if a tradesperson replies STOP anyway, their texts will start failing until they reply START.
 - Retell API calls have no timeout yet; the Twilio ones now time out at 15 s.
@@ -81,6 +80,7 @@ Smaller calls, explained when they were made:
 
 ## Session log (newest first)
 
+- **2026-11-08:** Call reconciliation: `reconcile-calls` (every 15 min, offset from the voicemail run) lists ended phone calls at Retell since 24 h ago, skips the ones already complete (one admin query), and stores the rest through `recordCallEnded`, which also completes provisional mid-call rows. `listEndedCalls` added to the voice seam (Retell: POST /v3/list-calls then GET /v2/get-call each). Closes the watch-list item about open provisional rows and missed webhooks.
 - **2026-11-08:** Step 9 code: per-caller daily cap for demo tenants in routing (counted in the inbound context, UK day), `demoLimitReached` TwiML, demo calls excluded from usage_periods, DEMO.md for Ant. Test database is now wiped at the start of every run (a random test number had collided with the "nobody owns" fixtures); random test numbers stay below 990.
 - **2026-11-07:** Step 7: Retell batch tests as the platform-side eval (test cases kept in sync by name prefix, batch polled, runs checked verbatim; transcript snapshot shape isn't documented, so parsing is best-effort with a text-search fallback); evals GitHub workflow; `JUDGE_SAMPLE_RATE` sampling in process-call (flag `judge:failed`, alert, reason stored in the row only); Retell API timeout 10 s.
 - **2026-11-07:** Step 6 review fixes (subagent review against the plan): a mid-call emergency can no longer be downgraded by the extraction or dropped by the job; signed call tokens are redacted from logs; a dropped recording stream no longer crashes the API; STOP/START removed as command aliases; Twilio requests time out at 15 s; Twilio credentials only ever go to api.twilio.com; GSM-7 UCS-2 counting fixed; call texts capped at two segments; email queue retention stated; dead `priority` option removed; duplicated schemas and helpers merged.

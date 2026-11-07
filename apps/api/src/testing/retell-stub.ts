@@ -13,6 +13,9 @@ export class RetellApiStub {
   readonly agents = new Map<string, { flowId: string; body: unknown }>();
   readonly calls: Record<string, unknown>[] = [];
   readonly deletedCalls = new Set<string>();
+  /** What POST /v3/list-calls returns (ids and times only), in pages; tests fill this in. */
+  readonly listedCalls: Record<string, unknown>[] = [];
+  listCallsPageSize = 50;
   /** Get Call responses by call ID, and recording audio by URL; tests fill these in. */
   readonly callRecords = new Map<string, Record<string, unknown>>();
   /** Test case definitions by ID, batch jobs, and the runs every batch returns; tests fill these in. */
@@ -143,6 +146,16 @@ export class RetellApiStub {
         })),
         has_more: next < this.testRuns.length,
         ...(next < this.testRuns.length && { pagination_key: String(next) }),
+      });
+    }
+    if (method === "POST" && first === "v3" && second === "list-calls") {
+      const offset = Number(body?.pagination_key ?? "0");
+      const items = this.listedCalls.slice(offset, offset + this.listCallsPageSize);
+      const next = offset + this.listCallsPageSize;
+      return json(200, {
+        items,
+        has_more: next < this.listedCalls.length,
+        ...(next < this.listedCalls.length && { pagination_key: String(next) }),
       });
     }
     if (method === "GET" && first === "v2" && second === "get-call" && segments[2]) {

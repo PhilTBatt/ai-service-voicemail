@@ -16,6 +16,8 @@ export interface VoiceProviderHarness {
   ignorableWebhook: () => { rawBody: Buffer; headers: WebhookHeaders };
   /** A mid-call function request for `event`, signed as the platform would. Absent for the live run. */
   signedFunctionCall?: (event: FunctionCallEvent) => { rawBody: Buffer; headers: WebhookHeaders };
+  /** Makes the "platform" report this call as ended. Absent for the live run. */
+  seedEndedCall?: (event: CallEndedEvent) => void;
   /** Puts a recording at the "platform" for a call. Absent for the live run. */
   seedRecording?: (providerCallId: string, bytes: Uint8Array<ArrayBuffer>) => void;
 }
@@ -166,6 +168,23 @@ export function describeVoiceProviderContract(
       await harness.provider.deleteCallData("call_contract_recording");
       expect(await harness.provider.fetchRecording("call_contract_recording")).toBeNull();
       expect(await harness.provider.fetchRecording("call_never_existed")).toBeNull();
+    });
+
+    it("lists calls that ended since a point in time, as webhook events", async () => {
+      const harness = makeHarness();
+      const since = new Date("2026-11-06T00:00:00Z");
+      if (harness.seedEndedCall) {
+        harness.seedEndedCall(sampleCallEndedEvent({ providerCallId: "call_contract_listed" }));
+      }
+      const calls = await harness.provider.listEndedCalls({ since });
+      expect(Array.isArray(calls)).toBe(true);
+      if (harness.seedEndedCall) {
+        const facts: Partial<CallEndedEvent> = sampleCallEndedEvent({
+          providerCallId: "call_contract_listed",
+        });
+        delete facts.costs;
+        expect(calls).toContainEqual(expect.objectContaining(facts));
+      }
     });
 
     it("deletes call data without error, even when asked twice", async () => {

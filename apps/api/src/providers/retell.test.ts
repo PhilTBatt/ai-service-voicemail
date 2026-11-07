@@ -90,6 +90,14 @@ function makeStubHarness(): VoiceProviderHarness & { stub: RetellApiStub } {
         },
         args: {},
       }),
+    seedEndedCall: (event) => {
+      const { call } = retellPayload(event);
+      stub.listedCalls.push({
+        call_id: event.providerCallId,
+        start_timestamp: call.start_timestamp,
+      });
+      stub.callRecords.set(event.providerCallId, call);
+    },
     seedRecording: (callId, bytes) => {
       const url = `https://retell-recordings.example/${callId}/recording.wav`;
       stub.callRecords.set(callId, { call_id: callId, recording_url: url });
@@ -412,3 +420,56 @@ describe.runIf(process.env.RETELL_LIVE_TESTS === "1" && process.env.RETELL_API_K
     );
   },
 );
+
+describe("RetellVoiceProvider listEndedCalls", () => {
+  it("filters for ended phone calls since the window start, pages through, and fetches each call", async () => {
+    const { provider, stub } = makeStubHarness();
+    stub.listCallsPageSize = 2;
+    const events = [1, 2, 3].map((n) => ({
+      ...retellShapedEvent(),
+      providerCallId: `call_listed_${n}`,
+    }));
+    for (const event of events) {
+      const { call } = retellPayload(event);
+      stub.listedCalls.push({
+        call_id: event.providerCallId,
+        start_timestamp: call.start_timestamp,
+      });
+      stub.callRecords.set(event.providerCallId, call);
+    }
+    // A web call in the account: listed by Retell but useless to us (no dialled number).
+    stub.listedCalls.push({ call_id: "call_web" });
+    stub.callRecords.set("call_web", {
+      ...retellPayload(events[0]!).call,
+      call_id: "call_web",
+      call_type: "web_call",
+      to_number: undefined,
+      from_number: undefined,
+    });
+
+    const since = new Date("2026-11-06T00:00:00Z");
+    const listed = await provider.listEndedCalls({ since });
+    expect(listed.map((e) => e.providerCallId)).toEqual([
+      "call_listed_1",
+      "call_listed_2",
+      "call_listed_3",
+    ]);
+    expect(listed[0]).toEqual(events[0]);
+
+    const listRequests = stub.requests.filter((r) => r.path === "/v3/list-calls");
+    expect(listRequests).toHaveLength(2); // two pages
+    expect(listRequests[0]!.body).toMatchObject({
+      filter_criteria: {
+        call_type: { type: "enum", op: "in", value: ["phone_call"] },
+        call_status: { type: "enum", op: "in", value: ["ended"] },
+        start_timestamp: {
+          type: "range",
+          op: "bt",
+          value: [since.getTime(), expect.any(Number) as unknown],
+        },
+      },
+      limit: 1000,
+    });
+    expect(stub.requests.filter((r) => r.path.startsWith("/v2/get-call/"))).toHaveLength(4);
+  });
+});
