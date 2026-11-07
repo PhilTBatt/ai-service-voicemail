@@ -1,5 +1,6 @@
 // The dashboard's API (BUILD_PLAN Step 10): what the React app calls once a person is logged
-// in: who am I, the tenants I can see, a tenant's calls, its agent profile and the on/off switch.
+// in: who am I, the tenants I can see, a tenant's calls, its agent profile, the on/off switch,
+// notification settings, the data export and the cancellation request.
 //
 // Tenant data is read inside withTenant(), so row-level security backs up the middleware:
 // even a bug in requireTenantAccess() couldn't hand one tenant's calls to another. The
@@ -15,6 +16,12 @@ import {
   type TenantWithCallCounts,
 } from "../db/cross-tenant.ts";
 import { withTenant } from "../db/tenant.ts";
+import {
+  exportTenant,
+  notificationSettingsSchema,
+  requestCancellation,
+  updateNotificationSettings,
+} from "../db/tenant-settings.ts";
 import { switchAnswering } from "../db/tenant-switch.ts";
 import type { AuthProvider } from "../providers/auth.ts";
 import {
@@ -202,6 +209,44 @@ export function dashboardRouter({ pool, admin, auth, boss, telephony, voice }: D
       return;
     }
     res.json({ outcome: result.outcome, status: result.status });
+  });
+
+  // Where texts and emails go. Null clears a channel; the delivery jobs then skip it.
+  tenant.put("/notifications", async (req, res) => {
+    const tenantId = tenantIdOf(res);
+    const body = notificationSettingsSchema.safeParse(req.body);
+    if (!body.success) {
+      res
+        .status(400)
+        .json({ error: "Invalid settings", issues: z.flattenError(body.error).fieldErrors });
+      return;
+    }
+    res.json(await updateNotificationSettings(pool, tenantId, body.data, principalOf(res).userId));
+  });
+
+  // Asking to leave: callers hear "service has ended" from now on. The rest is Step 13.
+  tenant.post("/cancel", async (_req, res) => {
+    const tenantId = tenantIdOf(res);
+    const result = await requestCancellation(pool, tenantId, principalOf(res).userId);
+    if (result.outcome === "not-allowed") {
+      res.status(409).json({
+        error: `The account is ${result.status}, so there's nothing to cancel from here`,
+        status: result.status,
+      });
+      return;
+    }
+    res.json(result);
+  });
+
+  // Everything we hold for the tenant, as one JSON file (CSV comes with Step 13).
+  tenant.get("/export", async (_req, res) => {
+    const tenantId = tenantIdOf(res);
+    const data = await exportTenant(pool, tenantId);
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="answermate-export-${tenantId}.json"`,
+    );
+    res.json(data);
   });
 
   tenant.get("/calls", async (req, res) => {

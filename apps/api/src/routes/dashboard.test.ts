@@ -27,7 +27,12 @@ const telephony = new FakeTelephonyProvider();
 
 let boss: PgBoss;
 let get: (path: string, token?: string) => Promise<Response>;
-let send: (method: "PUT", path: string, body: unknown, token?: string) => Promise<Response>;
+let send: (
+  method: "PUT" | "POST",
+  path: string,
+  body: unknown,
+  token?: string,
+) => Promise<Response>;
 let stop: () => Promise<void>;
 
 /** Two tenants, one call each, and a person in every role: the fixture for every test. */
@@ -154,7 +159,7 @@ describe("authorisation matrix", () => {
   // Every role against every endpoint (BUILD_PLAN Step 10). A new endpoint must add a row.
   // Writes carry bodies that change nothing: an invalid profile (400) and a switch on a
   // tenant that is still onboarding (409).
-  const endpoints = (): { name: string; path: string; body?: unknown }[] => [
+  const endpoints = (): { name: string; path: string; body?: unknown; method?: "POST" }[] => [
     { name: "GET /me", path: "/me" },
     { name: "GET /tenants", path: "/tenants" },
     { name: "GET /tenants/:id", path: `/tenants/${tenantA}` },
@@ -167,6 +172,14 @@ describe("authorisation matrix", () => {
     { name: "GET /tenants/:id/profile", path: `/tenants/${tenantA}/profile` },
     { name: "PUT /tenants/:id/profile", path: `/tenants/${tenantA}/profile`, body: {} },
     { name: "PUT /tenants/:id/switch", path: `/tenants/${tenantA}/switch`, body: { on: true } },
+    { name: "PUT /tenants/:id/notifications", path: `/tenants/${tenantA}/notifications`, body: {} },
+    {
+      name: "POST /tenants/:id/cancel",
+      path: `/tenants/${tenantA}/cancel`,
+      body: {},
+      method: "POST",
+    },
+    { name: "GET /tenants/:id/export", path: `/tenants/${tenantA}/export` },
   ];
   // What tenant A's data looks like to each person. "allowed" means the door opened: the
   // request may still 400, 404 or 409 on its merits (no audio at the fake, invalid body).
@@ -186,7 +199,7 @@ describe("authorisation matrix", () => {
         const { status } =
           endpoint.body === undefined
             ? await get(endpoint.path, tokens[who])
-            : await send("PUT", endpoint.path, endpoint.body, tokens[who]);
+            : await send(endpoint.method ?? "PUT", endpoint.path, endpoint.body, tokens[who]);
         if (want === "allowed") {
           expect([200, 400, 404, 409], `${who} ${endpoint.name} → ${status}`).toContain(status);
         } else {
@@ -204,6 +217,7 @@ describe("authorisation matrix", () => {
       `/tenants/${tenantA}/calls/${callA}`,
       `/tenants/${tenantA}/calls/${callA}/recording`,
       `/tenants/${tenantA}/profile`,
+      `/tenants/${tenantA}/export`,
     ]) {
       const response = await get(path, tokens.reseller);
       expect(response.status, path).toBe(403);
@@ -499,6 +513,113 @@ describe("invitations", () => {
       outcome: "exists",
       role: "owner",
     });
+  });
+});
+
+describe("notification settings", () => {
+  it("changes where texts and emails go, and records which fields changed but not to what", async () => {
+    const tenant = await createTenant(admin, {
+      businessName: "Notify Roofing",
+      trade: "roofer",
+      notificationMobile: "+447700900801",
+    });
+    const owner = await personFor(tenant);
+    const response = await send(
+      "PUT",
+      `/tenants/${tenant}/notifications`,
+      { notificationMobile: "+447700900802", notificationEmail: "sam@example.com" },
+      owner,
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      notificationMobile: "+447700900802",
+      notificationEmail: "sam@example.com",
+    });
+    const row = (
+      await admin.query<{ notification_mobile: string; notification_email: string }>(
+        "SELECT notification_mobile, notification_email FROM tenants WHERE id = $1",
+        [tenant],
+      )
+    ).rows[0]!;
+    expect(row).toEqual({
+      notification_mobile: "+447700900802",
+      notification_email: "sam@example.com",
+    });
+    const audit = await admin.query<{ details: { changed: string[] } }>(
+      "SELECT details FROM audit_log WHERE tenant_id = $1 AND action = 'notifications.changed'",
+      [tenant],
+    );
+    expect(audit.rows).toHaveLength(1);
+    expect(audit.rows[0]!.details.changed.sort()).toEqual([
+      "notificationEmail",
+      "notificationMobile",
+    ]);
+    expect(JSON.stringify(audit.rows[0]!.details)).not.toContain("900802");
+
+    // Saving the same values again isn't a change.
+    await send(
+      "PUT",
+      `/tenants/${tenant}/notifications`,
+      { notificationMobile: "+447700900802", notificationEmail: "sam@example.com" },
+      owner,
+    );
+    expect(
+      (await admin.query("SELECT 1 FROM audit_log WHERE tenant_id = $1", [tenant])).rowCount,
+    ).toBe(1);
+  });
+
+  it("takes only UK mobiles and real-looking emails", async () => {
+    const response = await send(
+      "PUT",
+      `/tenants/${tenantA}/notifications`,
+      { notificationMobile: "07700 900123", notificationEmail: "not-an-email" },
+      tokens.ownerA,
+    );
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { issues: Record<string, string[]> };
+    expect(Object.keys(body.issues).sort()).toEqual(["notificationEmail", "notificationMobile"]);
+  });
+});
+
+describe("cancellation", () => {
+  it("moves a live tenant to cancelling once, and records who asked", async () => {
+    const tenant = await createTenant(admin, { businessName: "Leaving Locks", trade: "locksmith" });
+    await admin.query("UPDATE tenants SET status = 'live' WHERE id = $1", [tenant]);
+    const owner = await personFor(tenant);
+    const first = await send("POST", `/tenants/${tenant}/cancel`, {}, owner);
+    expect(first.status).toBe(200);
+    expect(await first.json()).toEqual({ outcome: "cancelling", status: "cancelling" });
+    const again = await send("POST", `/tenants/${tenant}/cancel`, {}, owner);
+    expect(again.status).toBe(409);
+    expect(await again.json()).toMatchObject({ status: "cancelling" });
+    const audit = await admin.query<{ actor_user_id: string | null; details: unknown }>(
+      "SELECT actor_user_id, details FROM audit_log WHERE tenant_id = $1 AND action = 'tenant.cancel-requested'",
+      [tenant],
+    );
+    expect(audit.rows).toHaveLength(1);
+    expect(audit.rows[0]!.actor_user_id).not.toBeNull();
+    expect(audit.rows[0]!.details).toEqual({ via: "dashboard", from: "live" });
+  });
+});
+
+describe("export", () => {
+  it("hands the owner a JSON file holding only their tenant's data", async () => {
+    const response = await get(`/tenants/${tenantA}/export`, tokens.ownerA);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-disposition")).toBe(
+      `attachment; filename="answermate-export-${tenantA}.json"`,
+    );
+    const data = (await response.json()) as {
+      tenant: { id: string; business_name: string };
+      calls: { id: string; summary: string }[];
+      agentProfiles: unknown[];
+      notifications: unknown[];
+      auditLog: unknown[];
+    };
+    expect(data.tenant).toMatchObject({ id: tenantA, business_name: "Dash Plumbing" });
+    expect(data.calls.map((call) => call.id)).toContain(callA);
+    expect(data.calls.map((call) => call.id)).not.toContain(callB);
+    expect(data.calls.every((call) => call.summary !== "Fuse box tripping.")).toBe(true);
   });
 });
 
