@@ -2,20 +2,15 @@
 // and asking to leave. Each write is audited with the person behind it. The audit details
 // name which fields changed, never the values: the audit log stays free of contact details.
 import type pg from "pg";
-import type { TenantStatus } from "@callmate/shared";
-import { z } from "zod";
+import {
+  notificationSettingsSchema,
+  type NotificationSettings,
+  type TenantStatus,
+} from "@callmate/shared";
 import { withTenant } from "./tenant.ts";
 
-/** A UK mobile in E.164 form: +447 and nine more digits. Texts go nowhere else. */
-export const ukMobileSchema = z
-  .string()
-  .regex(/^\+447\d{9}$/, "must be a UK mobile like +447700900123");
-
-export const notificationSettingsSchema = z.object({
-  notificationMobile: ukMobileSchema.nullable(),
-  notificationEmail: z.email().nullable(),
-});
-export type NotificationSettings = z.infer<typeof notificationSettingsSchema>;
+// The rules live in packages/shared/src/settings.ts, so the dashboard checks them too.
+export { notificationSettingsSchema, type NotificationSettings };
 
 export async function updateNotificationSettings(
   pool: pg.Pool,

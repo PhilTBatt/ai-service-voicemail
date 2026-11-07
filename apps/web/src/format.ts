@@ -25,6 +25,19 @@ export function formatPhone(e164: string): string {
     : national;
 }
 
+/**
+ * A mobile number as people type it, in the form the API stores: "07700 900123",
+ * "+44 7700 900123" and "0044 7700 900123" all become "+447700900123". Anything else comes
+ * back with only its spaces removed, for the schema to refuse with a proper message.
+ */
+export function toUkMobileE164(typed: string): string {
+  const compact = typed.replace(/[\s()-]/g, "");
+  if (/^07\d{9}$/.test(compact)) return `+44${compact.slice(1)}`;
+  if (/^447\d{9}$/.test(compact)) return `+${compact}`;
+  if (/^00447\d{9}$/.test(compact)) return `+${compact.slice(2)}`;
+  return compact;
+}
+
 export const URGENCY_LABELS: Record<string, string> = {
   emergency: "Emergency",
   urgent: "Urgent",

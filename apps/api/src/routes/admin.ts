@@ -1,6 +1,7 @@
 // The admin API (BUILD_PLAN Step 10): Phil's view of the whole service. Mounted under
 // /api/admin behind authenticate() and requireRole("admin"), so nothing here is reachable by
 // an owner or the reseller. Cross-tenant reads go through the admin pool, as decision 006 says.
+import type { HealthView, KillSwitchView, ReviewQueueView, UsageView } from "@callmate/shared";
 import { Router } from "express";
 import type pg from "pg";
 import { z } from "zod";
@@ -39,7 +40,7 @@ export function adminRouter({ pool, admin, now = () => new Date() }: AdminOption
       healthSnapshot(admin, since),
       countDeadLettered(pool, since),
     ]);
-    res.json({ ...snapshot, deadLetteredJobs24h: deadLettered });
+    res.json({ ...snapshot, deadLetteredJobs24h: deadLettered } satisfies HealthView);
   });
 
   // The kill switch: on sends every caller on every number to the fallback voicemail.
@@ -52,7 +53,7 @@ export function adminRouter({ pool, admin, now = () => new Date() }: AdminOption
       return;
     }
     await setKillSwitch(admin, body.data.on, principalOf(res).userId);
-    res.json({ killSwitchOn: body.data.on });
+    res.json({ killSwitchOn: body.data.on } satisfies KillSwitchView);
   });
 
   // Calls the pipeline flagged (price mentions, guardrail hits, judge failures), newest first.
@@ -67,12 +68,12 @@ export function adminRouter({ pool, admin, now = () => new Date() }: AdminOption
     const flagged = await listFlaggedCalls(admin, query.data.limit);
     res.json({
       calls: flagged.map(({ tenant, ...call }) => ({ ...presentCallSummary(call), tenant })),
-    });
+    } satisfies ReviewQueueView);
   });
 
   // Billable seconds per tenant for the period that contains today. Prices come with Step 12.
   router.get("/usage", async (_req, res) => {
-    res.json({ tenants: await listCurrentUsage(admin, now()) });
+    res.json({ tenants: await listCurrentUsage(admin, now()) } satisfies UsageView);
   });
 
   return router;

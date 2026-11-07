@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { callsQuery, NO_FILTERS } from "./calls-query.ts";
-import { formatDuration, formatPhone, humanise, urgencyLabel } from "./format.ts";
+import { formatDuration, formatPhone, humanise, toUkMobileE164, urgencyLabel } from "./format.ts";
 
 describe("format", () => {
   it("humanises stored values", () => {
@@ -18,6 +18,19 @@ describe("format", () => {
     expect(formatPhone("+447700900123")).toBe("07700 900123");
     expect(formatPhone("+441632960123")).toBe("01632960123");
     expect(formatPhone("+15555550123")).toBe("+15555550123");
+  });
+
+  it("turns a mobile number as people type it into the stored form", () => {
+    for (const typed of [
+      "07700 900123",
+      "+44 7700 900123",
+      "0044 (7700) 900-123",
+      "447700900123",
+    ]) {
+      expect(toUkMobileE164(typed), typed).toBe("+447700900123");
+    }
+    // Not a UK mobile: left for the schema to refuse.
+    expect(toUkMobileE164("0113 496 0000")).toBe("01134960000");
   });
 
   it("labels urgency, including calls not processed yet", () => {

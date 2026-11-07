@@ -5,8 +5,10 @@ import type { MeView } from "@callmate/shared";
 import { Show, SignIn, UserButton } from "@clerk/react";
 import { Link, Navigate, Route, Routes } from "react-router";
 import { ApiError, useApi, useLoad } from "./api.ts";
+import { AdminPage } from "./pages/AdminPage.tsx";
 import { CallPage } from "./pages/CallPage.tsx";
 import { ProfilePage } from "./pages/ProfilePage.tsx";
+import { SettingsPage } from "./pages/SettingsPage.tsx";
 import { TenantPage } from "./pages/TenantPage.tsx";
 import { TenantsPage } from "./pages/TenantsPage.tsx";
 import { ErrorNote } from "./ui.tsx";
@@ -37,7 +39,10 @@ function SignedIn() {
         <Link to="/" className="brand">
           AnswerMate
         </Link>
-        <UserButton />
+        <nav className="top-nav">
+          {me.status === "ready" && me.data.role === "admin" && <Link to="/admin">Admin</Link>}
+          <UserButton />
+        </nav>
       </header>
       <main className="page">
         {me.status === "loading" && <p className="muted">Loading…</p>}
@@ -47,6 +52,8 @@ function SignedIn() {
             <Route path="/" element={<Home me={me.data} />} />
             <Route path="/tenants/:tenantId" element={<TenantPage me={me.data} />} />
             <Route path="/tenants/:tenantId/profile" element={<ProfilePage me={me.data} />} />
+            <Route path="/tenants/:tenantId/settings" element={<SettingsPage me={me.data} />} />
+            <Route path="/admin" element={<AdminPage />} />
             <Route path="/tenants/:tenantId/calls/:callId" element={<CallPage />} />
             <Route path="*" element={<p>There's no page here.</p>} />
           </Routes>

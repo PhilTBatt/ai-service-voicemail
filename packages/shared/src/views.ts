@@ -102,3 +102,52 @@ export interface SaveProfileView {
   version: number;
   sync: SyncView;
 }
+
+/** POST /api/tenants/:id/cancel */
+export interface CancellationView {
+  outcome: "cancelling";
+  status: "cancelling";
+}
+
+/** GET /api/admin/health. Counts cover the last 24 hours. */
+export interface HealthView {
+  killSwitchOn: boolean;
+  /** Calls that went to the fallback voicemail: the agent couldn't be reached. */
+  fallbackCalls: number;
+  /** Texts and emails that failed or bounced. */
+  failedNotifications: number;
+  /** Jobs that failed every retry. */
+  deadLetteredJobs24h: number;
+  /** Businesses whose latest profile failed to reach the voice platform. */
+  failedSyncs: { tenantId: string; businessName: string; version: number; error: string }[];
+}
+
+/** PUT /api/admin/kill-switch */
+export interface KillSwitchView {
+  killSwitchOn: boolean;
+}
+
+/** One call in GET /api/admin/review-queue: a call the pipeline flagged, with its business. */
+export interface FlaggedCallView extends CallSummaryView {
+  tenant: { id: string; businessName: string };
+}
+
+export interface ReviewQueueView {
+  calls: FlaggedCallView[];
+}
+
+/** One business in GET /api/admin/usage: billable time in the period containing today. */
+export interface UsageRowView {
+  tenantId: string;
+  businessName: string;
+  status: string;
+  /** YYYY-MM-DD, or null when the business has no usage this period yet. */
+  periodStart: string | null;
+  periodEnd: string | null;
+  billableSeconds: number;
+  calls: number;
+}
+
+export interface UsageView {
+  tenants: UsageRowView[];
+}

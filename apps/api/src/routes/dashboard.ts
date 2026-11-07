@@ -9,7 +9,9 @@ import {
   URGENCIES,
   type CallListView,
   type AgentProfileInput,
+  type CancellationView,
   type MeView,
+  type NotificationSettings,
   type ProfileView,
   type SaveProfileView,
   type SwitchView,
@@ -250,7 +252,13 @@ export function dashboardRouter({
         .json({ error: "Invalid settings", issues: z.flattenError(body.error).fieldErrors });
       return;
     }
-    res.json(await updateNotificationSettings(pool, tenantId, body.data, principalOf(res).userId));
+    const saved = await updateNotificationSettings(
+      pool,
+      tenantId,
+      body.data,
+      principalOf(res).userId,
+    );
+    res.json(saved satisfies NotificationSettings);
   });
 
   // Asking to leave: callers hear "service has ended" from now on. The rest is Step 13.
@@ -264,7 +272,7 @@ export function dashboardRouter({
       });
       return;
     }
-    res.json(result);
+    res.json(result satisfies CancellationView);
   });
 
   // Everything we hold for the tenant, as one JSON file (CSV comes with Step 13).
