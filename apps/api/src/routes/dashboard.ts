@@ -10,6 +10,7 @@ import type { PgBoss } from "pg-boss";
 import type pg from "pg";
 import { z } from "zod";
 import { agentProfileInputSchema, saveAgentProfile } from "../db/agent-profiles.ts";
+import { adminRouter } from "./admin.ts";
 import {
   listTenantsWithCallCounts,
   type AdminPool,
@@ -46,6 +47,7 @@ export interface DashboardOptions extends RecordingSources {
   auth: AuthProvider;
   /** Profile saves queue their agent sync through here. */
   boss: PgBoss;
+  now?: () => Date;
 }
 
 export const CALL_LIST_DEFAULT_LIMIT = 50;
@@ -91,7 +93,15 @@ interface ProfileRow {
 
 const switchBody = z.object({ on: z.boolean() });
 
-export function dashboardRouter({ pool, admin, auth, boss, telephony, voice }: DashboardOptions) {
+export function dashboardRouter({
+  pool,
+  admin,
+  auth,
+  boss,
+  telephony,
+  voice,
+  now,
+}: DashboardOptions) {
   const router = Router();
   const sources: RecordingSources = { telephony, voice };
   router.use(json({ limit: "256kb" }));
@@ -118,6 +128,8 @@ export function dashboardRouter({ pool, admin, auth, boss, telephony, voice }: D
         : all;
     res.json({ tenants: visible.map(presentTenantSummary) });
   });
+
+  router.use("/admin", adminRouter({ pool, admin, ...(now && { now }) }));
 
   const tenant = Router({ mergeParams: true });
   router.use("/tenants/:tenantId", requireTenantAccess(), tenant);

@@ -1,4 +1,5 @@
 import { PgBoss } from "pg-boss";
+import type pg from "pg";
 import { logger } from "../logger.ts";
 
 export const SYNC_AGENT_QUEUE = "sync-agent";
@@ -132,4 +133,13 @@ async function ensureQueue(
   } else {
     await boss.createQueue(name, options);
   }
+}
+
+/** How many jobs failed every retry and were dead-lettered since `since` (the admin health screen). */
+export async function countDeadLettered(pool: pg.Pool, since: Date): Promise<number> {
+  const { rows } = await pool.query<{ n: number }>(
+    "SELECT count(*)::int AS n FROM pgboss.job WHERE name = $1 AND created_on >= $2",
+    [DEAD_LETTER_QUEUE, since],
+  );
+  return rows[0]!.n;
 }

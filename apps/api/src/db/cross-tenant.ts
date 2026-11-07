@@ -132,6 +132,123 @@ export async function listTenantsWithCallCounts(admin: AdminPool): Promise<Tenan
   return rows;
 }
 
+// ─── Admin screens (BUILD_PLAN Step 10) ────────────────────────────────────────────────
+
+export interface HealthSnapshot {
+  killSwitchOn: boolean;
+  /** Calls that went to the fallback voicemail since `since`: the agent couldn't be reached. */
+  fallbackCalls: number;
+  /** Texts and emails that failed or bounced since `since`. */
+  failedNotifications: number;
+  /** Tenants whose latest profile version failed to sync, with the error. */
+  failedSyncs: { tenantId: string; businessName: string; version: number; error: string }[];
+}
+
+export async function healthSnapshot(admin: AdminPool, since: Date): Promise<HealthSnapshot> {
+  const [counts, syncs] = await Promise.all([
+    admin.query<{ kill_switch_on: boolean; fallback_calls: number; failed_notifications: number }>(
+      `SELECT (SELECT kill_switch_on FROM system_settings) AS kill_switch_on,
+              (SELECT count(*) FROM calls WHERE via_fallback AND started_at >= $1)::int AS fallback_calls,
+              (SELECT count(*) FROM notifications
+                WHERE status IN ('failed', 'undelivered') AND updated_at >= $1)::int AS failed_notifications`,
+      [since],
+    ),
+    admin.query<{ tenantId: string; businessName: string; version: number; error: string }>(
+      `SELECT t.id AS "tenantId", t.business_name AS "businessName", p.version, p.sync_error AS error
+       FROM tenants t
+       JOIN LATERAL (SELECT version, sync_error FROM agent_profiles
+                     WHERE tenant_id = t.id ORDER BY version DESC LIMIT 1) p ON true
+       WHERE p.sync_error IS NOT NULL
+       ORDER BY t.business_name`,
+    ),
+  ]);
+  const row = counts.rows[0]!;
+  return {
+    killSwitchOn: row.kill_switch_on,
+    fallbackCalls: row.fallback_calls,
+    failedNotifications: row.failed_notifications,
+    failedSyncs: syncs.rows,
+  };
+}
+
+/** Flips the kill switch (core/routing.ts reads it on every call) and audits who did it. */
+export async function setKillSwitch(
+  admin: AdminPool,
+  on: boolean,
+  actorUserId: string,
+): Promise<void> {
+  const client = await admin.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("UPDATE system_settings SET kill_switch_on = $1", [on]);
+    await client.query(
+      "INSERT INTO audit_log (tenant_id, actor_user_id, action, details) VALUES (NULL, $1, $2, $3)",
+      [actorUserId, on ? "kill-switch.on" : "kill-switch.off", { via: "dashboard" }],
+    );
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+/** A flagged call with the tenant it belongs to, for the admin's review queue. */
+export type FlaggedCall = import("../routes/call-view.ts").CallRow & {
+  tenant: { id: string; businessName: string };
+};
+
+export async function listFlaggedCalls(admin: AdminPool, limit: number): Promise<FlaggedCall[]> {
+  const { rows } = await admin.query<
+    import("../routes/call-view.ts").CallRow & { tenant_id: string; business_name: string }
+  >(
+    `SELECT c.id, c.provider_call_id, c.started_at, c.ended_at, c.billable_seconds, c.caller_number,
+            c.urgency, c.summary, c.flags, c.extracted_fields, c.transcript, c.recording_ref,
+            c.via_fallback, c.tenant_id, t.business_name
+     FROM calls c JOIN tenants t ON t.id = c.tenant_id
+     WHERE cardinality(c.flags) > 0
+     ORDER BY c.started_at DESC, c.id DESC
+     LIMIT $1`,
+    [limit],
+  );
+  return rows.map(({ tenant_id, business_name, ...call }) => ({
+    ...call,
+    tenant: { id: tenant_id, businessName: business_name },
+  }));
+}
+
+export interface TenantUsage {
+  tenantId: string;
+  businessName: string;
+  status: string;
+  periodStart: string | null;
+  periodEnd: string | null;
+  billableSeconds: number;
+  calls: number;
+}
+
+/** Every tenant's billable seconds and call count for the period containing `today`. */
+export async function listCurrentUsage(admin: AdminPool, today: Date): Promise<TenantUsage[]> {
+  const { rows } = await admin.query<TenantUsage>(
+    `SELECT t.id AS "tenantId", t.business_name AS "businessName", t.status,
+            to_char(u.period_start, 'YYYY-MM-DD') AS "periodStart",
+            to_char(u.period_end, 'YYYY-MM-DD') AS "periodEnd",
+            COALESCE(u.billable_seconds, 0)::int AS "billableSeconds",
+            (SELECT count(*) FROM calls c
+              WHERE c.tenant_id = t.id
+                AND c.started_at >= COALESCE(u.period_start, date_trunc('month', $1::timestamptz)::date)
+                AND c.started_at < COALESCE(u.period_end, (date_trunc('month', $1::timestamptz) + interval '1 month')::date)
+            )::int AS calls
+     FROM tenants t
+     LEFT JOIN usage_periods u
+       ON u.tenant_id = t.id AND u.period_start <= $1::date AND u.period_end > $1::date
+     ORDER BY t.business_name`,
+    [today],
+  );
+  return rows;
+}
+
 // ─── People who log in (BUILD_PLAN Step 10) ────────────────────────────────────────────
 // Creating accounts is an admin act (Step 11's onboarding invites owners; Phil and Ant are
 // created once). Reading an account at login time goes through db/accounts.ts.

@@ -63,7 +63,7 @@ beforeAll(async () => {
   boss = await startQueue(TEST_DATABASE_URL);
   const server = createApp({
     pool: app,
-    dashboard: { admin, auth, boss, voice, telephony },
+    dashboard: { admin, auth, boss, voice, telephony, now: () => new Date("2026-11-07T10:00:00Z") },
   }).listen(0);
   await once(server, "listening");
   const { port } = server.address() as AddressInfo;
@@ -180,12 +180,22 @@ describe("authorisation matrix", () => {
       method: "POST",
     },
     { name: "GET /tenants/:id/export", path: `/tenants/${tenantA}/export` },
+    { name: "GET /admin/health", path: "/admin/health" },
+    { name: "PUT /admin/kill-switch", path: "/admin/kill-switch", body: {} },
+    { name: "GET /admin/review-queue", path: "/admin/review-queue" },
+    { name: "GET /admin/usage", path: "/admin/usage" },
   ];
   // What tenant A's data looks like to each person. "allowed" means the door opened: the
   // request may still 400, 404 or 409 on its merits (no audio at the fake, invalid body).
   type Verdict = "allowed" | 403;
   const expected: Record<Who, { default: Verdict } & Partial<Record<string, Verdict>>> = {
-    ownerA: { default: "allowed" },
+    ownerA: {
+      default: "allowed",
+      "GET /admin/health": 403,
+      "PUT /admin/kill-switch": 403,
+      "GET /admin/review-queue": 403,
+      "GET /admin/usage": 403,
+    },
     ownerB: { "GET /me": "allowed", "GET /tenants": "allowed", default: 403 },
     admin: { default: "allowed" },
     reseller: { "GET /me": "allowed", "GET /tenants": "allowed", default: 403 },
@@ -620,6 +630,119 @@ describe("export", () => {
     expect(data.calls.map((call) => call.id)).toContain(callA);
     expect(data.calls.map((call) => call.id)).not.toContain(callB);
     expect(data.calls.every((call) => call.summary !== "Fuse box tripping.")).toBe(true);
+  });
+});
+
+describe("admin screens", () => {
+  it("shows the health of the service", async () => {
+    const tenant = await createTenant(admin, { businessName: "Broken Sync", trade: "plumber" });
+    await admin.query(
+      `INSERT INTO agent_profiles (tenant_id, version, trade_template, sync_error)
+       VALUES ($1, 1, 'plumber', 'old error'), ($1, 2, 'plumber', 'Retell refused the prompt')`,
+      [tenant],
+    );
+    await admin.query(
+      `INSERT INTO calls (tenant_id, provider_call_id, started_at, ended_at, outcome, via_fallback)
+       VALUES ($1, $2, now() - interval '1 hour', now() - interval '59 minutes', 'voicemail', true),
+              ($1, $3, now() - interval '3 days', now() - interval '3 days', 'voicemail', true)`,
+      [tenant, `CA${randomUUID()}`, `CA${randomUUID()}`],
+    );
+    const health = await json<{
+      killSwitchOn: boolean;
+      fallbackCalls: number;
+      failedNotifications: number;
+      failedSyncs: { tenantId: string; version: number; error: string }[];
+      deadLetteredJobs24h: number;
+    }>(get("/admin/health", tokens.admin));
+    expect(health.killSwitchOn).toBe(false);
+    expect(health.fallbackCalls).toBeGreaterThanOrEqual(1);
+    expect(health.failedSyncs).toContainEqual({
+      tenantId: tenant,
+      businessName: "Broken Sync",
+      version: 2,
+      error: "Retell refused the prompt",
+    });
+    expect(typeof health.deadLetteredJobs24h).toBe("number");
+  });
+
+  it("flips the kill switch and says who did it", async () => {
+    try {
+      expect(
+        await json<object>(send("PUT", "/admin/kill-switch", { on: true }, tokens.admin)),
+      ).toEqual({ killSwitchOn: true });
+      expect(
+        (await app.query<{ kill_switch_on: boolean }>("SELECT kill_switch_on FROM system_settings"))
+          .rows[0]!.kill_switch_on,
+      ).toBe(true);
+      expect(
+        (await json<{ killSwitchOn: boolean }>(get("/admin/health", tokens.admin))).killSwitchOn,
+      ).toBe(true);
+      const audit = await admin.query<{ action: string; actor_user_id: string | null }>(
+        "SELECT action, actor_user_id FROM audit_log WHERE action LIKE 'kill-switch.%' ORDER BY created_at DESC LIMIT 1",
+      );
+      expect(audit.rows[0]).toMatchObject({ action: "kill-switch.on" });
+      expect(audit.rows[0]!.actor_user_id).not.toBeNull();
+      expect((await send("PUT", "/admin/kill-switch", { on: "yes" }, tokens.admin)).status).toBe(
+        400,
+      );
+    } finally {
+      await send("PUT", "/admin/kill-switch", { on: false }, tokens.admin);
+    }
+    expect(
+      (await app.query<{ kill_switch_on: boolean }>("SELECT kill_switch_on FROM system_settings"))
+        .rows[0]!.kill_switch_on,
+    ).toBe(false);
+  });
+
+  it("queues flagged calls for review, naming the tenant", async () => {
+    const tenant = await createTenant(admin, {
+      businessName: "Flagged Heating",
+      trade: "heating_engineer",
+    });
+    const flagged = await insertCall(tenant, "Quoted a price.", "routine", "2026-11-06T09:00:00Z");
+    await admin.query("UPDATE calls SET flags = '{\"price mentioned\"}' WHERE id = $1", [flagged]);
+    const { calls } = await json<{ calls: { callId: string; flags: string[]; tenant: object }[] }>(
+      get("/admin/review-queue", tokens.admin),
+    );
+    const mine = calls.find((call) => call.callId === flagged);
+    expect(mine).toMatchObject({
+      flags: ["price mentioned"],
+      summary: "Quoted a price.",
+      tenant: { id: tenant, businessName: "Flagged Heating" },
+    });
+    expect(calls.map((call) => call.callId)).not.toContain(callA);
+    expect((await get("/admin/review-queue?limit=0", tokens.admin)).status).toBe(400);
+  });
+
+  it("lists each tenant's usage for the current period", async () => {
+    const tenant = await createTenant(admin, {
+      businessName: "Busy Builders",
+      trade: "general_builder",
+    });
+    await admin.query(
+      `INSERT INTO usage_periods (tenant_id, period_start, period_end, billable_seconds)
+       VALUES ($1, '2026-11-01', '2026-12-01', 754)`,
+      [tenant],
+    );
+    await insertCall(tenant, "In period", "routine", "2026-11-05T09:00:00Z");
+    await insertCall(tenant, "Last period", "routine", "2026-10-05T09:00:00Z");
+    const { tenants } = await json<{ tenants: { tenantId: string; [key: string]: unknown }[] }>(
+      get("/admin/usage", tokens.admin),
+    );
+    expect(tenants.find((row) => row.tenantId === tenant)).toEqual({
+      tenantId: tenant,
+      businessName: "Busy Builders",
+      status: "onboarding",
+      periodStart: "2026-11-01",
+      periodEnd: "2026-12-01",
+      billableSeconds: 754,
+      calls: 1,
+    });
+    // A tenant with no usage row still appears, with zeros.
+    expect(tenants.find((row) => row.tenantId === tenantB)).toMatchObject({
+      billableSeconds: 0,
+      periodStart: null,
+    });
   });
 });
 
