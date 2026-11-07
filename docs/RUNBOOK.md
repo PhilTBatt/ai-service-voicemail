@@ -30,6 +30,8 @@ npm run worker    # the jobs; restart it by hand after code changes
 npm run dev:web   # the dashboard at http://localhost:5173, reloads on file changes
 ```
 
+Before pushing, `npm run check` runs lint, formatting, types and tests. `npm run e2e` runs the browser smoke tests (a few seconds plus start-up; it uses the test database, so don't run it while `npm test` is running). The first time on a machine, run `npm run e2e:install` to download its browser.
+
 The API logs "API listening" and the worker logs "Worker listening" with the list of queues it serves. Warnings at startup say what's disabled and why (no Twilio, no SMS sender, no email adapter yet).
 
 ## 3. Making a test call

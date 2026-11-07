@@ -166,6 +166,7 @@ function ProfileEditor({
           One per line. The assistant tells callers what you do. No prices: it never quotes them.
         </p>
         <textarea
+          aria-label="Services, one per line"
           rows={5}
           value={form.services}
           placeholder={"Boiler repairs\nBurst pipes and leaks"}
@@ -178,6 +179,7 @@ function ProfileEditor({
         <h2>Areas you cover</h2>
         <p className="hint">One per line: towns or postcode areas.</p>
         <textarea
+          aria-label="Areas you cover, one per line"
           rows={4}
           value={form.serviceAreas}
           placeholder={"Leeds\nLS6"}

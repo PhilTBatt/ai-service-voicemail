@@ -7,8 +7,8 @@
     "moduleResolution": "bundler",
     "jsx": "react-jsx",
     "lib": ["dom", "dom.iterable", "esnext"],
-    // node: for vite.config.ts only.
+    // node: for vite.config.ts, playwright.config.ts and the smoke tests.
     "types": ["vite/client", "node"]
   },
-  "include": ["src", "vite.config.ts"]
+  "include": ["src", "e2e", "vite.config.ts", "playwright.config.ts"]
 }

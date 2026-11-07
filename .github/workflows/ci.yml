@@ -56,3 +56,45 @@ jobs:
       - run: npm run format:check
       - run: npm run typecheck
       - run: npm test
+
+  # The browser smoke tests (npm run e2e): the dashboard in a real Chromium, against the real API
+  # and Postgres. A separate job so the checks above report on their own.
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: callmate
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: callmate_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U callmate -d callmate_test"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+
+    env:
+      TEST_DATABASE_URL: postgres://callmate_app@127.0.0.1:5432/callmate_test
+      TEST_ADMIN_DATABASE_URL: postgres://callmate_admin@127.0.0.1:5432/callmate_test
+      TEST_MIGRATION_DATABASE_URL: postgres://callmate_owner@127.0.0.1:5432/callmate_test?sslmode=disable
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: package.json
+          cache: npm
+      - run: npm ci
+      - name: Create database roles
+        run: docker exec -i ${{ job.services.postgres.id }} psql -v ON_ERROR_STOP=1 -U callmate -d callmate_test < apps/api/src/db/roles.sql
+      - name: Install Chromium for Playwright
+        run: npx playwright install --with-deps chromium
+        working-directory: apps/web
+      - run: npm run e2e

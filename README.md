@@ -42,6 +42,8 @@ Then open http://localhost:3000/healthz.
 | `npm run worker`                | Runs the job worker                                                                                                |
 | `npm run check`                 | Lint, format check, typecheck and tests (needs `npm run db:up`)                                                    |
 | `npm test`                      | Tests only, against the test database                                                                              |
+| `npm run e2e`                   | Browser smoke tests: Chromium drives the dashboard against the real API and test database (sign-in is a stand-in)  |
+| `npm run e2e:install`           | Once per machine: downloads the Chromium that `npm run e2e` uses                                                   |
 | `npm run format`                | Fixes formatting                                                                                                   |
 | `npm run db:up` / `db:down`     | Starts or stops the dev (port 5434) and test (port 5433) databases; `docker compose down -v` wipes dev data        |
 | `npm run db:migrate`            | Applies new migrations to the dev database (as the owner role)                                                     |
