@@ -94,7 +94,11 @@ export async function simulateCall(
   const scriptsById = new Map<FixedScript["id"], FixedScript>(
     definition.scripts.map((s) => [s.id, s]),
   );
-  const agentSystem = agentSystemPrompt(definition, persona.variables);
+  // The caller ID the platform would pass: the persona's phone, or unknown when withheld.
+  const agentSystem = agentSystemPrompt(definition, {
+    caller_number: persona.caller.phone ?? "unknown",
+    ...persona.variables,
+  });
   const callerSystem = callerSystemPrompt(persona);
   const maxTurns = persona.expect.maxTurns;
 

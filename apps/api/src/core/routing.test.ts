@@ -25,6 +25,7 @@ function context(
       providerAgentId: "agent_1",
       availability: AVAILABILITY,
     },
+    callerNumber: "+447700900123",
     callerBlocked: false,
     killSwitchOn: false,
     callerCallsToday: 0,
@@ -51,7 +52,7 @@ describe("routeInboundCall", () => {
     expect(routeInboundCall(context("live"), NOW)).toEqual({
       kind: "agent",
       providerAgentId: "agent_1",
-      variables: { open_now: "yes", holiday_mode: "no" },
+      variables: { open_now: "yes", holiday_mode: "no", caller_number: "07700 900123" },
     });
   });
 
@@ -116,5 +117,14 @@ describe("the demo line's daily cap", () => {
     expect(
       routeInboundCall(context("demo", { callerCallsToday: 9, killSwitchOn: true }), NOW).kind,
     ).toBe("voicemail");
+  });
+});
+
+describe("the caller's number as a per-call variable", () => {
+  it('hands the agent the caller\'s number in UK format, or "unknown" when withheld', () => {
+    const shown = routeInboundCall(context("live"), NOW);
+    expect(shown).toMatchObject({ variables: { caller_number: "07700 900123" } });
+    const withheld = routeInboundCall(context("live", { callerNumber: null }), NOW);
+    expect(withheld).toMatchObject({ variables: { caller_number: "unknown" } });
   });
 });

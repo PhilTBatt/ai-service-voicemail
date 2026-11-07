@@ -304,3 +304,12 @@ describe("runProcessCall with the judge sampled in", () => {
     expect(llm2.requests).toHaveLength(1);
   });
 });
+
+describe("runProcessCall and the caller ID", () => {
+  it("tells the extraction which number the caller rang from", async () => {
+    const { tenantId, callId } = await makeCall();
+    const llm = new FakeLlmProvider().willReturn(GOOD);
+    await runProcessCall({ pool: app, llm }, { tenantId, callId, providerCallId: "x" });
+    expect(llm.requests[0]?.system).toContain("The caller rang from +447700900123");
+  });
+});

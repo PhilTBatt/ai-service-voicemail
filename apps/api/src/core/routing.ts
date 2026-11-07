@@ -2,6 +2,7 @@
 // function: the route loads the facts, this decides, the TwiML builders speak.
 import type { TenantStatus } from "@callmate/shared";
 import { perCallVariables, type AvailabilityInput } from "./availability.ts";
+import { nationalNumber } from "./notifications.ts";
 
 export interface InboundCallContext {
   /** Null when no tenant owns the dialled number. */
@@ -14,6 +15,8 @@ export interface InboundCallContext {
     providerAgentId: string | null;
     availability: AvailabilityInput;
   } | null;
+  /** E.164, or null when withheld. Offered to the caller as their call-back number. */
+  callerNumber: string | null;
   callerBlocked: boolean;
   killSwitchOn: boolean;
   /** Calls from this caller to this tenant so far today (UK time). Only counted for demo tenants. */
@@ -47,7 +50,10 @@ export function routeInboundCall(context: InboundCallContext, now: Date): RouteD
       return {
         kind: "agent",
         providerAgentId: tenant.providerAgentId,
-        variables: perCallVariables(tenant.availability, now),
+        variables: {
+          ...perCallVariables(tenant.availability, now),
+          caller_number: context.callerNumber ? nationalNumber(context.callerNumber) : "unknown",
+        },
       };
     case "cancelling":
     case "cancelled":

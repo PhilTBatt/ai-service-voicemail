@@ -49,3 +49,14 @@ describe("buildExtractionPrompt", () => {
     expect(user).toBe("Transcript:\n\nAssistant: Hi there.\nCaller: Hello.");
   });
 });
+
+describe("buildExtractionPrompt with the caller ID", () => {
+  it('tells the model what "this number" means, and says nothing when the number was withheld', () => {
+    const transcript = [{ role: "caller" as const, text: "Yes, this number's fine." }];
+    const context = { businessName: "Ant's Plumbing", tradespersonName: "Ant" };
+    expect(
+      buildExtractionPrompt(transcript, { ...context, callerNumber: "+447700900123" }).system,
+    ).toContain("callbackNumber is +447700900123");
+    expect(buildExtractionPrompt(transcript, context).system).not.toContain("rang from");
+  });
+});

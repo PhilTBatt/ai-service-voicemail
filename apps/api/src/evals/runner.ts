@@ -57,6 +57,11 @@ export interface EvalReport {
   abortedByCostCap: boolean;
 }
 
+/** "07700 900101" -> "+447700900101" (persona phones are written the way a caller says them). */
+function toE164(ukNumber: string): string {
+  return ukNumber.replaceAll(/\s+/g, "").replace(/^0/, "+44");
+}
+
 export async function runEvals({
   definition,
   context,
@@ -136,7 +141,10 @@ export async function runEvals({
 
     // The same extraction prompt and schema the pipeline uses, so the eval tests them too.
     const extracted = await llm.extract({
-      ...buildExtractionPrompt(simulation.transcript, context),
+      ...buildExtractionPrompt(simulation.transcript, {
+        ...context,
+        callerNumber: persona.caller.phone ? toE164(persona.caller.phone) : null,
+      }),
       schema: callExtractionSchema,
     });
     meter.add(extracted.usage);

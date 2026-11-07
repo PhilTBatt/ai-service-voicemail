@@ -93,7 +93,7 @@ export function testCaseFor(persona: Persona, conversationFlowId: string) {
     response_engine: { type: "conversation-flow", conversation_flow_id: conversationFlowId },
     user_prompt: prompt,
     metrics,
-    dynamic_variables: persona.variables,
+    dynamic_variables: { caller_number: caller.phone ?? "unknown", ...persona.variables },
     llm_model: CALLER_MODEL,
   };
 }

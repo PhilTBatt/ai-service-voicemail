@@ -17,6 +17,10 @@ import { getTradeTemplate, type TradeTemplate } from "./trades/index.ts";
 export const PER_CALL_VARIABLES = [
   { name: "open_now", description: '"yes" or "no": whether the business is open right now' },
   { name: "holiday_mode", description: '"yes" or "no": whether the tradesperson is away' },
+  {
+    name: "caller_number",
+    description: 'the number the caller is ringing from, in UK format, or "unknown" if withheld',
+  },
 ];
 
 export function buildAgentDefinition(profile: TenantProfile): AgentDefinition {
@@ -125,7 +129,7 @@ function buildInstructions(profile: TenantProfile, template: TradeTemplate): str
 ## Your job
 Take a message for ${name}. Always collect, in a natural order:
 1. the caller's name
-2. a call-back number: read it back to them digit by digit and confirm it
+2. a call-back number. If {{caller_number}} is not "unknown", offer that first: ask whether the number they're calling from is the best one to ring them back on, and only take a different number if they want one. If it is "unknown", or they want a different number, take it and read it back to them digit by digit to confirm it
 3. their postcode
 4. what the job is
 5. how urgent it is

@@ -54,7 +54,11 @@ export async function runProcessCall(
         summary: string | null;
         via_fallback: boolean;
         urgency: string | null;
-      }>("SELECT transcript, summary, via_fallback, urgency FROM calls WHERE id = $1", [callId])
+        caller_number: string | null;
+      }>(
+        "SELECT transcript, summary, via_fallback, urgency, caller_number FROM calls WHERE id = $1",
+        [callId],
+      )
     ).rows[0];
     if (!call) throw new Error(`Call ${callId} not found for tenant ${tenantId}`);
     const tenant = (
@@ -87,6 +91,7 @@ export async function runProcessCall(
   const prompt = buildExtractionPrompt(transcript, {
     businessName: loaded.tenant.business_name,
     tradespersonName: loaded.tenant.contact_name ?? "the tradesperson",
+    callerNumber: loaded.call.caller_number,
   });
 
   // Invalid output gets one retry; a refusal doesn't. API errors propagate, so the queue

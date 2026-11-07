@@ -8,7 +8,7 @@ exports[`buildAgentDefinition > produces the same definition every time for a el
 ## Your job
 Take a message for Ant. Always collect, in a natural order:
 1. the caller's name
-2. a call-back number: read it back to them digit by digit and confirm it
+2. a call-back number. If {{caller_number}} is not "unknown", offer that first: ask whether the number they're calling from is the best one to ring them back on, and only take a different number if they want one. If it is "unknown", or they want a different number, take it and read it back to them digit by digit to confirm it
 3. their postcode
 4. what the job is
 5. how urgent it is
@@ -78,6 +78,10 @@ If the caller asks something not covered here, say Ant will answer when they cal
       "description": ""yes" or "no": whether the tradesperson is away",
       "name": "holiday_mode",
     },
+    {
+      "description": "the number the caller is ringing from, in UK format, or "unknown" if withheld",
+      "name": "caller_number",
+    },
   ],
   "profileVersion": 1,
   "scripts": [
@@ -118,7 +122,7 @@ exports[`buildAgentDefinition > produces the same definition every time for a ge
 ## Your job
 Take a message for Ant. Always collect, in a natural order:
 1. the caller's name
-2. a call-back number: read it back to them digit by digit and confirm it
+2. a call-back number. If {{caller_number}} is not "unknown", offer that first: ask whether the number they're calling from is the best one to ring them back on, and only take a different number if they want one. If it is "unknown", or they want a different number, take it and read it back to them digit by digit to confirm it
 3. their postcode
 4. what the job is
 5. how urgent it is
@@ -188,6 +192,10 @@ If the caller asks something not covered here, say Ant will answer when they cal
       "description": ""yes" or "no": whether the tradesperson is away",
       "name": "holiday_mode",
     },
+    {
+      "description": "the number the caller is ringing from, in UK format, or "unknown" if withheld",
+      "name": "caller_number",
+    },
   ],
   "profileVersion": 1,
   "scripts": [
@@ -228,7 +236,7 @@ exports[`buildAgentDefinition > produces the same definition every time for a he
 ## Your job
 Take a message for Ant. Always collect, in a natural order:
 1. the caller's name
-2. a call-back number: read it back to them digit by digit and confirm it
+2. a call-back number. If {{caller_number}} is not "unknown", offer that first: ask whether the number they're calling from is the best one to ring them back on, and only take a different number if they want one. If it is "unknown", or they want a different number, take it and read it back to them digit by digit to confirm it
 3. their postcode
 4. what the job is
 5. how urgent it is
@@ -298,6 +306,10 @@ If the caller asks something not covered here, say Ant will answer when they cal
       "description": ""yes" or "no": whether the tradesperson is away",
       "name": "holiday_mode",
     },
+    {
+      "description": "the number the caller is ringing from, in UK format, or "unknown" if withheld",
+      "name": "caller_number",
+    },
   ],
   "profileVersion": 1,
   "scripts": [
@@ -338,7 +350,7 @@ exports[`buildAgentDefinition > produces the same definition every time for a lo
 ## Your job
 Take a message for Ant. Always collect, in a natural order:
 1. the caller's name
-2. a call-back number: read it back to them digit by digit and confirm it
+2. a call-back number. If {{caller_number}} is not "unknown", offer that first: ask whether the number they're calling from is the best one to ring them back on, and only take a different number if they want one. If it is "unknown", or they want a different number, take it and read it back to them digit by digit to confirm it
 3. their postcode
 4. what the job is
 5. how urgent it is
@@ -408,6 +420,10 @@ If the caller asks something not covered here, say Ant will answer when they cal
       "description": ""yes" or "no": whether the tradesperson is away",
       "name": "holiday_mode",
     },
+    {
+      "description": "the number the caller is ringing from, in UK format, or "unknown" if withheld",
+      "name": "caller_number",
+    },
   ],
   "profileVersion": 1,
   "scripts": [
@@ -448,7 +464,7 @@ exports[`buildAgentDefinition > produces the same definition every time for a pl
 ## Your job
 Take a message for Ant. Always collect, in a natural order:
 1. the caller's name
-2. a call-back number: read it back to them digit by digit and confirm it
+2. a call-back number. If {{caller_number}} is not "unknown", offer that first: ask whether the number they're calling from is the best one to ring them back on, and only take a different number if they want one. If it is "unknown", or they want a different number, take it and read it back to them digit by digit to confirm it
 3. their postcode
 4. what the job is
 5. how urgent it is
@@ -518,6 +534,10 @@ If the caller asks something not covered here, say Ant will answer when they cal
       "description": ""yes" or "no": whether the tradesperson is away",
       "name": "holiday_mode",
     },
+    {
+      "description": "the number the caller is ringing from, in UK format, or "unknown" if withheld",
+      "name": "caller_number",
+    },
   ],
   "profileVersion": 1,
   "scripts": [
@@ -558,7 +578,7 @@ exports[`buildAgentDefinition > produces the same definition every time for a ro
 ## Your job
 Take a message for Ant. Always collect, in a natural order:
 1. the caller's name
-2. a call-back number: read it back to them digit by digit and confirm it
+2. a call-back number. If {{caller_number}} is not "unknown", offer that first: ask whether the number they're calling from is the best one to ring them back on, and only take a different number if they want one. If it is "unknown", or they want a different number, take it and read it back to them digit by digit to confirm it
 3. their postcode
 4. what the job is
 5. how urgent it is
@@ -627,6 +647,10 @@ If the caller asks something not covered here, say Ant will answer when they cal
     {
       "description": ""yes" or "no": whether the tradesperson is away",
       "name": "holiday_mode",
+    },
+    {
+      "description": "the number the caller is ringing from, in UK format, or "unknown" if withheld",
+      "name": "caller_number",
     },
   ],
   "profileVersion": 1,

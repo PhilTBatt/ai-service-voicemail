@@ -23,7 +23,13 @@ export async function loadInboundCallContext(
 
   const tenantId = await findTenantIdByNumber(pool, to);
   if (tenantId === null) {
-    return { tenant: null, callerBlocked: false, killSwitchOn, callerCallsToday: 0 };
+    return {
+      tenant: null,
+      callerNumber: from,
+      callerBlocked: false,
+      killSwitchOn,
+      callerCallsToday: 0,
+    };
   }
 
   return withTenant(pool, tenantId, async (client) => {
@@ -33,7 +39,15 @@ export async function loadInboundCallContext(
         [tenantId],
       )
     ).rows[0];
-    if (!tenant) return { tenant: null, callerBlocked: false, killSwitchOn, callerCallsToday: 0 };
+    if (!tenant) {
+      return {
+        tenant: null,
+        callerNumber: from,
+        callerBlocked: false,
+        killSwitchOn,
+        callerCallsToday: 0,
+      };
+    }
 
     // The latest synced profile is the one the live agent was built from.
     const profile = (
@@ -86,6 +100,7 @@ export async function loadInboundCallContext(
           holidayUntil: profile?.holiday_until ?? null,
         },
       },
+      callerNumber: from,
       callerBlocked: blocked,
       killSwitchOn,
       callerCallsToday,

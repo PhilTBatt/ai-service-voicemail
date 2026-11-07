@@ -97,7 +97,11 @@ describe("buildAgentDefinition", () => {
 
   it("refers to the per-call open and holiday variables in the wording", () => {
     const definition = buildAgentDefinition(sampleProfile({ holidayUntil: "2026-12-24" }));
-    expect(definition.perCallVariables.map((v) => v.name)).toEqual(["open_now", "holiday_mode"]);
+    expect(definition.perCallVariables.map((v) => v.name)).toEqual([
+      "open_now",
+      "holiday_mode",
+      "caller_number",
+    ]);
     expect(definition.instructions).toContain('If {{open_now}} is "no"');
     expect(definition.instructions).toContain('If {{holiday_mode}} is "yes"');
     expect(definition.instructions).toContain("Ant is away until 24 December 2026");
@@ -142,5 +146,20 @@ describe("tenantProfileSchema", () => {
     ["a bad holiday date", { holidayUntil: "24/12/2026" }],
   ])("rejects %s", (_label, bad) => {
     expect(tenantProfileSchema.safeParse({ ...sampleProfile(), ...bad }).success).toBe(false);
+  });
+});
+
+describe("call-back number instructions", () => {
+  it("tells the agent to offer the number the caller is ringing from before asking for one", () => {
+    const definition = buildAgentDefinition(sampleProfile());
+    expect(definition.instructions).toContain(
+      'If {{caller_number}} is not "unknown", offer that first',
+    );
+    expect(definition.instructions).toContain("read it back to them digit by digit");
+    expect(definition.perCallVariables.map((v) => v.name)).toEqual([
+      "open_now",
+      "holiday_mode",
+      "caller_number",
+    ]);
   });
 });

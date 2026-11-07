@@ -39,7 +39,11 @@ describe("testCaseFor", () => {
     expect(body.metrics).toContain(
       "The agent gives the gas emergency safety message, including the number 0800 111 999.",
     );
-    expect(body.dynamic_variables).toEqual({ open_now: "yes", holiday_mode: "no" });
+    expect(body.dynamic_variables).toEqual({
+      caller_number: "07700 900101",
+      open_now: "yes",
+      holiday_mode: "no",
+    });
     expect(body.llm_model).toBe("gpt-5.4-mini");
   });
 });
