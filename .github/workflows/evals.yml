@@ -1,0 +1,80 @@
+# Runs the eval personas against the current prompt with a real model (BUILD_PLAN Step 7).
+# Only when the prompt, templates, scripts, guardrails or the evals themselves change, or on a
+# manual run. Costs a few pence per run, so it uses a separate, capped key that Phil adds to the
+# repository secrets as EVALS_ANTHROPIC_API_KEY; without it the run is skipped, not failed.
+name: Evals
+
+on:
+  pull_request:
+    paths:
+      - "apps/api/src/core/prompt-builder.ts"
+      - "apps/api/src/core/scripts.ts"
+      - "apps/api/src/core/trades/**"
+      - "apps/api/src/core/guardrails.ts"
+      - "apps/api/src/core/extraction.ts"
+      - "apps/api/src/evals/**"
+      - "evals/**"
+      - ".github/workflows/evals.yml"
+  push:
+    branches: [main]
+    paths:
+      - "apps/api/src/core/prompt-builder.ts"
+      - "apps/api/src/core/scripts.ts"
+      - "apps/api/src/core/trades/**"
+      - "apps/api/src/core/guardrails.ts"
+      - "apps/api/src/core/extraction.ts"
+      - "apps/api/src/evals/**"
+      - "evals/**"
+      - ".github/workflows/evals.yml"
+  workflow_dispatch:
+    inputs:
+      cap_pence:
+        description: "Stop the run once the estimated cost passes this many pence"
+        default: "50"
+      personas:
+        description: "Space-separated persona ids to run (empty = all)"
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  evals:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      EVALS_ANTHROPIC_API_KEY: ${{ secrets.EVALS_ANTHROPIC_API_KEY }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: package.json
+          cache: npm
+      - run: npm ci
+
+      - name: Skip when no eval key is configured
+        if: env.EVALS_ANTHROPIC_API_KEY == ''
+        run: echo "::notice::EVALS_ANTHROPIC_API_KEY is not set; evals skipped. Add a capped dev key to the repository secrets to enable them."
+
+      - name: Run the evals
+        if: env.EVALS_ANTHROPIC_API_KEY != ''
+        env:
+          ANTHROPIC_API_KEY: ${{ env.EVALS_ANTHROPIC_API_KEY }}
+          # The runner never connects to a database, but the config requires the variable.
+          DATABASE_URL: postgres://callmate_app@127.0.0.1:5432/unused
+          CAP_PENCE: ${{ github.event.inputs.cap_pence || '50' }}
+          PERSONAS: ${{ github.event.inputs.personas }}
+        run: |
+          ARGS="--cap-pence $CAP_PENCE"
+          for id in $PERSONAS; do ARGS="$ARGS --persona $id"; done
+          npm run evals -- $ARGS
+
+      - name: Keep the report
+        if: always() && env.EVALS_ANTHROPIC_API_KEY != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: eval-report
+          path: evals/reports/
+          if-no-files-found: ignore

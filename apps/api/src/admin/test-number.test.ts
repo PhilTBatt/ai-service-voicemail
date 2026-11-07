@@ -21,7 +21,8 @@ const DEPS = {
 /** A tenant that already has a placeholder number, like the seed's demo tenant. */
 async function makeTenant() {
   const tenantId = await createTenant(admin, { businessName: "Number Plumbing", trade: "plumber" });
-  const placeholder = `+441632960${String(Math.floor(Math.random() * 1000)).padStart(3, "0")}`;
+  // Below 990: the 990 to 999 endings are reserved for "a number nobody owns" fixtures.
+  const placeholder = `+441632960${String(Math.floor(Math.random() * 990)).padStart(3, "0")}`;
   await admin.query(
     "UPDATE phone_numbers SET status = 'released', released_at = now() WHERE number = $1 AND status = 'active'",
     [placeholder],

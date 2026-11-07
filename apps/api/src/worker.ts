@@ -50,6 +50,7 @@ try {
 
   if (config.llm) {
     const llm = new AnthropicLlmProvider(config.llm);
+    const { judgeSampleRate } = config.llm;
     await boss.work<ProcessCallJobData>(PROCESS_CALL_QUEUE, async (jobs) => {
       for (const job of jobs) {
         await runProcessCall(
@@ -57,6 +58,7 @@ try {
             pool,
             llm,
             enqueueNotifications,
+            judgeSampleRate,
           },
           job.data,
         );

@@ -4,7 +4,7 @@
 // for later.
 import { z } from "zod";
 import type { CallExtraction } from "../core/extraction.ts";
-import type { LlmProvider } from "../providers/llm.ts";
+import type { LlmProvider, LlmUsage } from "../providers/llm.ts";
 import type { TranscriptTurn } from "../providers/voice.ts";
 import type { CostMeter } from "./cost.ts";
 
@@ -33,15 +33,18 @@ Give a one- or two-sentence reason either way.`;
 
 export async function judgeSummary(
   llm: LlmProvider,
-  meter: CostMeter,
+  meter: CostMeter | null,
   transcript: TranscriptTurn[],
   extraction: CallExtraction,
-): Promise<JudgeVerdict> {
+): Promise<JudgeVerdict & { usage: LlmUsage }> {
   const result = await llm.extract({
     ...buildJudgePrompt(transcript, extraction),
     schema: judgeSchema,
   });
-  meter.add(result.usage);
-  if (!result.ok) return { pass: false, reason: `Judge gave no usable verdict (${result.reason})` };
-  return result.value;
+  meter?.add(result.usage);
+  const usage = result.usage;
+  if (!result.ok) {
+    return { pass: false, reason: `Judge gave no usable verdict (${result.reason})`, usage };
+  }
+  return { ...result.value, usage };
 }

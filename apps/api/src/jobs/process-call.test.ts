@@ -260,3 +260,47 @@ describe("runProcessCall after a mid-call emergency", () => {
     });
   });
 });
+
+describe("runProcessCall with the judge sampled in", () => {
+  it("flags and alerts a summary the judge rejects, storing the reason only in the row", async () => {
+    const { tenantId, callId } = await makeCall();
+    const llm = new FakeLlmProvider()
+      .willReturn(GOOD)
+      .willReturn({ pass: false, reason: "The summary invents a boiler fault." });
+    const alert = vi.fn();
+    await runProcessCall(
+      { pool: app, llm, alert, judgeSampleRate: 0.5, random: () => 0.2 },
+      { tenantId, callId, providerCallId: "x" },
+    );
+    expect(llm.requests).toHaveLength(2);
+    expect(llm.requests[1]?.system).toContain("hallucination");
+    expect(await callRow(tenantId, callId)).toMatchObject({
+      flags: ["mentioned gas smell", "judge:failed"],
+      extracted_fields: expect.objectContaining({
+        judge: { pass: false, reason: "The summary invents a boiler fault." },
+      }) as unknown,
+      costs: [
+        { component: "fake-model:input_tokens", units: "200.0000" },
+        { component: "fake-model:output_tokens", units: "40.0000" },
+      ],
+    });
+    expect(alert).toHaveBeenCalledWith("summary-judge-failed", { tenantId, callId });
+  });
+
+  it("leaves the call alone when the sample misses, and never judges by default", async () => {
+    const { tenantId, callId } = await makeCall();
+    const llm = new FakeLlmProvider().willReturn(GOOD);
+    await runProcessCall(
+      { pool: app, llm, judgeSampleRate: 0.5, random: () => 0.9 },
+      { tenantId, callId, providerCallId: "x" },
+    );
+    expect(llm.requests).toHaveLength(1);
+    const { tenantId: t2, callId: c2 } = await makeCall();
+    const llm2 = new FakeLlmProvider().willReturn(GOOD);
+    await runProcessCall(
+      { pool: app, llm: llm2, random: () => 0 },
+      { tenantId: t2, callId: c2, providerCallId: "y" },
+    );
+    expect(llm2.requests).toHaveLength(1);
+  });
+});

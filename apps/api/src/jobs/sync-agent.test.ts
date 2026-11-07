@@ -42,7 +42,8 @@ async function makeTenant(contactName: string | null = "Sam") {
     status: "demo",
     ...(contactName !== null && { contactName }),
   });
-  const number = `+441632960${String(Math.floor(Math.random() * 1000)).padStart(3, "0")}`;
+  // Below 990: the 990 to 999 endings are reserved for "a number nobody owns" fixtures.
+  const number = `+441632960${String(Math.floor(Math.random() * 990)).padStart(3, "0")}`;
   await admin.query(
     "UPDATE phone_numbers SET status = 'released', released_at = now() WHERE number = $1 AND status = 'active'",
     [number],

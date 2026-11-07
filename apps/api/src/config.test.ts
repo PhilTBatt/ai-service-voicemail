@@ -205,6 +205,7 @@ describe("loadConfig: LLM", () => {
     expect(loadConfig({ ...valid, ANTHROPIC_API_KEY: "key_for_tests" }).llm).toEqual({
       apiKey: "key_for_tests",
       model: "claude-haiku-5-5",
+      judgeSampleRate: 0,
     });
     expect(
       loadConfig({ ...valid, ANTHROPIC_API_KEY: "key_for_tests", LLM_MODEL: "claude-sonnet-5-5" })
@@ -252,5 +253,17 @@ describe("loadConfig: SIGNING_SECRET", () => {
     expect(configErrorFor({ ...valid, SIGNING_SECRET: "short" }).problems).toEqual([
       "SIGNING_SECRET is invalid: expected at least 32 characters",
     ]);
+  });
+});
+
+describe("loadConfig: JUDGE_SAMPLE_RATE", () => {
+  it("is a share between 0 and 1, off by default", () => {
+    expect(
+      loadConfig({ ...valid, ANTHROPIC_API_KEY: "key_for_tests", JUDGE_SAMPLE_RATE: "0.1" }).llm
+        ?.judgeSampleRate,
+    ).toBe(0.1);
+    expect(configErrorFor({ ...valid, JUDGE_SAMPLE_RATE: "2" }).problems[0]).toMatch(
+      /^JUDGE_SAMPLE_RATE is invalid/,
+    );
   });
 });

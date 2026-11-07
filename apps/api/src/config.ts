@@ -53,6 +53,9 @@ const envSchema = z
     // Cross-tenant work (retention, seeding). The API never uses it; the worker does.
     ADMIN_DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }).optional(),
     LLM_MODEL: z.string().min(1).default("claude-haiku-5-5"),
+    // Share of processed calls whose summary is checked by the hallucination judge (Step 7):
+    // 0 (off) to 1 (every call). Off by default; each check is one more model call.
+    JUDGE_SAMPLE_RATE: z.coerce.number().min(0).max(1).default(0),
   })
   .superRefine((env, ctx) => {
     if (env.NODE_ENV !== "production") return;
@@ -104,7 +107,11 @@ const envSchema = z
           }
         : undefined,
     llm: env.ANTHROPIC_API_KEY
-      ? { apiKey: env.ANTHROPIC_API_KEY, model: env.LLM_MODEL }
+      ? {
+          apiKey: env.ANTHROPIC_API_KEY,
+          model: env.LLM_MODEL,
+          judgeSampleRate: env.JUDGE_SAMPLE_RATE,
+        }
       : undefined,
   }));
 

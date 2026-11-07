@@ -225,6 +225,9 @@ export class RetellVoiceProvider implements VoiceProvider {
         "Content-Type": "application/json",
       },
       ...(body !== undefined && { body: JSON.stringify(body) }),
+      // Well inside Twilio's 15-second webhook limit for the register-call path, and far
+      // below the sync job's expiry for the agent and flow calls.
+      signal: AbortSignal.timeout(10_000),
     });
     if (!response.ok) {
       throw new RetellApiError(response.status, path, (await response.text()).slice(0, 300));

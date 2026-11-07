@@ -28,7 +28,8 @@
     "demo:profile": "node --env-file-if-exists=.env apps/api/src/scripts/save-demo-profile.ts",
     "twiml:fallback": "node --env-file-if-exists=.env apps/api/src/scripts/print-fallback-twiml.ts",
     "live-buy-test-number": "node --env-file-if-exists=.env apps/api/src/scripts/live-buy-test-number.ts",
-    "evals": "node --env-file-if-exists=.env apps/api/src/scripts/run-evals.ts"
+    "evals": "node --env-file-if-exists=.env apps/api/src/scripts/run-evals.ts",
+    "live-evals-retell": "node --env-file-if-exists=.env apps/api/src/scripts/live-evals-retell.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

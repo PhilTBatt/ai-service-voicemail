@@ -9,6 +9,7 @@ import {
   type CallExtraction,
 } from "../core/extraction.ts";
 import { scanAgentTurns } from "../core/guardrails.ts";
+import { judgeSummary, type JudgeVerdict } from "../evals/judge.ts";
 import type { EnqueueNotifications } from "./enqueue-notifications.ts";
 import { withTenant } from "../db/tenant.ts";
 import { logger } from "../logger.ts";
@@ -26,13 +27,24 @@ export interface ProcessCallDeps {
   llm: LlmProvider;
   alert?: AlertFn;
   enqueueNotifications?: EnqueueNotifications;
+  /** Share of calls (0 to 1) whose summary the hallucination judge checks. Off by default. */
+  judgeSampleRate?: number;
+  /** Injected by tests. */
+  random?: () => number;
 }
 
 export type ProcessCallOutcome =
   "extracted" | "extraction-failed" | "already-processed" | "no-transcript";
 
 export async function runProcessCall(
-  { pool, llm, alert = raiseAlert, enqueueNotifications }: ProcessCallDeps,
+  {
+    pool,
+    llm,
+    alert = raiseAlert,
+    enqueueNotifications,
+    judgeSampleRate = 0,
+    random = Math.random,
+  }: ProcessCallDeps,
   { tenantId, callId }: ProcessCallJobData,
 ): Promise<ProcessCallOutcome> {
   const loaded = await withTenant(pool, tenantId, async (client) => {
@@ -89,6 +101,16 @@ export async function runProcessCall(
     else logger.warn("LLM output didn't match the schema", { tenantId, callId, attempt });
   }
 
+  // The hallucination judge on a sample of calls (BUILD_PLAN Step 7). A failed verdict flags
+  // the call for review and raises an alert; the reason stays in the row, never in the logs.
+  let judgeVerdict: JudgeVerdict | null = null;
+  if (extraction && judgeSampleRate > 0 && random() < judgeSampleRate) {
+    const { usage, ...verdict } = await judgeSummary(llm, null, transcript, extraction);
+    usages.push(usage);
+    judgeVerdict = verdict;
+  }
+  const judgeFlags = judgeVerdict && !judgeVerdict.pass ? ["judge:failed"] : [];
+
   // A mid-call emergency function already marked the call (db/calls.ts). The extraction can
   // add to that but never downgrade it: over-trigger on purpose.
   const stickyEmergency = loaded.call.urgency === "emergency";
@@ -109,8 +131,15 @@ export async function runProcessCall(
           callId,
           jobSummary,
           finalUrgency,
-          [...flags, ...guardrailFlags],
-          JSON.stringify({ callerName, callbackNumber, postcode, priceAsked, guardrailHits }),
+          [...flags, ...guardrailFlags, ...judgeFlags],
+          JSON.stringify({
+            callerName,
+            callbackNumber,
+            postcode,
+            priceAsked,
+            guardrailHits,
+            ...(judgeVerdict && { judge: judgeVerdict }),
+          }),
         ],
       );
     } else {
@@ -143,6 +172,7 @@ export async function runProcessCall(
   if (guardrailHits.length > 0) {
     alert("guardrail-hit", { tenantId, callId, rules: guardrailFlags });
   }
+  if (judgeVerdict && !judgeVerdict.pass) alert("summary-judge-failed", { tenantId, callId });
   if (!extraction) {
     alert("call-extraction-failed", { tenantId, callId });
     return "extraction-failed";
