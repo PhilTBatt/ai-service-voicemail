@@ -1,5 +1,49 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
+exports[`callEmail > matches the agreed wording 1`] = `
+{
+  "html": "<!doctype html>
+<html lang="en-GB"><head><meta charset="utf-8">
+<title>URGENT: Sam, 07700 900123 - Boiler leaking under the kitchen sink; no hot water.</title></head>
+<body style="font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; color: #111; line-height: 1.5; max-width: 640px; margin: 0 auto; padding: 16px;">
+<h1 style="font-size: 20px; margin: 0 0 4px;">URGENT call to Extract Plumbing</h1>
+<p style="margin: 0; color: #555;">Wednesday 15 July 2026, 09:00</p>
+<table style="border-collapse: collapse; margin: 16px 0;"><tr><th style="text-align: left; padding: 4px 16px 4px 0; color: #555; font-weight: 600;">Caller</th><td style="padding: 4px 0;">Sam</td></tr><tr><th style="text-align: left; padding: 4px 16px 4px 0; color: #555; font-weight: 600;">Number</th><td style="padding: 4px 0;"><a href="tel:+447700900123">07700 900123</a></td></tr><tr><th style="text-align: left; padding: 4px 16px 4px 0; color: #555; font-weight: 600;">Postcode</th><td style="padding: 4px 0;">XQ12 3JL</td></tr><tr><th style="text-align: left; padding: 4px 16px 4px 0; color: #555; font-weight: 600;">Flags</th><td style="padding: 4px 0;">mentioned gas smell</td></tr></table>
+<h2 style="font-size: 16px; margin: 24px 0 8px;">Summary</h2>
+<p style="margin: 0; white-space: pre-line;">Boiler leaking under the kitchen sink; no hot water.
+Wants someone today if possible.</p>
+<p style="margin: 16px 0;"><a href="https://callmate.example.com/c/abc123.1799999999.sig">Open the call page</a> &middot; <a href="https://callmate.example.com/c/abc123.1799999999.sig/recording">Listen to the recording</a></p>
+<h2 style="font-size: 16px; margin: 24px 0 8px;">Transcript</h2>
+<p style="margin: 0 0 8px;"><strong>Assistant:</strong> Hi, you&#39;re through to Extract Plumbing. How can I help?</p>
+<p style="margin: 0 0 8px;"><strong>Caller:</strong> It&#39;s Sam, my boiler&#39;s leaking &lt;badly&gt; &amp; I can smell gas.</p>
+<p style="color: #666; font-size: 13px; margin-top: 32px;">This email contains a caller&#39;s personal details. Please handle it with care and delete it when you no longer need it.</p>
+</body></html>",
+  "subject": "URGENT: Sam, 07700 900123 - Boiler leaking under the kitchen sink; no hot water.",
+  "text": "URGENT call to Extract Plumbing
+Wednesday 15 July 2026, 09:00
+
+Caller: Sam
+Number: 07700 900123 (tel:+447700900123)
+Postcode: XQ12 3JL
+
+Summary
+Boiler leaking under the kitchen sink; no hot water.
+Wants someone today if possible.
+
+Flags: mentioned gas smell
+
+Call page: https://callmate.example.com/c/abc123.1799999999.sig
+Recording: https://callmate.example.com/c/abc123.1799999999.sig/recording
+
+Transcript
+Assistant: Hi, you're through to Extract Plumbing. How can I help?
+Caller: It's Sam, my boiler's leaking <badly> & I can smell gas.
+
+--
+This email contains a caller's personal details. Please handle it with care and delete it when you no longer need it.",
+}
+`;
+
 exports[`callSms > matches the agreed wording 1`] = `
 {
   "body": "URGENT: Sam, 07700 900123, XQ12 3JL
@@ -35,6 +79,34 @@ exports[`emergency texts > match the agreed wording 4`] = `
 {
   "body": "Gas Plumbing : if you smell gas or suspect carbon monoxide, call the National Gas Emergency Service now (free, 24hrs) on 0800 002 001. In danger? Call 999.",
   "segments": 1,
+}
+`;
+
+exports[`voicemailEmail > matches the agreed wording 1`] = `
+{
+  "html": "<!doctype html>
+<html lang="en-GB"><head><meta charset="utf-8">
+<title>New voicemail from 07700 900123 (42 sec)</title></head>
+<body style="font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; color: #111; line-height: 1.5; max-width: 640px; margin: 0 auto; padding: 16px;">
+<h1 style="font-size: 20px; margin: 0 0 4px;">New voicemail for Extract Plumbing</h1>
+<p style="margin: 0; color: #555;">Thursday 15 January 2026, 08:00</p>
+<p>The assistant wasn't available, so the caller left a 42-second message.</p>
+<table style="border-collapse: collapse; margin: 16px 0;"><tr><th style="text-align: left; padding: 4px 16px 4px 0; color: #555; font-weight: 600;">Number</th><td style="padding: 4px 0;"><a href="tel:+447700900123">07700 900123</a></td></tr></table>
+<p style="margin: 16px 0;"><a href="https://callmate.example.com/c/abc123.1799999999.sig/recording">Listen to the voicemail</a> &middot; <a href="https://callmate.example.com/c/abc123.1799999999.sig">Open the call page</a></p>
+<p style="color: #666; font-size: 13px; margin-top: 32px;">This email contains a caller&#39;s personal details. Please handle it with care and delete it when you no longer need it.</p>
+</body></html>",
+  "subject": "New voicemail from 07700 900123 (42 sec)",
+  "text": "New voicemail for Extract Plumbing
+Thursday 15 January 2026, 08:00
+
+The assistant wasn't available, so the caller left a 42-second message.
+Number: 07700 900123 (tel:+447700900123)
+
+Listen: https://callmate.example.com/c/abc123.1799999999.sig/recording
+Call page: https://callmate.example.com/c/abc123.1799999999.sig
+
+--
+This email contains a caller's personal details. Please handle it with care and delete it when you no longer need it.",
 }
 `;
 

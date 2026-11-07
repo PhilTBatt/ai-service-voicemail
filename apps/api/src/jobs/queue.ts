@@ -12,6 +12,8 @@ export const RETENTION_QUEUE = "retention";
 export const RETENTION_CRON = "30 3 * * *"; // 03:30 Europe/London, every day
 /** One text per processed call, keyed by the call ID (BUILD_PLAN Step 6). */
 export const NOTIFY_SMS_QUEUE = "notify-sms";
+/** The email for a call (BUILD_PLAN Step 6). Waits in the queue until an email provider is configured. */
+export const NOTIFY_EMAIL_QUEUE = "notify-email";
 /** The emergency texts for a call (BUILD_PLAN Step 6). Sent with a higher priority. */
 export const NOTIFY_EMERGENCY_QUEUE = "notify-emergency";
 export const EMERGENCY_PRIORITY = 10;
@@ -55,6 +57,14 @@ export async function startQueue(connectionString: string): Promise<PgBoss> {
     policy: "exclusive", // at most one job per call queued or active
     retryLimit: 5,
     retryDelay: 30,
+    retryBackoff: true,
+    expireInSeconds: 60,
+    deadLetter: DEAD_LETTER_QUEUE,
+  });
+  await ensureQueue(boss, NOTIFY_EMAIL_QUEUE, {
+    policy: "exclusive",
+    retryLimit: 5,
+    retryDelay: 60,
     retryBackoff: true,
     expireInSeconds: 60,
     deadLetter: DEAD_LETTER_QUEUE,

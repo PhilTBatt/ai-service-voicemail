@@ -96,6 +96,11 @@ try {
     );
   }
 
+  // No email adapter until Phil picks a provider (decision 010); the jobs wait in the queue.
+  logger.warn(
+    "Email notifications disabled: no email provider configured yet (jobs wait in the queue)",
+  );
+
   if (config.twilio) {
     const telephony = new TwilioTelephonyProvider(config.twilio);
     await boss.work(RECONCILE_VOICEMAILS_QUEUE, async () => {

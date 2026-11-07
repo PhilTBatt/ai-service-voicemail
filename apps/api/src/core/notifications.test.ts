@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { isGsm7 } from "./sms.ts";
 import {
+  callEmail,
   callSms,
   emergencyCallerSms,
   emergencyTradespersonSms,
+  escapeHtml,
+  formatUkDateTime,
   nationalNumber,
+  voicemailEmail,
   voicemailSms,
+  type CallEmailInput,
   type CallNotificationInput,
 } from "./notifications.ts";
 
@@ -114,5 +119,81 @@ describe("voicemailSms", () => {
     expect(withheld).toContain("from a withheld number");
     expect(withheld).not.toContain("tel:");
     expect(isGsm7(withheld)).toBe(true);
+  });
+});
+
+const EMAIL_INPUT: CallEmailInput = {
+  ...INPUT,
+  businessName: "Extract Plumbing",
+  startedAt: new Date("2026-07-15T08:00:00Z"), // 09:00 BST
+  flags: ["mentioned gas smell"],
+  transcript: [
+    { role: "agent", text: "Hi, you're through to Extract Plumbing. How can I help?" },
+    { role: "caller", text: "It's Sam, my boiler's leaking <badly> & I can smell gas." },
+  ],
+  recordingUrl: `${INPUT.callUrl}/recording`,
+};
+
+describe("callEmail", () => {
+  it("matches the agreed wording", () => {
+    expect(callEmail(EMAIL_INPUT)).toMatchSnapshot();
+  });
+
+  it("puts the urgency, who and the first summary line in the subject", () => {
+    expect(callEmail(EMAIL_INPUT).subject).toBe(
+      "URGENT: Sam, 07700 900123 - Boiler leaking under the kitchen sink; no hot water.",
+    );
+    expect(callEmail({ ...EMAIL_INPUT, callerName: null, callbackNumber: null }).subject).toBe(
+      "URGENT: Unknown caller, number withheld - Boiler leaking under the kitchen sink; no hot water.",
+    );
+  });
+
+  it("escapes caller-supplied text in the HTML and keeps it readable in the text version", () => {
+    const { text, html } = callEmail(EMAIL_INPUT);
+    expect(html).toContain("leaking &lt;badly&gt; &amp; I can smell gas.");
+    expect(html).not.toContain("<badly>");
+    expect(text).toContain("Caller: It's Sam, my boiler's leaking <badly> & I can smell gas.");
+  });
+
+  it("shows UK time, the links, and copes with a cleared transcript", () => {
+    const { text, html } = callEmail({ ...EMAIL_INPUT, transcript: null, recordingUrl: null });
+    expect(text).toContain("Wednesday 15 July 2026, 09:00");
+    expect(text).toContain(`Call page: ${INPUT.callUrl}`);
+    expect(text).not.toContain("Recording:");
+    expect(text).toContain("(no longer available)");
+    expect(html).toContain("Open the call page");
+    expect(html).not.toContain("Listen to the recording");
+  });
+});
+
+describe("voicemailEmail", () => {
+  it("matches the agreed wording", () => {
+    expect(
+      voicemailEmail({
+        businessName: "Extract Plumbing",
+        startedAt: new Date("2026-01-15T08:00:00Z"), // 08:00 GMT
+        callbackNumber: "+447700900123",
+        durationSeconds: 42,
+        callUrl: INPUT.callUrl,
+        recordingUrl: `${INPUT.callUrl}/recording`,
+      }),
+    ).toMatchSnapshot();
+  });
+});
+
+describe("email helpers", () => {
+  it("formats UK time on both sides of the clock change", () => {
+    expect(formatUkDateTime(new Date("2026-07-15T08:00:00Z"))).toBe(
+      "Wednesday 15 July 2026, 09:00",
+    );
+    expect(formatUkDateTime(new Date("2026-01-15T08:05:00Z"))).toBe(
+      "Thursday 15 January 2026, 08:05",
+    );
+  });
+
+  it("escapes the five HTML-significant characters", () => {
+    expect(escapeHtml(`<a href="x">Tom & Jerry's</a>`)).toBe(
+      "&lt;a href=&quot;x&quot;&gt;Tom &amp; Jerry&#39;s&lt;/a&gt;",
+    );
   });
 });
