@@ -42,7 +42,7 @@ async function start(config: Config): Promise<void> {
 
   if (!config.signingSecret) logger.warn("Call pages disabled: SIGNING_SECRET isn't set");
   // The login provider is still to be chosen (decision 012). Once it is, its adapter goes in
-  // here with the admin pool, and createApp gets a `dashboard` option.
+  // here with the admin pool and the queue, and createApp gets a `dashboard` option.
   logger.warn("Dashboard API disabled: no login provider configured yet (decision 012)");
 
   const app = createApp({

@@ -1,18 +1,21 @@
 // The dashboard's API (BUILD_PLAN Step 10): what the React app calls once a person is logged
-// in. Reads only, so far: who am I, the tenants I can see, and a tenant's calls.
+// in: who am I, the tenants I can see, a tenant's calls, its agent profile and the on/off switch.
 //
 // Tenant data is read inside withTenant(), so row-level security backs up the middleware:
 // even a bug in requireTenantAccess() couldn't hand one tenant's calls to another. The
 // cross-tenant list (admin and reseller) uses the admin pool, as the admin screens are meant to.
-import { Router } from "express";
+import { Router, json } from "express";
+import type { PgBoss } from "pg-boss";
 import type pg from "pg";
 import { z } from "zod";
+import { agentProfileInputSchema, saveAgentProfile } from "../db/agent-profiles.ts";
 import {
   listTenantsWithCallCounts,
   type AdminPool,
   type TenantWithCallCounts,
 } from "../db/cross-tenant.ts";
 import { withTenant } from "../db/tenant.ts";
+import { switchAnswering } from "../db/tenant-switch.ts";
 import type { AuthProvider } from "../providers/auth.ts";
 import {
   CALL_VIEW_COLUMNS,
@@ -34,6 +37,8 @@ export interface DashboardOptions extends RecordingSources {
   pool: pg.Pool;
   admin: AdminPool;
   auth: AuthProvider;
+  /** Profile saves queue their agent sync through here. */
+  boss: PgBoss;
 }
 
 export const CALL_LIST_DEFAULT_LIMIT = 50;
@@ -63,9 +68,26 @@ interface TenantRow {
   created_at: Date;
 }
 
-export function dashboardRouter({ pool, admin, auth, telephony, voice }: DashboardOptions) {
+interface ProfileRow {
+  version: number;
+  trade_template: string;
+  services: string[];
+  service_areas: string[];
+  opening_hours: Record<string, unknown>;
+  holiday_mode: boolean;
+  holiday_until: string | null;
+  faqs: unknown[];
+  emergency_policy: Record<string, unknown>;
+  synced_at: Date | null;
+  sync_error: string | null;
+}
+
+const switchBody = z.object({ on: z.boolean() });
+
+export function dashboardRouter({ pool, admin, auth, boss, telephony, voice }: DashboardOptions) {
   const router = Router();
   const sources: RecordingSources = { telephony, voice };
+  router.use(json({ limit: "256kb" }));
 
   router.use((_req, res, next) => {
     res.setHeader("Cache-Control", "no-store");
@@ -123,6 +145,63 @@ export function dashboardRouter({ pool, admin, auth, telephony, voice }: Dashboa
       serviceRegion: row.service_region,
       createdAt: row.created_at.toISOString(),
     });
+  });
+
+  // The agent profile: what the tenant edits, plus how the sync of the latest version is
+  // going ("live in about a minute", or the error). Null before the first save.
+  tenant.get("/profile", async (_req, res) => {
+    const tenantId = tenantIdOf(res);
+    const row = await withTenant(
+      pool,
+      tenantId,
+      async (client) =>
+        (
+          await client.query<ProfileRow>(
+            `SELECT version, trade_template, services, service_areas, opening_hours, holiday_mode,
+                    to_char(holiday_until, 'YYYY-MM-DD') AS holiday_until, faqs, emergency_policy,
+                    synced_at, sync_error
+             FROM agent_profiles WHERE tenant_id = $1 ORDER BY version DESC LIMIT 1`,
+            [tenantId],
+          )
+        ).rows[0],
+    );
+    res.json(row ? presentProfile(row) : { profile: null, version: null, sync: null });
+  });
+
+  tenant.put("/profile", async (req, res) => {
+    const tenantId = tenantIdOf(res);
+    const body = agentProfileInputSchema.safeParse(req.body);
+    if (!body.success) {
+      res
+        .status(400)
+        .json({ error: "Invalid profile", issues: z.flattenError(body.error).fieldErrors });
+      return;
+    }
+    const version = await saveAgentProfile(pool, boss, tenantId, body.data, {
+      userId: principalOf(res).userId,
+    });
+    res.json({ version, sync: { state: "pending", syncedAt: null, error: null } });
+  });
+
+  // The on/off switch. Off sends every caller to the fallback voicemail; the same as texting OFF.
+  tenant.put("/switch", async (req, res) => {
+    const tenantId = tenantIdOf(res);
+    const body = switchBody.safeParse(req.body);
+    if (!body.success) {
+      res
+        .status(400)
+        .json({ error: "Invalid body", issues: z.flattenError(body.error).fieldErrors });
+      return;
+    }
+    const result = await switchAnswering(pool, tenantId, body.data.on, principalOf(res).userId);
+    if (result.outcome === "not-allowed") {
+      res.status(409).json({
+        error: `AnswerMate can't be switched on or off while the account is ${result.status}`,
+        status: result.status,
+      });
+      return;
+    }
+    res.json({ outcome: result.outcome, status: result.status });
   });
 
   tenant.get("/calls", async (req, res) => {
@@ -198,6 +277,27 @@ export function dashboardRouter({ pool, admin, auth, telephony, voice }: Dashboa
   });
 
   return router;
+}
+
+function presentProfile(row: ProfileRow) {
+  return {
+    profile: {
+      trade: row.trade_template,
+      services: row.services,
+      serviceAreas: row.service_areas,
+      openingHours: row.opening_hours,
+      holidayMode: row.holiday_mode,
+      holidayUntil: row.holiday_until,
+      faqs: row.faqs,
+      emergencyPolicy: row.emergency_policy,
+    },
+    version: row.version,
+    sync: {
+      state: row.synced_at ? "live" : row.sync_error ? "error" : "pending",
+      syncedAt: row.synced_at?.toISOString() ?? null,
+      error: row.sync_error,
+    },
+  };
 }
 
 function presentTenantSummary(tenant: TenantWithCallCounts) {

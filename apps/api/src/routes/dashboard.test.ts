@@ -2,11 +2,14 @@ import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { PgBoss } from "pg-boss";
 import { createApp } from "../app.ts";
+import type { AgentProfileInput } from "../db/agent-profiles.ts";
 import { addMembership, createAdminPool, createTenant, createUser } from "../db/cross-tenant.ts";
 import { createPool } from "../db/pool.ts";
 import { FakeAuthProvider } from "../providers/auth.fake.ts";
 import { FakeTelephonyProvider } from "../providers/telephony.fake.ts";
+import { startQueue } from "../jobs/queue.ts";
 import { FakeVoiceProvider } from "../providers/voice.fake.ts";
 import { TEST_ADMIN_DATABASE_URL, TEST_DATABASE_URL } from "../testing/databases.ts";
 
@@ -16,7 +19,9 @@ const auth = new FakeAuthProvider();
 const voice = new FakeVoiceProvider();
 const telephony = new FakeTelephonyProvider();
 
+let boss: PgBoss;
 let get: (path: string, token?: string) => Promise<Response>;
+let send: (method: "PUT", path: string, body: unknown, token?: string) => Promise<Response>;
 let stop: () => Promise<void>;
 
 /** Two tenants, one call each, and a person in every role: the fixture for every test. */
@@ -44,15 +49,25 @@ const json = async <T>(response: Promise<Response>): Promise<T> =>
 const summaries = (list: CallList) => list.calls.map((call) => call.summary);
 
 beforeAll(async () => {
+  boss = await startQueue(TEST_DATABASE_URL);
   const server = createApp({
     pool: app,
-    dashboard: { admin, auth, voice, telephony },
+    dashboard: { admin, auth, boss, voice, telephony },
   }).listen(0);
   await once(server, "listening");
   const { port } = server.address() as AddressInfo;
   get = (path, token) =>
     fetch(`http://127.0.0.1:${port}/api${path}`, {
       headers: token === undefined ? {} : { authorization: `Bearer ${token}` },
+    });
+  send = (method, path, body, token) =>
+    fetch(`http://127.0.0.1:${port}/api${path}`, {
+      method,
+      headers: {
+        "content-type": "application/json",
+        ...(token === undefined ? {} : { authorization: `Bearer ${token}` }),
+      },
+      body: JSON.stringify(body),
     });
   stop = () => new Promise((resolve) => server.close(() => resolve()));
 
@@ -83,6 +98,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await stop();
+  await boss.stop({ graceful: false, close: true });
   await Promise.all([app.end(), admin.end()]);
 });
 
@@ -130,7 +146,9 @@ describe("authentication", () => {
 
 describe("authorisation matrix", () => {
   // Every role against every endpoint (BUILD_PLAN Step 10). A new endpoint must add a row.
-  const endpoints = () => [
+  // Writes carry bodies that change nothing: an invalid profile (400) and a switch on a
+  // tenant that is still onboarding (409).
+  const endpoints = (): { name: string; path: string; body?: unknown }[] => [
     { name: "GET /me", path: "/me" },
     { name: "GET /tenants", path: "/tenants" },
     { name: "GET /tenants/:id", path: `/tenants/${tenantA}` },
@@ -140,9 +158,12 @@ describe("authorisation matrix", () => {
       name: "GET /tenants/:id/calls/:callId/recording",
       path: `/tenants/${tenantA}/calls/${callA}/recording`,
     },
+    { name: "GET /tenants/:id/profile", path: `/tenants/${tenantA}/profile` },
+    { name: "PUT /tenants/:id/profile", path: `/tenants/${tenantA}/profile`, body: {} },
+    { name: "PUT /tenants/:id/switch", path: `/tenants/${tenantA}/switch`, body: { on: true } },
   ];
-  // What tenant A's data looks like to each person. "allowed" means not a 401/403; the
-  // recording may 404 because the fake voice provider holds no audio, and that's fine.
+  // What tenant A's data looks like to each person. "allowed" means the door opened: the
+  // request may still 400, 404 or 409 on its merits (no audio at the fake, invalid body).
   type Verdict = "allowed" | 403;
   const expected: Record<Who, { default: Verdict } & Partial<Record<string, Verdict>>> = {
     ownerA: { default: "allowed" },
@@ -156,9 +177,12 @@ describe("authorisation matrix", () => {
     it(`${who} gets the right doors`, async () => {
       for (const endpoint of endpoints()) {
         const want = expected[who][endpoint.name] ?? expected[who].default;
-        const { status } = await get(endpoint.path, tokens[who]);
+        const { status } =
+          endpoint.body === undefined
+            ? await get(endpoint.path, tokens[who])
+            : await send("PUT", endpoint.path, endpoint.body, tokens[who]);
         if (want === "allowed") {
-          expect([200, 404], `${who} ${endpoint.name} → ${status}`).toContain(status);
+          expect([200, 400, 404, 409], `${who} ${endpoint.name} → ${status}`).toContain(status);
         } else {
           expect(status, `${who} ${endpoint.name}`).toBe(want);
         }
@@ -173,6 +197,7 @@ describe("authorisation matrix", () => {
       `/tenants/${tenantA}/calls`,
       `/tenants/${tenantA}/calls/${callA}`,
       `/tenants/${tenantA}/calls/${callA}/recording`,
+      `/tenants/${tenantA}/profile`,
     ]) {
       const response = await get(path, tokens.reseller);
       expect(response.status, path).toBe(403);
@@ -296,3 +321,132 @@ describe("calls", () => {
     expect(new Uint8Array(await response.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]));
   });
 });
+
+const PROFILE: AgentProfileInput = {
+  trade: "plumber",
+  services: ["boiler repairs"],
+  serviceAreas: ["Leeds"],
+  openingHours: { mon: { open: "08:00", close: "18:00" } },
+  holidayMode: false,
+  holidayUntil: null,
+  faqs: [{ question: "Do you do gas?", answer: "Yes, Gas Safe registered." }],
+  emergencyPolicy: { takesEmergencyCalls: true },
+};
+
+describe("profile", () => {
+  it("is null until the first save, then shows the saved version and its sync state", async () => {
+    const tenant = await createTenant(admin, { businessName: "Edit Plumbing", trade: "plumber" });
+    const owner = await personFor(tenant);
+    expect(await json<object>(get(`/tenants/${tenant}/profile`, owner))).toEqual({
+      profile: null,
+      version: null,
+      sync: null,
+    });
+
+    const saved = await send("PUT", `/tenants/${tenant}/profile`, PROFILE, owner);
+    expect(saved.status).toBe(200);
+    expect(await saved.json()).toEqual({
+      version: 1,
+      sync: { state: "pending", syncedAt: null, error: null },
+    });
+
+    const shown = await json<{ profile: AgentProfileInput; version: number; sync: object }>(
+      get(`/tenants/${tenant}/profile`, owner),
+    );
+    expect(shown.profile).toEqual(PROFILE);
+    expect(shown.version).toBe(1);
+    expect(shown.sync).toEqual({ state: "pending", syncedAt: null, error: null });
+
+    // The save queued the sync and named who did it.
+    const jobs = await app.query(
+      "SELECT 1 FROM pgboss.job WHERE name = 'sync-agent' AND singleton_key = $1",
+      [`${tenant}:1`],
+    );
+    expect(jobs.rowCount).toBe(1);
+    const audit = await admin.query<{ actor_user_id: string | null; details: unknown }>(
+      "SELECT actor_user_id, details FROM audit_log WHERE tenant_id = $1 AND action = 'profile.saved'",
+      [tenant],
+    );
+    expect(audit.rows).toHaveLength(1);
+    expect(audit.rows[0]!.actor_user_id).not.toBeNull();
+    expect(audit.rows[0]!.details).toEqual({ via: "dashboard", version: 1 });
+
+    // Once the worker has synced or failed, the state says so.
+    await admin.query(
+      "UPDATE agent_profiles SET sync_error = 'Retell said no' WHERE tenant_id = $1",
+      [tenant],
+    );
+    expect(
+      (await json<{ sync: { state: string } }>(get(`/tenants/${tenant}/profile`, owner))).sync
+        .state,
+    ).toBe("error");
+    await admin.query(
+      "UPDATE agent_profiles SET sync_error = NULL, synced_at = now() WHERE tenant_id = $1",
+      [tenant],
+    );
+    expect(
+      (await json<{ sync: { state: string } }>(get(`/tenants/${tenant}/profile`, owner))).sync
+        .state,
+    ).toBe("live");
+  });
+
+  it("rejects an invalid profile field by field", async () => {
+    const response = await send(
+      "PUT",
+      `/tenants/${tenantA}/profile`,
+      { ...PROFILE, trade: "astronaut", services: "boilers" },
+      tokens.ownerA,
+    );
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { issues: Record<string, string[]> };
+    expect(Object.keys(body.issues).sort()).toEqual(["services", "trade"]);
+    expect(
+      (await admin.query("SELECT 1 FROM agent_profiles WHERE tenant_id = $1", [tenantA])).rowCount,
+    ).toBe(0);
+  });
+});
+
+describe("switch", () => {
+  it("pauses and resumes a live tenant, and records who did it", async () => {
+    const tenant = await createTenant(admin, {
+      businessName: "Switch Sparks",
+      trade: "electrician",
+    });
+    await admin.query("UPDATE tenants SET status = 'live' WHERE id = $1", [tenant]);
+    const owner = await personFor(tenant);
+
+    expect(
+      await json<object>(send("PUT", `/tenants/${tenant}/switch`, { on: false }, owner)),
+    ).toEqual({ outcome: "paused", status: "paused" });
+    expect(
+      await json<object>(send("PUT", `/tenants/${tenant}/switch`, { on: false }, owner)),
+    ).toEqual({ outcome: "unchanged", status: "paused" });
+    expect(
+      await json<object>(send("PUT", `/tenants/${tenant}/switch`, { on: true }, owner)),
+    ).toEqual({ outcome: "resumed", status: "live" });
+    const actions = await admin.query<{ action: string; actor_user_id: string | null }>(
+      "SELECT action, actor_user_id FROM audit_log WHERE tenant_id = $1 ORDER BY created_at",
+      [tenant],
+    );
+    expect(actions.rows.map((row) => row.action)).toEqual(["tenant.paused", "tenant.resumed"]);
+    expect(actions.rows.every((row) => row.actor_user_id !== null)).toBe(true);
+  });
+
+  it("refuses to switch a tenant that isn't live or paused, and a body that isn't a boolean", async () => {
+    const refused = await send("PUT", `/tenants/${tenantA}/switch`, { on: false }, tokens.ownerA);
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toMatchObject({ status: "onboarding" });
+    expect(
+      (await send("PUT", `/tenants/${tenantA}/switch`, { on: "yes" }, tokens.ownerA)).status,
+    ).toBe(400);
+  });
+});
+
+/** An owner who belongs to just this tenant. */
+async function personFor(tenantId: string) {
+  const subject = `sub_${randomUUID()}`;
+  const email = `owner-${randomUUID()}@example.com`;
+  const userId = await createUser(admin, { authSubject: subject, email, role: "owner" });
+  await addMembership(admin, tenantId, userId);
+  return auth.tokenFor({ subject, email });
+}

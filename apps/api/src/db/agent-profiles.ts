@@ -20,13 +20,15 @@ export type AgentProfileInput = z.infer<typeof agentProfileInputSchema>;
 
 /**
  * Saves a new profile version and queues its sync. Every save is a new version, so the
- * history is kept and the sync job is idempotent on tenant + version.
+ * history is kept and the sync job is idempotent on tenant + version. Given an actor (a
+ * dashboard save), the audit row is written in the same transaction; scripts pass none.
  */
 export async function saveAgentProfile(
   pool: pg.Pool,
   boss: PgBoss,
   tenantId: string,
   input: AgentProfileInput,
+  actor?: { userId: string },
 ): Promise<number> {
   const profile = agentProfileInputSchema.parse(input);
   const version = await withTenant(pool, tenantId, async (client) => {
@@ -56,6 +58,12 @@ export async function saveAgentProfile(
     const saved = rows[0]!.version;
     // Queued through the same transaction: no version is ever saved without its sync job.
     await enqueueSyncAgent(boss, { tenantId, profileVersion: saved }, client);
+    if (actor) {
+      await client.query(
+        "INSERT INTO audit_log (tenant_id, actor_user_id, action, details) VALUES ($1, $2, 'profile.saved', $3)",
+        [tenantId, actor.userId, { via: "dashboard", version: saved }],
+      );
+    }
     return saved;
   });
   return version;
