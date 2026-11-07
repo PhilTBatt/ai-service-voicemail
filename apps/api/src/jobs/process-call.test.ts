@@ -185,7 +185,11 @@ describe("runProcessCall", () => {
       { pool: app, llm, alert: vi.fn(), enqueueNotifications },
       { tenantId, callId, providerCallId: "x" },
     );
-    expect(enqueueNotifications).toHaveBeenCalledWith(expect.anything(), { tenantId, callId });
+    expect(enqueueNotifications).toHaveBeenCalledWith(expect.anything(), {
+      tenantId,
+      callId,
+      urgency: null,
+    });
 
     // Not again for a call that's already processed.
     await runProcessCall(
@@ -193,6 +197,20 @@ describe("runProcessCall", () => {
       { tenantId, callId, providerCallId: "x" },
     );
     expect(enqueueNotifications).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes the urgency on, so emergencies get their own texts", async () => {
+    const { tenantId, callId } = await makeCall();
+    const enqueueNotifications = vi.fn(() => Promise.resolve());
+    await runProcessCall(
+      { pool: app, llm: new FakeLlmProvider().willReturn(GOOD), enqueueNotifications },
+      { tenantId, callId, providerCallId: "x" },
+    );
+    expect(enqueueNotifications).toHaveBeenCalledWith(expect.anything(), {
+      tenantId,
+      callId,
+      urgency: "emergency",
+    });
   });
 
   it("skips a call that's already been processed", async () => {

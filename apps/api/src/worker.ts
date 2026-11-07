@@ -3,9 +3,12 @@ import { ConfigError, loadConfig } from "./config.ts";
 import { createAdminPool } from "./db/cross-tenant.ts";
 import { createPool } from "./db/pool.ts";
 import { startDeadLetterWatcher } from "./jobs/dead-letter.ts";
+import { runNotifyEmergency, type NotifyEmergencyJobData } from "./jobs/notify-emergency.ts";
 import { runNotifySms, type NotifySmsJobData } from "./jobs/notify-sms.ts";
 import { runProcessCall, type ProcessCallJobData } from "./jobs/process-call.ts";
 import {
+  EMERGENCY_PRIORITY,
+  NOTIFY_EMERGENCY_QUEUE,
   NOTIFY_SMS_QUEUE,
   PROCESS_CALL_QUEUE,
   RECONCILE_VOICEMAILS_CRON,
@@ -50,11 +53,18 @@ try {
             llm,
             // The text is queued in the extraction's transaction; it waits there until a
             // worker with SMS configured picks it up.
-            enqueueNotifications: async (client, call) => {
-              await boss.send(NOTIFY_SMS_QUEUE, call, {
-                singletonKey: call.callId,
-                db: { executeSql: (text, values) => client.query(text, values) },
-              });
+            enqueueNotifications: async (client, { tenantId, callId, urgency }) => {
+              const db = {
+                executeSql: (text: string, values?: unknown[]) => client.query(text, values),
+              };
+              if (urgency === "emergency") {
+                await boss.send(
+                  NOTIFY_EMERGENCY_QUEUE,
+                  { tenantId, callId },
+                  { singletonKey: callId, priority: EMERGENCY_PRIORITY, db },
+                );
+              }
+              await boss.send(NOTIFY_SMS_QUEUE, { tenantId, callId }, { singletonKey: callId, db });
             },
           },
           job.data,
@@ -74,10 +84,13 @@ try {
       signingSecret: config.signingSecret,
       publicBaseUrl: config.publicBaseUrl,
     };
+    await boss.work<NotifyEmergencyJobData>(NOTIFY_EMERGENCY_QUEUE, async (jobs) => {
+      for (const job of jobs) await runNotifyEmergency(deps, job.data);
+    });
     await boss.work<NotifySmsJobData>(NOTIFY_SMS_QUEUE, async (jobs) => {
       for (const job of jobs) await runNotifySms(deps, job.data);
     });
-    queues.push(NOTIFY_SMS_QUEUE);
+    queues.push(NOTIFY_EMERGENCY_QUEUE, NOTIFY_SMS_QUEUE);
   } else {
     logger.warn(
       "SMS notifications disabled: needs TWILIO_SMS_FROM, SIGNING_SECRET and PUBLIC_BASE_URL (jobs wait in the queue)",

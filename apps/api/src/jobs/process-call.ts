@@ -26,7 +26,7 @@ export interface ProcessCallJobData {
  */
 export type EnqueueNotifications = (
   client: pg.ClientBase,
-  call: { tenantId: string; callId: string },
+  call: { tenantId: string; callId: string; urgency: CallExtraction["urgency"] | null },
 ) => Promise<void>;
 
 export interface ProcessCallDeps {
@@ -136,7 +136,11 @@ export async function runProcessCall(
       );
     }
     // Even a failed extraction gets a text: the summary says to read the transcript.
-    await enqueueNotifications?.(client, { tenantId, callId });
+    await enqueueNotifications?.(client, {
+      tenantId,
+      callId,
+      urgency: extraction?.urgency ?? null,
+    });
   });
 
   if (guardrailHits.length > 0) {

@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { isGsm7 } from "./sms.ts";
-import { callSms, nationalNumber, type CallNotificationInput } from "./notifications.ts";
+import {
+  callSms,
+  emergencyCallerSms,
+  emergencyTradespersonSms,
+  nationalNumber,
+  type CallNotificationInput,
+} from "./notifications.ts";
 
 const INPUT: CallNotificationInput = {
   urgency: "urgent",
@@ -63,5 +69,28 @@ describe("nationalNumber", () => {
   it("formats UK mobiles and leaves others alone", () => {
     expect(nationalNumber("+447700900123")).toBe("07700 900123");
     expect(nationalNumber("+12025550143")).toBe("+12025550143");
+  });
+});
+
+describe("emergency texts", () => {
+  it("match the agreed wording", () => {
+    expect(emergencyTradespersonSms({ callbackNumber: "+447700900123" })).toMatchSnapshot();
+    expect(emergencyTradespersonSms({ callbackNumber: null })).toMatchSnapshot();
+    expect(emergencyCallerSms({ businessName: "Gas Plumbing", region: "GB" })).toMatchSnapshot();
+    expect(emergencyCallerSms({ businessName: "Gas Plumbing", region: "NI" })).toMatchSnapshot();
+  });
+
+  it("are GSM-7 and fit one segment for a typical business name", () => {
+    const tradesperson = emergencyTradespersonSms({ callbackNumber: "+447700900123" });
+    const caller = emergencyCallerSms({ businessName: "Gas Plumbing", region: "GB" });
+    for (const text of [tradesperson, caller]) {
+      expect(isGsm7(text.body)).toBe(true);
+      expect(text.segments).toBe(1);
+    }
+    // A long name costs a second segment, never a third.
+    expect(
+      emergencyCallerSms({ businessName: "Battersby & Brockway Heating Services", region: "GB" })
+        .segments,
+    ).toBe(2);
   });
 });

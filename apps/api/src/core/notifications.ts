@@ -1,6 +1,7 @@
 // The texts and emails a tradesperson gets after a call (BUILD_PLAN Step 6). Pure
 // formatting; the snapshot tests pin the exact wording.
 import type { CallExtraction } from "./extraction.ts";
+import { GAS_EMERGENCY_NUMBER } from "./scripts.ts";
 import { smsEncoding, toGsm7 } from "./sms.ts";
 
 export interface CallNotificationInput {
@@ -48,5 +49,40 @@ export function callSms(input: CallNotificationInput): { body: string; segments:
     `Details: ${input.callUrl}`,
   ];
   const body = toGsm7(lines.join("\n"));
+  return { body, segments: smsEncoding(body).segments };
+}
+
+/**
+ * The priority text to the tradesperson for an emergency call. Short on purpose: it has
+ * to fit one segment and be read in a second. The full summary follows from notify-sms.
+ */
+export function emergencyTradespersonSms({ callbackNumber }: { callbackNumber: string | null }): {
+  body: string;
+  segments: number;
+} {
+  const who = callbackNumber
+    ? `Call them back now: tel:${callbackNumber} (${nationalNumber(callbackNumber)}).`
+    : "Their number was withheld.";
+  const body = toGsm7(
+    `EMERGENCY: a caller just reported an emergency to your AI assistant. ${who} Full details follow by text.`,
+  );
+  return { body, segments: smsEncoding(body).segments };
+}
+
+/**
+ * The service message to the caller after the agent spoke the gas script (Appendix A):
+ * the number, nothing else. No marketing, no link. One segment for business names up to
+ * about 18 characters; longer names cost a second segment, which is fine for an emergency.
+ */
+export function emergencyCallerSms({
+  businessName,
+  region,
+}: {
+  businessName: string;
+  region: keyof typeof GAS_EMERGENCY_NUMBER;
+}): { body: string; segments: number } {
+  const body = toGsm7(
+    `${businessName} : if you smell gas or suspect carbon monoxide, call the National Gas Emergency Service now (free, 24hrs) on ${GAS_EMERGENCY_NUMBER[region]}. In danger? Call 999.`,
+  );
   return { body, segments: smsEncoding(body).segments };
 }

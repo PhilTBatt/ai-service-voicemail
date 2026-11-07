@@ -1,16 +1,14 @@
 // The notify-sms job (BUILD_PLAN Step 6): one text to the tradesperson per processed call.
-// Idempotent through the notifications row, unique on (call_id, channel): a retried job
-// finds the row already 'sent' and stops. Outside production the outbound allowlist decides
-// whether the text goes at all (CLAUDE.md rule 4).
+// Composes the text; deliver-sms.ts applies the allowlist and records the send.
 import type pg from "pg";
 import { z } from "zod";
 import { raiseAlert, type AlertFn } from "../alerts.ts";
 import { callSms } from "../core/notifications.ts";
-import { checkOutbound, type OutboundPolicy } from "../core/outbound-allowlist.ts";
+import type { OutboundPolicy } from "../core/outbound-allowlist.ts";
 import { CALL_LINK_TTL_MS, callPageUrl, signCallLink } from "../core/signed-links.ts";
 import { withTenant } from "../db/tenant.ts";
-import { logger } from "../logger.ts";
 import type { SmsProvider } from "../providers/sms.ts";
+import { deliverSms, type DeliveryOutcome } from "./deliver-sms.ts";
 
 export interface NotifySmsJobData {
   tenantId: string;
@@ -27,9 +25,7 @@ export interface NotifySmsDeps {
   now?: () => Date;
 }
 
-export type NotifySmsOutcome = "sent" | "blocked" | "already-sent" | "no-mobile";
-
-type NotificationStatus = "pending" | "sent" | "failed" | "blocked";
+export type NotifySmsOutcome = DeliveryOutcome | "no-mobile";
 
 // What process-call stored. Only the fields the text needs; anything else is ignored.
 const storedFields = z.looseObject({
@@ -69,20 +65,9 @@ export async function runNotifySms(
       )
     ).rows[0];
     if (!tenant) throw new Error(`Tenant ${tenantId} not found`);
-    const existing = (
-      await client.query<{ status: NotificationStatus }>(
-        "SELECT status FROM notifications WHERE call_id = $1 AND channel = 'sms'",
-        [callId],
-      )
-    ).rows[0];
-    return { call, tenant, existing };
+    return { call, tenant };
   });
 
-  if (loaded.existing?.status === "sent") {
-    logger.info("SMS already sent", { tenantId, callId });
-    return "already-sent";
-  }
-  if (loaded.existing?.status === "blocked") return "blocked";
   // process-call writes the summary before this job exists; a missing one means the job
   // was enqueued some other way. Failing lets the queue retry, then dead-letter it.
   if (loaded.call.summary === null) throw new Error(`Call ${callId} has not been processed`);
@@ -109,54 +94,8 @@ export async function runNotifySms(
     callUrl: callPageUrl(publicBaseUrl, token),
   });
 
-  // One row per call and channel. 'pending' counts an attempt; the other statuses just
-  // record how that attempt ended.
-  const setStatus = (status: NotificationStatus, providerRef: string | null = null) =>
-    withTenant(pool, tenantId, (client) =>
-      client.query(
-        `INSERT INTO notifications (tenant_id, call_id, channel, status, attempts, provider_ref)
-         VALUES ($1, $2, 'sms', $3, 1, $4)
-         ON CONFLICT (call_id, channel) DO UPDATE
-           SET status = EXCLUDED.status,
-               provider_ref = COALESCE(EXCLUDED.provider_ref, notifications.provider_ref),
-               attempts = notifications.attempts
-                 + CASE WHEN EXCLUDED.status = 'pending' THEN 1 ELSE 0 END`,
-        [tenantId, callId, status, providerRef],
-      ),
-    );
-
-  const decision = checkOutbound(outbound, to);
-  if (!decision.allowed) {
-    await setStatus("blocked");
-    logger.warn("SMS blocked by the outbound allowlist", {
-      tenantId,
-      callId,
-      reason: decision.reason,
-    });
-    return "blocked";
-  }
-
-  await setStatus("pending");
-  let receipt;
-  try {
-    receipt = await sms.send({ to, body });
-  } catch (error) {
-    await setStatus("failed");
-    throw error; // the queue retries with backoff; the row shows how many times
-  }
-  const billedSegments = receipt.segments ?? segments;
-  await withTenant(pool, tenantId, async (client) => {
-    await client.query(
-      `UPDATE notifications SET status = 'sent', provider_ref = $2
-       WHERE call_id = $1 AND channel = 'sms'`,
-      [callId, receipt.providerRef],
-    );
-    await client.query(
-      `INSERT INTO call_costs (tenant_id, call_id, component, units, unit_type, is_estimated)
-       VALUES ($1, $2, 'sms:segments', $3, 'segments', $4)`,
-      [tenantId, callId, billedSegments, receipt.segments === null],
-    );
-  });
-  logger.info("SMS sent", { tenantId, callId, segments: billedSegments });
-  return "sent";
+  return deliverSms(
+    { pool, sms, outbound },
+    { tenantId, callId, channel: "sms", to, body, segments },
+  );
 }
