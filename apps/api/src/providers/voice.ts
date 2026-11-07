@@ -53,6 +53,21 @@ export interface CallEndedEvent {
   costs: CostComponent[];
 }
 
+/**
+ * The platform calling our API from inside a call: a custom function in the flow fired
+ * (BUILD_PLAN Step 6, the mid-call emergency path). Verified like a webhook.
+ */
+export interface FunctionCallEvent {
+  type: "function_call";
+  /** The function's name as the flow defines it, for example "gas_emergency_alert". */
+  name: string;
+  providerCallId: string;
+  providerAgentId: string;
+  /** E.164, or null for a web call. */
+  dialledNumber: string | null;
+  callerNumber: string | null;
+}
+
 /** A genuine webhook that needs no action, such as "call started". */
 export interface IgnoredWebhook {
   type: "ignored";
@@ -81,6 +96,8 @@ export interface VoiceProvider {
    * so a re-serialised object fails) and returns a normalised event.
    */
   verifyAndParseWebhook(rawBody: Buffer, headers: WebhookHeaders): ParsedWebhook;
+  /** Verifies a mid-call function request the same way and returns who is calling about which call. */
+  verifyAndParseFunctionCall(rawBody: Buffer, headers: WebhookHeaders): FunctionCallEvent;
   /** Deletes the recording, transcript and logs at the platform. Must be safe to repeat. */
   deleteCallData(providerCallId: string): Promise<void>;
   /** The call's recording, fetched fresh from the platform, or null if it has none (or no longer). */

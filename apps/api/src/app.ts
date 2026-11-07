@@ -4,7 +4,7 @@ import type { OutboundPolicy } from "./core/outbound-allowlist.ts";
 import type { EnqueueNotifications } from "./jobs/enqueue-notifications.ts";
 import { logger } from "./logger.ts";
 import type { TelephonyProvider } from "./providers/telephony.ts";
-import type { CallEndedEvent, VoiceProvider } from "./providers/voice.ts";
+import type { CallEndedEvent, FunctionCallEvent, VoiceProvider } from "./providers/voice.ts";
 import { callPageRouter } from "./routes/calls.ts";
 import { twilioRouter } from "./routes/twilio.ts";
 import { voiceWebhookRouter } from "./routes/webhooks.ts";
@@ -22,6 +22,8 @@ export interface AppOptions {
     | undefined;
   voiceProviders?: Record<string, VoiceProvider>;
   onCallEnded?: (event: CallEndedEvent) => Promise<void>;
+  /** A mid-call emergency function fired (Step 6). */
+  onFunctionCall?: (event: FunctionCallEvent) => Promise<unknown>;
   /** Call routing. Absent until Twilio and PUBLIC_BASE_URL are configured. */
   telephony?:
     | {
@@ -40,6 +42,7 @@ export function createApp({
   pool,
   voiceProviders = {},
   onCallEnded = () => Promise.resolve(),
+  onFunctionCall,
   telephony,
   callPages,
 }: AppOptions) {
@@ -64,7 +67,14 @@ export function createApp({
     }
   });
 
-  app.use("/webhooks", voiceWebhookRouter({ providers: voiceProviders, onCallEnded }));
+  app.use(
+    "/webhooks",
+    voiceWebhookRouter({
+      providers: voiceProviders,
+      onCallEnded,
+      ...(onFunctionCall && { onFunctionCall }),
+    }),
+  );
   if (telephony) {
     app.use(
       "/webhooks/twilio",

@@ -186,3 +186,28 @@ describe("gasScriptSpoken", () => {
     expect(gasScriptSpoken(null)).toBe(false);
   });
 });
+
+describe("runNotifyEmergency mid-call", () => {
+  it("texts the caller the gas number on the function's say-so, before there is any transcript", async () => {
+    const { tenantId, callId } = await makeCall({ transcript: "" });
+    await admin.query(
+      "UPDATE calls SET transcript = NULL, summary = NULL, ended_at = NULL WHERE id = $1",
+      [callId],
+    );
+    const d = deps();
+    expect(await runNotifyEmergency(d, { tenantId, callId, kind: "gas" })).toEqual({
+      tradesperson: "sent",
+      caller: "sent",
+    });
+    expect(d.sms.sent[1]!.body).toContain("0800 111 999");
+  });
+
+  it("alerts only the tradesperson for a danger alert", async () => {
+    const { tenantId, callId } = await makeCall({ transcript: "" });
+    const d = deps();
+    expect(await runNotifyEmergency(d, { tenantId, callId, kind: "danger" })).toEqual({
+      tradesperson: "sent",
+      caller: "not-gas",
+    });
+  });
+});

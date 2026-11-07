@@ -4,6 +4,7 @@ import type { AgentDefinition } from "../core/agent.ts";
 import {
   WebhookVerificationError,
   type CallEndedEvent,
+  type FunctionCallEvent,
   type InboundCallRegistration,
   type ParsedWebhook,
   type UpsertAgentInput,
@@ -31,6 +32,16 @@ const webhookSchema = z.object({
       costs: z.array(z.object({ component: z.string(), units: z.number(), unitType: z.string() })),
     })
     .optional(),
+});
+
+const functionCallSchema = z.object({
+  name: z.string(),
+  call: z.object({
+    providerCallId: z.string(),
+    providerAgentId: z.string(),
+    dialledNumber: z.string().nullable(),
+    callerNumber: z.string().nullable(),
+  }),
 });
 
 /**
@@ -69,7 +80,7 @@ export class FakeVoiceProvider implements VoiceProvider {
     return createHmac("sha256", this.signingKey).update(rawBody).digest("hex");
   }
 
-  verifyAndParseWebhook(rawBody: Buffer, headers: WebhookHeaders): ParsedWebhook {
+  private verify(rawBody: Buffer, headers: WebhookHeaders): void {
     const given = headers[SIGNATURE_HEADER];
     const expected = this.sign(rawBody);
     if (
@@ -79,6 +90,10 @@ export class FakeVoiceProvider implements VoiceProvider {
     ) {
       throw new WebhookVerificationError("Invalid fake signature");
     }
+  }
+
+  verifyAndParseWebhook(rawBody: Buffer, headers: WebhookHeaders): ParsedWebhook {
+    this.verify(rawBody, headers);
     const parsed = webhookSchema.safeParse(JSON.parse(rawBody.toString("utf8")));
     if (!parsed.success) throw new WebhookVerificationError("Malformed fake webhook body");
     const { event, call } = parsed.data;
@@ -89,6 +104,20 @@ export class FakeVoiceProvider implements VoiceProvider {
       startedAt: new Date(call.startedAt),
       endedAt: new Date(call.endedAt),
     };
+  }
+
+  verifyAndParseFunctionCall(rawBody: Buffer, headers: WebhookHeaders): FunctionCallEvent {
+    this.verify(rawBody, headers);
+    const parsed = functionCallSchema.safeParse(JSON.parse(rawBody.toString("utf8")));
+    if (!parsed.success) throw new WebhookVerificationError("Malformed fake function call body");
+    return { type: "function_call", name: parsed.data.name, ...parsed.data.call };
+  }
+
+  /** Builds a signed mid-call function request, as the platform would send it. */
+  functionCallFor(event: FunctionCallEvent): { rawBody: Buffer; headers: WebhookHeaders } {
+    const { name, providerCallId, providerAgentId, dialledNumber, callerNumber } = event;
+    const call = { providerCallId, providerAgentId, dialledNumber, callerNumber };
+    return this.signedRequest(Buffer.from(JSON.stringify({ name, call, args: {} })));
   }
 
   deleteCallData(providerCallId: string) {

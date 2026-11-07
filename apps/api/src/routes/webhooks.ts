@@ -3,6 +3,7 @@ import { logger } from "../logger.ts";
 import {
   WebhookVerificationError,
   type CallEndedEvent,
+  type FunctionCallEvent,
   type VoiceProvider,
 } from "../providers/voice.ts";
 
@@ -11,6 +12,8 @@ export interface VoiceWebhookOptions {
   providers: Record<string, VoiceProvider>;
   /** Step 5 makes this store the call and enqueue processing, in one transaction. */
   onCallEnded: (event: CallEndedEvent) => Promise<void>;
+  /** Step 6: a mid-call emergency function fired. */
+  onFunctionCall?: (event: FunctionCallEvent) => Promise<unknown>;
 }
 
 /**
@@ -19,7 +22,11 @@ export interface VoiceWebhookOptions {
  * JSON first and re-serialising it can change whitespace or key order, and the signature
  * would no longer match.
  */
-export function voiceWebhookRouter({ providers, onCallEnded }: VoiceWebhookOptions) {
+export function voiceWebhookRouter({
+  providers,
+  onCallEnded,
+  onFunctionCall = () => Promise.resolve(),
+}: VoiceWebhookOptions) {
   const router = Router();
 
   // Any content type: the signature, not the header, decides whether the request is genuine.
@@ -46,6 +53,37 @@ export function voiceWebhookRouter({ providers, onCallEnded }: VoiceWebhookOptio
     if (parsed.type === "call_ended") await onCallEnded(parsed);
     res.status(204).end();
   });
+
+  // POST /webhooks/voice/:provider/function: the platform calling us from inside a call.
+  // Same raw-body verification. The JSON answer is what the model sees as the function's
+  // result, so it stays short and says nothing the agent could repeat to the caller.
+  router.post(
+    "/voice/:provider/function",
+    raw({ type: () => true, limit: "2mb" }),
+    async (req, res) => {
+      const providerName = req.params.provider;
+      const provider = providers[providerName];
+      if (!provider) {
+        res.status(404).json({ error: "Unknown provider" });
+        return;
+      }
+      const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+      let event: FunctionCallEvent;
+      try {
+        event = provider.verifyAndParseFunctionCall(rawBody, req.headers);
+      } catch (error) {
+        if (!(error instanceof WebhookVerificationError)) throw error;
+        logger.warn("Rejected voice function call", {
+          provider: providerName,
+          reason: error.message,
+        });
+        res.status(401).json({ error: "Unauthorized" });
+        return;
+      }
+      await onFunctionCall(event);
+      res.json({ result: "ok" });
+    },
+  );
 
   return router;
 }

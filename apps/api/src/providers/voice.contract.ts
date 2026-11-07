@@ -3,6 +3,7 @@ import { sampleAgentDefinition, sampleCallEndedEvent } from "../testing/agent-fi
 import {
   WebhookVerificationError,
   type CallEndedEvent,
+  type FunctionCallEvent,
   type VoiceProvider,
   type WebhookHeaders,
 } from "./voice.ts";
@@ -13,6 +14,8 @@ export interface VoiceProviderHarness {
   signedWebhook: (event: CallEndedEvent) => { rawBody: Buffer; headers: WebhookHeaders };
   /** A genuine, correctly signed webhook for an event we don't act on. */
   ignorableWebhook: () => { rawBody: Buffer; headers: WebhookHeaders };
+  /** A mid-call function request for `event`, signed as the platform would. Absent for the live run. */
+  signedFunctionCall?: (event: FunctionCallEvent) => { rawBody: Buffer; headers: WebhookHeaders };
   /** Puts a recording at the "platform" for a call. Absent for the live run. */
   seedRecording?: (providerCallId: string, bytes: Uint8Array<ArrayBuffer>) => void;
 }
@@ -21,6 +24,15 @@ export interface ContractOptions {
   /** False for the live run: a registered call that's never dialled is just clutter. */
   canRegisterCalls?: boolean;
 }
+
+const FUNCTION_CALL: FunctionCallEvent = {
+  type: "function_call",
+  name: "gas_emergency_alert",
+  providerCallId: "call_fixture_0002",
+  providerAgentId: "fake_agent_1",
+  dialledNumber: "+441632960001",
+  callerNumber: "+447700900123",
+};
 
 const REGISTRATION = {
   from: "+447700900123",
@@ -125,6 +137,19 @@ export function describeVoiceProviderContract(
         rawBody.toString("utf8").replace("+447700900123", "+447700900999"),
       );
       expect(() => harness.provider.verifyAndParseWebhook(tampered, headers)).toThrow(
+        WebhookVerificationError,
+      );
+    });
+
+    it("parses a correctly signed mid-call function request, and rejects a tampered one", () => {
+      const harness = makeHarness();
+      if (!harness.signedFunctionCall) return; // live platform: it would have to ring us
+      const { rawBody, headers } = harness.signedFunctionCall(FUNCTION_CALL);
+      expect(harness.provider.verifyAndParseFunctionCall(rawBody, headers)).toEqual(FUNCTION_CALL);
+      const tampered = Buffer.from(
+        rawBody.toString("utf8").replace("+447700900123", "+447700900999"),
+      );
+      expect(() => harness.provider.verifyAndParseFunctionCall(tampered, headers)).toThrow(
         WebhookVerificationError,
       );
     });

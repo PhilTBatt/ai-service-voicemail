@@ -8,6 +8,7 @@ import type { AgentDefinition, FixedScript } from "../core/agent.ts";
 import {
   WebhookVerificationError,
   type CallEndedEvent,
+  type FunctionCallEvent,
   type InboundCallRegistration,
   type ParsedWebhook,
   type UpsertAgentInput,
@@ -20,6 +21,8 @@ export interface RetellOptions {
   apiKey: string;
   /** Where Retell sends call events. Omit until there's a public URL (Step 4). */
   webhookUrl?: string;
+  /** Where the flow's emergency functions POST mid-call (Step 6). Omit to build flows without them. */
+  functionUrl?: string;
   /** Injected by tests. */
   fetch?: typeof fetch;
   now?: () => Date;
@@ -63,7 +66,7 @@ export class RetellVoiceProvider implements VoiceProvider {
   }
 
   async upsertAgent({ definition, existingProviderAgentId }: UpsertAgentInput) {
-    const flow = buildConversationFlow(definition);
+    const flow = buildConversationFlow(definition, this.options.functionUrl);
     const agent = buildAgent(definition, this.options.webhookUrl);
 
     if (existingProviderAgentId !== null) {
@@ -116,6 +119,28 @@ export class RetellVoiceProvider implements VoiceProvider {
     if (event !== "call_ended") return { type: "ignored", reason: `event ${event}` };
     if (!call.to_number) return { type: "ignored", reason: "no dialled number (not a phone call)" };
     return toCallEndedEvent(call, call.to_number);
+  }
+
+  verifyAndParseFunctionCall(rawBody: Buffer, headers: WebhookHeaders): FunctionCallEvent {
+    // Custom function requests carry the same X-Retell-Signature as webhooks.
+    this.verifySignature(rawBody, headers["x-retell-signature"]);
+    let body: unknown;
+    try {
+      body = JSON.parse(rawBody.toString("utf8"));
+    } catch {
+      throw new WebhookVerificationError("Function call body is not JSON");
+    }
+    const parsed = functionCallSchema.safeParse(body);
+    if (!parsed.success) throw new WebhookVerificationError("Malformed Retell function call body");
+    const { name, call } = parsed.data;
+    return {
+      type: "function_call",
+      name,
+      providerCallId: call.call_id,
+      providerAgentId: call.agent_id,
+      dialledNumber: call.to_number ?? null,
+      callerNumber: call.from_number ?? null,
+    };
   }
 
   /**
@@ -217,7 +242,31 @@ const promptEdge = (id: string, prompt: string, destination: string) => ({
   destination_node_id: destination,
 });
 
-function scriptNode(script: FixedScript) {
+/**
+ * The scripts that are emergencies, and the custom function each one calls mid-call so the
+ * caller gets the gas number by text and the tradesperson is alerted while the call is still
+ * going (BUILD_PLAN Step 6). Names must match db/calls.ts EMERGENCY_FUNCTION_KINDS.
+ */
+export const EMERGENCY_FUNCTIONS: Partial<
+  Record<FixedScript["id"], { name: string; description: string }>
+> = {
+  gas_emergency: {
+    name: "gas_emergency_alert",
+    description:
+      "Tells the server that the caller reported a gas smell or carbon monoxide, so it can text them the gas emergency number and alert the tradesperson. Call it right after the gas safety message.",
+  },
+  danger: {
+    name: "danger_alert",
+    description:
+      "Tells the server that the caller reported danger, fire or smoke, so it can alert the tradesperson immediately. Call it right after the danger safety message.",
+  },
+};
+
+function scriptNode(script: FixedScript, functionUrl: string | undefined) {
+  // An emergency script hands on to its alert function node; the rest go straight back to
+  // taking the message.
+  const next =
+    functionUrl && EMERGENCY_FUNCTIONS[script.id] ? `${script.id}_alert` : "take_message";
   return {
     id: script.id,
     type: "conversation",
@@ -226,16 +275,62 @@ function scriptNode(script: FixedScript) {
     // than paraphrased if dismissed. Afterwards the call carries on; never "go back".
     interruption_sensitivity: 0,
     global_node_setting: { condition: script.trigger, cool_down: 1 },
-    edges: [promptEdge(`${script.id}_continue`, "The caller has responded", "take_message")],
+    edges: [promptEdge(`${script.id}_continue`, "The caller has responded", next)],
   };
 }
 
-export function buildConversationFlow(definition: AgentDefinition) {
+/**
+ * The flow's custom tools and the function nodes that call them. The node fires the request
+ * without waiting for a result or saying anything, then carries on to take the message.
+ * UNVERIFIED against Retell until the live contract test runs: the edge shape on a
+ * function node is taken from the API reference, not from a working flow.
+ */
+function emergencyTooling(definition: AgentDefinition, functionUrl: string) {
+  const scripts = definition.scripts.filter((script) => EMERGENCY_FUNCTIONS[script.id]);
+  return {
+    tools: scripts.map((script) => {
+      const fn = EMERGENCY_FUNCTIONS[script.id]!;
+      return {
+        tool_id: fn.name,
+        type: "custom",
+        name: fn.name,
+        description: fn.description,
+        url: functionUrl,
+        method: "POST",
+        parameters: { type: "object", properties: {} },
+        speak_during_execution: false,
+        speak_after_execution: false,
+        timeout_ms: 5000,
+        max_retry: 1, // our endpoint is idempotent (one row, one job per call)
+      };
+    }),
+    nodes: scripts.map((script) => ({
+      id: `${script.id}_alert`,
+      type: "function",
+      tool_id: EMERGENCY_FUNCTIONS[script.id]!.name,
+      tool_type: "local",
+      wait_for_result: false,
+      speak_during_execution: false,
+      edges: [promptEdge(`${script.id}_alert_continue`, "The alert has been sent", "take_message")],
+      else_edge: {
+        id: `${script.id}_alert_else`,
+        transition_condition: { type: "prompt", prompt: "Else" },
+        destination_node_id: "take_message",
+      },
+    })),
+  };
+}
+
+export function buildConversationFlow(definition: AgentDefinition, functionUrl?: string) {
+  const emergency = functionUrl
+    ? emergencyTooling(definition, functionUrl)
+    : { tools: [], nodes: [] };
   return {
     start_speaker: "agent",
     start_node_id: "opening",
     global_prompt: definition.instructions,
     model_config: MODEL_CONFIG,
+    ...(emergency.tools.length > 0 && { tools: emergency.tools }),
     nodes: [
       {
         id: "opening",
@@ -259,7 +354,8 @@ export function buildConversationFlow(definition: AgentDefinition) {
           ),
         ],
       },
-      ...definition.scripts.map(scriptNode),
+      ...definition.scripts.map((script) => scriptNode(script, functionUrl)),
+      ...emergency.nodes,
       {
         id: "close",
         type: "end",
@@ -317,6 +413,19 @@ const callSchema = z.object({
 });
 
 const webhookSchema = z.object({ event: z.string(), call: callSchema });
+
+// A custom function request: { name, call, args }. The call is Retell's full call object;
+// only the identifying fields are read.
+const functionCallSchema = z.object({
+  name: z.string().min(1),
+  call: z.object({
+    call_id: z.string(),
+    agent_id: z.string(),
+    from_number: z.string().optional(),
+    to_number: z.string().optional(),
+  }),
+  args: z.unknown().optional(),
+});
 
 type RetellCall = z.infer<typeof callSchema>;
 

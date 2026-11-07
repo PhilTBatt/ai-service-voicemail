@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type { PgBoss } from "pg-boss";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { PROCESS_CALL_QUEUE, startQueue } from "../jobs/queue.ts";
+import { NOTIFY_EMERGENCY_QUEUE, PROCESS_CALL_QUEUE, startQueue } from "../jobs/queue.ts";
 import { TEST_ADMIN_DATABASE_URL, TEST_DATABASE_URL } from "../testing/databases.ts";
 import { sampleCallEndedEvent } from "../testing/agent-fixture.ts";
-import type { CallEndedEvent } from "../providers/voice.ts";
-import { recordCallEnded } from "./calls.ts";
+import type { CallEndedEvent, FunctionCallEvent } from "../providers/voice.ts";
+import { recordCallEnded, recordMidCallEmergency } from "./calls.ts";
 import { assignPhoneNumber, createAdminPool, createTenant } from "./cross-tenant.ts";
 import { createPool } from "./pool.ts";
 import { withTenant } from "./tenant.ts";
@@ -165,5 +165,113 @@ describe("recordCallEnded", () => {
           .rowCount,
     );
     expect(rows).toBe(0);
+  });
+});
+
+const functionCall = (to: string, name = "gas_emergency_alert"): FunctionCallEvent => ({
+  type: "function_call",
+  name,
+  providerCallId: `call_${randomUUID()}`,
+  providerAgentId: "fake_agent_1",
+  dialledNumber: to,
+  callerNumber: "+447700900123",
+});
+
+const emergencyJobsFor = async (callId: string) =>
+  (
+    await app.query<{ state: string; data: unknown; priority: number }>(
+      "SELECT state, data, priority FROM pgboss.job WHERE name = $1 AND singleton_key = $2",
+      [NOTIFY_EMERGENCY_QUEUE, callId],
+    )
+  ).rows;
+
+const callRow = (tenantId: string, providerCallId: string) =>
+  withTenant(
+    app,
+    tenantId,
+    async (client) =>
+      (
+        await client.query(
+          `SELECT count(*) OVER ()::int AS rows, urgency, flags, ended_at IS NOT NULL AS ended, transcript
+           FROM calls WHERE provider_call_id = $1`,
+          [providerCallId],
+        )
+      ).rows[0] as Record<string, unknown> | undefined,
+  );
+
+describe("recordMidCallEmergency", () => {
+  it("opens a provisional row and queues the emergency texts; the call-ended webhook then completes the same row", async () => {
+    const { tenantId, number } = await makeTenant();
+    const fc = functionCall(number);
+    const alerted = await recordMidCallEmergency(app, boss, fc);
+    expect(alerted).toMatchObject({ outcome: "alerted", tenantId, kind: "gas" });
+    if (alerted.outcome !== "alerted") throw new Error("unreachable");
+    expect(await emergencyJobsFor(alerted.callId)).toEqual([
+      { state: "created", data: { tenantId, callId: alerted.callId, kind: "gas" }, priority: 10 },
+    ]);
+    expect(await callRow(tenantId, fc.providerCallId)).toMatchObject({
+      rows: 1,
+      urgency: "emergency",
+      flags: ["emergency:gas"],
+      ended: false,
+      transcript: null,
+    });
+
+    // The call ends: same row, now complete, same ID; processing is queued as usual.
+    const ended = await recordCallEnded(
+      app,
+      boss,
+      event(number, { providerCallId: fc.providerCallId }),
+    );
+    expect(ended).toEqual({
+      outcome: "stored",
+      tenantId,
+      callId: alerted.callId,
+      jobId: expect.any(String) as unknown,
+    });
+    expect(await callRow(tenantId, fc.providerCallId)).toMatchObject({
+      rows: 1,
+      urgency: "emergency",
+      flags: ["emergency:gas"],
+      ended: true,
+      transcript: expect.stringContaining("kitchen tap") as unknown,
+    });
+    // A repeated webhook for the finished call is still a duplicate.
+    expect(
+      await recordCallEnded(app, boss, event(number, { providerCallId: fc.providerCallId })),
+    ).toEqual({
+      outcome: "duplicate",
+      tenantId,
+    });
+  });
+
+  it("is idempotent when the platform retries, and adds a second kind without duplicating the first", async () => {
+    const { tenantId, number } = await makeTenant();
+    const fc = functionCall(number);
+    const first = await recordMidCallEmergency(app, boss, fc);
+    await recordMidCallEmergency(app, boss, fc);
+    const danger = await recordMidCallEmergency(app, boss, { ...fc, name: "danger_alert" });
+    if (first.outcome !== "alerted" || danger.outcome !== "alerted") throw new Error("unreachable");
+    expect(danger.callId).toBe(first.callId);
+    expect(await callRow(tenantId, fc.providerCallId)).toMatchObject({
+      rows: 1,
+      flags: ["emergency:gas", "emergency:danger"],
+    });
+    // The queue's exclusive policy keeps one job per call while it's waiting.
+    expect(await emergencyJobsFor(first.callId)).toHaveLength(1);
+  });
+
+  it("does nothing for a function it doesn't know or a number nobody owns", async () => {
+    const { number } = await makeTenant();
+    expect(await recordMidCallEmergency(app, boss, functionCall(number, "lookup_price"))).toEqual({
+      outcome: "not-an-emergency-function",
+      name: "lookup_price",
+    });
+    expect(await recordMidCallEmergency(app, boss, functionCall("+441632960999"))).toEqual({
+      outcome: "unknown-number",
+    });
+    expect(
+      await recordMidCallEmergency(app, boss, { ...functionCall(number), dialledNumber: null }),
+    ).toEqual({ outcome: "unknown-number" });
   });
 });

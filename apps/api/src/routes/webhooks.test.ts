@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import { createPool } from "../db/pool.ts";
 import { FakeVoiceProvider } from "../providers/voice.fake.ts";
-import type { CallEndedEvent, WebhookHeaders } from "../providers/voice.ts";
+import type { CallEndedEvent, FunctionCallEvent, WebhookHeaders } from "../providers/voice.ts";
 import { sampleCallEndedEvent } from "../testing/agent-fixture.ts";
 
 // The route never touches the database; nothing listens on port 1, so no connection is made.
@@ -16,9 +16,13 @@ afterEach(async () => {
   await Promise.all(running.splice(0).map((stop) => stop()));
 });
 
-async function startApp(onCallEnded?: (event: CallEndedEvent) => Promise<void>) {
+async function startApp(
+  onCallEnded?: (event: CallEndedEvent) => Promise<void>,
+  onFunctionCall?: (event: FunctionCallEvent) => Promise<unknown>,
+) {
   const fake = new FakeVoiceProvider();
   const received: CallEndedEvent[] = [];
+  const functionCalls: FunctionCallEvent[] = [];
   const pool = createPool(UNUSED_DATABASE_URL);
   const server = createApp({
     pool,
@@ -27,6 +31,12 @@ async function startApp(onCallEnded?: (event: CallEndedEvent) => Promise<void>) 
       onCallEnded ??
       ((event) => {
         received.push(event);
+        return Promise.resolve();
+      }),
+    onFunctionCall:
+      onFunctionCall ??
+      ((event) => {
+        functionCalls.push(event);
         return Promise.resolve();
       }),
   }).listen(0);
@@ -42,7 +52,7 @@ async function startApp(onCallEnded?: (event: CallEndedEvent) => Promise<void>) 
       headers: headers as Record<string, string>,
       body: new Uint8Array(rawBody), // the same bytes; Buffer's type isn't a valid BodyInit
     });
-  return { fake, received, post };
+  return { fake, received, functionCalls, post };
 }
 
 describe("POST /webhooks/voice/:provider", () => {
@@ -113,5 +123,45 @@ describe("POST /webhooks/voice/:provider", () => {
     const response = await post("/webhooks/voice/fake", rawBody, headers);
     expect(response.status).toBe(500);
     expect(await response.text()).not.toContain("database down");
+  });
+});
+
+describe("POST /webhooks/voice/:provider/function", () => {
+  const functionCall: FunctionCallEvent = {
+    type: "function_call",
+    name: "gas_emergency_alert",
+    providerCallId: "call_fixture_0002",
+    providerAgentId: "fake_agent_1",
+    dialledNumber: "+441632960001",
+    callerNumber: "+447700900123",
+  };
+
+  it("accepts a signed mid-call function request, hands it on, and answers with a short result", async () => {
+    const { fake, functionCalls, post } = await startApp();
+    const { rawBody, headers } = fake.functionCallFor(functionCall);
+    const response = await post("/webhooks/voice/fake/function", rawBody, headers);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ result: "ok" });
+    expect(functionCalls).toEqual([functionCall]);
+  });
+
+  it("rejects a tampered or unsigned function request with 401", async () => {
+    const { fake, functionCalls, post } = await startApp();
+    const { rawBody, headers } = fake.functionCallFor(functionCall);
+    const tampered = Buffer.from(
+      rawBody.toString("utf8").replace("gas_emergency_alert", "danger_alert"),
+    );
+    expect((await post("/webhooks/voice/fake/function", tampered, headers)).status).toBe(401);
+    expect(
+      (await post("/webhooks/voice/fake/function", rawBody, { "content-type": "application/json" }))
+        .status,
+    ).toBe(401);
+    expect(functionCalls).toEqual([]);
+  });
+
+  it("returns 404 for a provider that isn't configured", async () => {
+    const { fake, post } = await startApp();
+    const { rawBody, headers } = fake.functionCallFor(functionCall);
+    expect((await post("/webhooks/voice/nobody/function", rawBody, headers)).status).toBe(404);
   });
 });

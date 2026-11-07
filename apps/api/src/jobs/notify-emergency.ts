@@ -2,8 +2,8 @@
 // emergency: a short priority text to the tradesperson straight away (the full summary
 // follows from notify-sms), and, when the agent spoke the gas script, a service message
 // to the caller with the gas emergency number. Each text is idempotent through its own
-// notifications channel. Mid-call sending (a Retell custom function) is a later commit;
-// for now both go as soon as the call has been processed.
+// notifications channel. Queued mid-call by the flow's emergency function (with the kind),
+// and again after the call by process-call (the second run finds the texts already sent).
 import type pg from "pg";
 import { z } from "zod";
 import { raiseAlert, type AlertFn } from "../alerts.ts";
@@ -17,6 +17,8 @@ import { deliverSms, type DeliveryOutcome } from "./deliver-sms.ts";
 export interface NotifyEmergencyJobData {
   tenantId: string;
   callId: string;
+  /** Set when queued mid-call by the flow's function; absent after the call, when the transcript decides. */
+  kind?: "gas" | "danger";
 }
 
 export interface NotifyEmergencyDeps {
@@ -45,7 +47,7 @@ export function gasScriptSpoken(transcript: string | null): boolean {
 
 export async function runNotifyEmergency(
   { pool, sms, outbound, alert = raiseAlert }: NotifyEmergencyDeps,
-  { tenantId, callId }: NotifyEmergencyJobData,
+  { tenantId, callId, kind }: NotifyEmergencyJobData,
 ): Promise<NotifyEmergencyOutcome> {
   const loaded = await withTenant(pool, tenantId, async (client) => {
     const call = (
@@ -98,7 +100,7 @@ export async function runNotifyEmergency(
   }
 
   let caller: DeliveryOutcome | "no-number" | "not-gas";
-  if (!gasScriptSpoken(loaded.call.transcript)) {
+  if (kind !== "gas" && !gasScriptSpoken(loaded.call.transcript)) {
     caller = "not-gas";
   } else if (loaded.call.caller_number === null) {
     caller = "no-number"; // withheld: nowhere to send it

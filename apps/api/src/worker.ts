@@ -35,7 +35,19 @@ try {
 
   const pool = createPool(config.databaseUrl);
   const boss = await startQueue(config.databaseUrl);
-  const voice = new RetellVoiceProvider({ apiKey: config.retellApiKey });
+  // The worker syncs agents, so it decides their webhook and function URLs.
+  const voice = new RetellVoiceProvider({
+    apiKey: config.retellApiKey,
+    ...(config.publicBaseUrl
+      ? {
+          webhookUrl: `${config.publicBaseUrl}/webhooks/voice/retell`,
+          functionUrl: `${config.publicBaseUrl}/webhooks/voice/retell/function`,
+        }
+      : {}),
+  });
+  if (!config.publicBaseUrl) {
+    logger.warn("PUBLIC_BASE_URL isn't set: agents sync without webhook or function URLs");
+  }
   const queues = [SYNC_AGENT_QUEUE, "dead-letter"];
   await startDeadLetterWatcher(boss);
   const enqueueNotifications = enqueueNotificationsWith(boss);

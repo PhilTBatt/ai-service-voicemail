@@ -95,7 +95,8 @@ export async function runProcessCall(
     if (extraction) {
       const { jobSummary, urgency, flags, ...fields } = extraction;
       await client.query(
-        `UPDATE calls SET summary = $2, urgency = $3, flags = $4, extracted_fields = $5 WHERE id = $1`,
+        `UPDATE calls SET summary = $2, urgency = $3, flags = flags || $4::text[], extracted_fields = $5
+         WHERE id = $1`,
         [
           callId,
           jobSummary,

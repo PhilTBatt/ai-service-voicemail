@@ -77,6 +77,19 @@ function makeStubHarness(): VoiceProviderHarness & { stub: RetellApiStub } {
       ),
     ignorableWebhook: () =>
       signed({ event: "call_started", call: retellPayload(sampleCallEndedEvent()).call }),
+    signedFunctionCall: (event) =>
+      signed({
+        name: event.name,
+        call: {
+          call_type: "phone_call",
+          call_id: event.providerCallId,
+          agent_id: event.providerAgentId,
+          from_number: event.callerNumber ?? undefined,
+          to_number: event.dialledNumber ?? undefined,
+          call_status: "ongoing",
+        },
+        args: {},
+      }),
     seedRecording: (callId, bytes) => {
       const url = `https://retell-recordings.example/${callId}/recording.wav`;
       stub.callRecords.set(callId, { call_id: callId, recording_url: url });
@@ -209,6 +222,37 @@ describe("RetellVoiceProvider agents", () => {
     });
     // No script text leaks into the model's prompt node.
     expect(JSON.stringify(byId.take_message)).not.toContain("0800 111 999");
+  });
+
+  it("adds the emergency tools and alert nodes only when a function URL is set", () => {
+    const definition = sampleAgentDefinition();
+    const plain = buildConversationFlow(definition);
+    expect(plain).not.toHaveProperty("tools");
+    expect(plain.nodes.some((node) => node.type === "function")).toBe(false);
+
+    const url = "https://example.com/webhooks/voice/retell/function";
+    const flow = buildConversationFlow(definition, url);
+    const byId = Object.fromEntries(flow.nodes.map((node) => [node.id, node]));
+    expect(flow.tools?.map((tool) => tool.name).sort()).toEqual([
+      "danger_alert",
+      "gas_emergency_alert",
+    ]);
+    for (const tool of flow.tools ?? []) {
+      expect(tool).toMatchObject({ type: "custom", url, method: "POST", max_retry: 1 });
+    }
+    // Gas script -> its alert node -> take the message; the water script still goes straight on.
+    expect(byId.gas_emergency).toMatchObject({
+      edges: [{ destination_node_id: "gas_emergency_alert" }],
+    });
+    expect(byId.gas_emergency_alert).toMatchObject({
+      type: "function",
+      tool_id: "gas_emergency_alert",
+      wait_for_result: false,
+      speak_during_execution: false,
+      edges: [{ destination_node_id: "take_message" }],
+      else_edge: { destination_node_id: "take_message" },
+    });
+    expect(byId.water_leak).toMatchObject({ edges: [{ destination_node_id: "take_message" }] });
   });
 
   it("maps the limits, language, voice and greeting delay onto the agent", () => {

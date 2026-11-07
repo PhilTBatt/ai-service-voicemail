@@ -1,6 +1,6 @@
 import { createApp } from "./app.ts";
 import { ConfigError, loadConfig, type Config } from "./config.ts";
-import { recordCallEnded } from "./db/calls.ts";
+import { recordCallEnded, recordMidCallEmergency } from "./db/calls.ts";
 import { createPool } from "./db/pool.ts";
 import { enqueueNotificationsWith } from "./jobs/enqueue-notifications.ts";
 import { startQueue } from "./jobs/queue.ts";
@@ -16,7 +16,7 @@ async function start(config: Config): Promise<void> {
   const boss = await startQueue(config.databaseUrl);
 
   const voiceProviders = config.retellApiKey
-    ? { retell: new RetellVoiceProvider({ apiKey: config.retellApiKey }) }
+    ? { retell: new RetellVoiceProvider({ apiKey: config.retellApiKey, ...retellUrls(config) }) }
     : {};
   if (!config.retellApiKey) logger.warn("RETELL_API_KEY not set: voice webhooks are disabled");
 
@@ -49,6 +49,14 @@ async function start(config: Config): Promise<void> {
     callPages: config.signingSecret
       ? { signingSecret: config.signingSecret, telephony: telephony?.provider, voice: retell }
       : undefined,
+    onFunctionCall: async (event) => {
+      const result = await recordMidCallEmergency(pool, boss, event);
+      logger.info("Mid-call function handled", {
+        name: event.name,
+        providerCallId: event.providerCallId,
+        outcome: result.outcome,
+      });
+    },
     onCallEnded: async (event) => {
       const result = await recordCallEnded(pool, boss, event);
       logger.info("Voice call ended", { providerCallId: event.providerCallId, ...result });
@@ -78,6 +86,15 @@ async function start(config: Config): Promise<void> {
   };
   process.once("SIGTERM", shutdown);
   process.once("SIGINT", shutdown);
+}
+
+/** Where Retell sends call events and mid-call function requests, once there's a public URL. */
+export function retellUrls(config: Pick<Config, "publicBaseUrl">) {
+  if (!config.publicBaseUrl) return {};
+  return {
+    webhookUrl: `${config.publicBaseUrl}/webhooks/voice/retell`,
+    functionUrl: `${config.publicBaseUrl}/webhooks/voice/retell/function`,
+  };
 }
 
 try {
