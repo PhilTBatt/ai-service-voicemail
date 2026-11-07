@@ -48,6 +48,11 @@ const envSchema = z
         "expected an E.164 number or an alphanumeric sender ID (max 11)",
       )
       .optional(),
+    // Email (decision 010: Postmark). The token is a secret; From must be an address at a domain
+    // Postmark has verified. Optional in development; required in production.
+    POSTMARK_SERVER_TOKEN: z.string().min(1).optional(),
+    EMAIL_FROM: z.email().optional(),
+    EMAIL_REPLY_TO: z.email().optional(),
     // Signs the call links in texts and emails (core/signed-links.ts). 32+ random characters.
     SIGNING_SECRET: z.string().min(32, "expected at least 32 characters").optional(),
     // Cross-tenant work (retention, seeding). The API never uses it; the worker does.
@@ -69,6 +74,8 @@ const envSchema = z
       "ADMIN_DATABASE_URL",
       "TWILIO_SMS_FROM",
       "SIGNING_SECRET",
+      "POSTMARK_SERVER_TOKEN",
+      "EMAIL_FROM",
     ] as const) {
       if (env[name] === undefined) {
         ctx.addIssue({ code: "custom", path: [name], message: "required in production" });
@@ -95,6 +102,14 @@ const envSchema = z
     fallbackVoicemailUrl: env.FALLBACK_VOICEMAIL_URL,
     adminDatabaseUrl: env.ADMIN_DATABASE_URL,
     signingSecret: env.SIGNING_SECRET,
+    email:
+      env.POSTMARK_SERVER_TOKEN !== undefined && env.EMAIL_FROM !== undefined
+        ? {
+            serverToken: env.POSTMARK_SERVER_TOKEN,
+            from: env.EMAIL_FROM,
+            ...(env.EMAIL_REPLY_TO !== undefined && { replyTo: env.EMAIL_REPLY_TO }),
+          }
+        : undefined,
     outbound: { nodeEnv: env.NODE_ENV, allowlist: parseAllowlist(env.OUTBOUND_ALLOWLIST) },
     sms:
       env.TWILIO_ACCOUNT_SID !== undefined &&

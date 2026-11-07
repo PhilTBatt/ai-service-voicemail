@@ -72,8 +72,8 @@ export async function startQueue(connectionString: string): Promise<PgBoss> {
     retryDelay: 60,
     retryBackoff: true,
     expireInSeconds: 60,
-    // Until the email adapter exists (decision 010) nothing works this queue. Waiting jobs are
-    // kept this long, then deleted (not dead-lettered): the default is 14 days, stated here.
+    // Where email isn't configured, waiting jobs are kept this long, then deleted (not
+    // dead-lettered); the default is 14 days, stated here.
     retentionSeconds: 30 * 24 * 60 * 60,
     deadLetter: DEAD_LETTER_QUEUE,
   });

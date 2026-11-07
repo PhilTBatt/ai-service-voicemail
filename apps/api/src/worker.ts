@@ -4,10 +4,12 @@ import { createAdminPool } from "./db/cross-tenant.ts";
 import { createPool } from "./db/pool.ts";
 import { startDeadLetterWatcher } from "./jobs/dead-letter.ts";
 import { enqueueNotificationsWith } from "./jobs/enqueue-notifications.ts";
+import { runNotifyEmail, type NotifyEmailJobData } from "./jobs/notify-email.ts";
 import { runNotifyEmergency, type NotifyEmergencyJobData } from "./jobs/notify-emergency.ts";
 import { runNotifySms, type NotifySmsJobData } from "./jobs/notify-sms.ts";
 import { runProcessCall, type ProcessCallJobData } from "./jobs/process-call.ts";
 import {
+  NOTIFY_EMAIL_QUEUE,
   NOTIFY_EMERGENCY_QUEUE,
   RECONCILE_CALLS_CRON,
   RECONCILE_CALLS_QUEUE,
@@ -26,6 +28,7 @@ import { runRetention } from "./jobs/retention.ts";
 import { runSyncAgent, type SyncAgentJobData } from "./jobs/sync-agent.ts";
 import { logger } from "./logger.ts";
 import { AnthropicLlmProvider } from "./providers/anthropic.ts";
+import { PostmarkEmailProvider } from "./providers/postmark.ts";
 import { RetellVoiceProvider } from "./providers/retell.ts";
 import { TwilioSmsProvider } from "./providers/twilio-sms.ts";
 import { TwilioTelephonyProvider } from "./providers/twilio.ts";
@@ -93,10 +96,23 @@ try {
     );
   }
 
-  // No email adapter until Phil picks a provider (decision 010); the jobs wait in the queue.
-  logger.warn(
-    "Email notifications disabled: no email provider configured yet (jobs wait in the queue)",
-  );
+  if (config.email && config.signingSecret && config.publicBaseUrl) {
+    const deps = {
+      pool,
+      email: new PostmarkEmailProvider(config.email),
+      outbound: config.outbound,
+      signingSecret: config.signingSecret,
+      publicBaseUrl: config.publicBaseUrl,
+    };
+    await boss.work<NotifyEmailJobData>(NOTIFY_EMAIL_QUEUE, async (jobs) => {
+      for (const job of jobs) await runNotifyEmail(deps, job.data);
+    });
+    queues.push(NOTIFY_EMAIL_QUEUE);
+  } else {
+    logger.warn(
+      "Email notifications disabled: needs POSTMARK_SERVER_TOKEN, EMAIL_FROM, SIGNING_SECRET and PUBLIC_BASE_URL (jobs wait in the queue)",
+    );
+  }
 
   const admin = config.adminDatabaseUrl ? createAdminPool(config.adminDatabaseUrl) : null;
   if (admin) {

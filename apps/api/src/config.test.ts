@@ -38,6 +38,8 @@ describe("loadConfig", () => {
         ADMIN_DATABASE_URL: "postgres://callmate_admin@localhost/callmate",
         TWILIO_SMS_FROM: "AnswerMate",
         SIGNING_SECRET: "x".repeat(32),
+        POSTMARK_SERVER_TOKEN: "token_for_tests",
+        EMAIL_FROM: "calls@example.com",
         PORT: "8080",
         LOG_LEVEL: "debug",
       }),
@@ -142,6 +144,8 @@ describe("loadConfig: Twilio and PUBLIC_BASE_URL", () => {
       "ADMIN_DATABASE_URL is missing",
       "TWILIO_SMS_FROM is missing",
       "SIGNING_SECRET is missing",
+      "POSTMARK_SERVER_TOKEN is missing",
+      "EMAIL_FROM is missing",
     ]);
   });
 
@@ -264,6 +268,29 @@ describe("loadConfig: JUDGE_SAMPLE_RATE", () => {
     ).toBe(0.1);
     expect(configErrorFor({ ...valid, JUDGE_SAMPLE_RATE: "2" }).problems[0]).toMatch(
       /^JUDGE_SAMPLE_RATE is invalid/,
+    );
+  });
+});
+
+describe("loadConfig: email", () => {
+  it("is off until both the Postmark token and the From address are set", () => {
+    expect(
+      loadConfig({ ...valid, POSTMARK_SERVER_TOKEN: "token_for_tests" }).email,
+    ).toBeUndefined();
+    expect(
+      loadConfig({
+        ...valid,
+        POSTMARK_SERVER_TOKEN: "token_for_tests",
+        EMAIL_FROM: "calls@example.com",
+        EMAIL_REPLY_TO: "support@example.com",
+      }).email,
+    ).toEqual({
+      serverToken: "token_for_tests",
+      from: "calls@example.com",
+      replyTo: "support@example.com",
+    });
+    expect(configErrorFor({ ...valid, EMAIL_FROM: "not-an-address" }).problems[0]).toMatch(
+      /^EMAIL_FROM is invalid/,
     );
   });
 });
