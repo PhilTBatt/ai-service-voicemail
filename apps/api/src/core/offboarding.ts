@@ -42,6 +42,37 @@ export function cancellationText(input: CancellationNoticeInput): string {
 const escape = (text: string) =>
   text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 
+/**
+ * The written confirmation that a business's data is gone (BUILD_PLAN Step 13). Sent before the
+ * address itself is deleted, so it says what will be true once the deletion finishes, which is
+ * the same job a moment later.
+ */
+export function deletionConfirmationEmail(businessName: string): {
+  subject: string;
+  text: string;
+  html: string;
+} {
+  const paragraphs = [
+    `We've deleted the data AnswerMate held for ${businessName}: its calls, recordings, transcripts and messages, its assistant's settings, your contact details and your login. We've also deleted the copies held by the companies that handled your calls and texts for us, Retell AI and Twilio.`,
+    "A few copies take a little longer to go. Twilio's backups can hold texts for up to 30 days, and Twilio keeps a note that each recording existed, without the recording, for 40 days. Postmark, which sends our emails, keeps copies of them for 45 days.",
+    "We keep only what we have to: your billing totals, for as long as UK accounting rules require; the record that you accepted our terms; and a log of account actions, which holds no call content.",
+    "This email is our written confirmation. Thank you for using AnswerMate.",
+  ];
+  return {
+    subject: "Your AnswerMate data has been deleted",
+    text: paragraphs.join("\n\n"),
+    html: paragraphs.map((paragraph) => `<p>${escape(paragraph)}</p>`).join("\n"),
+  };
+}
+
+/**
+ * The same confirmation as a text, for a business whose email can't be used: still in writing.
+ * GSM-7, so a long business name still fits in three segments.
+ */
+export function deletionConfirmationText(businessName: string): string {
+  return `AnswerMate: we've deleted the data we held for ${businessName}, here and at Retell AI and Twilio, who handled your calls and texts. We keep only your billing totals, your acceptance of our terms and a log of account actions. This text is our written confirmation.`;
+}
+
 /** The email: the same steps, plus what happens to their data. */
 export function cancellationEmail(input: CancellationNoticeInput): {
   subject: string;

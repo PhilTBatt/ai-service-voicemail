@@ -93,3 +93,52 @@ describe("TwilioSmsProvider receipts", () => {
     });
   });
 });
+
+describe("TwilioSmsProvider.deleteMessage", () => {
+  function provider(status: number) {
+    const requests: { url: string; method: string | undefined }[] = [];
+    const fetchStub: typeof fetch = (input, init) => {
+      requests.push({
+        url: typeof input === "string" ? input : input instanceof URL ? input.href : input.url,
+        method: init?.method,
+      });
+      return Promise.resolve(
+        status === 204
+          ? new Response(null, { status })
+          : Response.json(
+              { code: 20404, message: "The requested resource was not found" },
+              { status },
+            ),
+      );
+    };
+    const sms = new TwilioSmsProvider({
+      accountSid: ACCOUNT_SID,
+      authToken: "not-a-real-token",
+      from: "+447700900001",
+      fetch: fetchStub,
+    });
+    return { sms, requests };
+  }
+
+  it("deletes the message by its SID", async () => {
+    const { sms, requests } = provider(204);
+    await sms.deleteMessage("SM" + "2".repeat(32));
+    expect(requests).toEqual([
+      {
+        method: "DELETE",
+        url: `https://api.twilio.com/2010-04-01/Accounts/${ACCOUNT_SID}/Messages/SM${"2".repeat(32)}.json`,
+      },
+    ]);
+  });
+
+  it("counts a message that's already gone as deleted", async () => {
+    await expect(provider(404).sms.deleteMessage("SMgone")).resolves.toBeUndefined();
+  });
+
+  it("throws when Twilio refuses for any other reason", async () => {
+    await expect(provider(500).sms.deleteMessage("SMx")).rejects.toMatchObject({
+      name: "TwilioApiError",
+      status: 500,
+    });
+  });
+});

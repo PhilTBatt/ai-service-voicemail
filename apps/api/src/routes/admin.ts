@@ -5,6 +5,7 @@ import type {
   AvailableNumbersView,
   CancellationsView,
   CostsView,
+  DataDeletionView,
   HealthView,
   KillSwitchView,
   OnboardingView,
@@ -35,7 +36,9 @@ import {
   type AdminPool,
 } from "../db/cross-tenant.ts";
 import { advanceOnboarding, onboardingStatus, setPilot } from "../db/onboarding.ts";
+import { ukDateTime } from "../core/uk-time.ts";
 import { withTenant } from "../db/tenant.ts";
+import type { EnqueueOffboarding } from "../jobs/offboarding.ts";
 import type { EnqueueOnboarding } from "../jobs/onboarding.ts";
 import { countDeadLettered } from "../jobs/queue.ts";
 import { PurchaseNotAllowedError, type TelephonyProvider } from "../providers/telephony.ts";
@@ -60,6 +63,8 @@ export interface AdminOptions {
   numbers?: NumberProvisioning | undefined;
   /** Onboarding texts and going live (BUILD_PLAN Step 11). */
   enqueueOnboarding?: EnqueueOnboarding | undefined;
+  /** Deleting a business's data (BUILD_PLAN Step 13). */
+  enqueueOffboarding?: EnqueueOffboarding | undefined;
   now?: () => Date;
 }
 
@@ -67,6 +72,8 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const switchBody = z.object({ on: z.boolean() });
 const advanceBody = z.object({ to: z.enum(ONBOARDING_STATES) });
 const pilotBody = z.object({ pilot: z.boolean() });
+/** Deleting a business's data can't be undone: the page asks for its name to be typed. */
+const deleteDataBody = z.object({ confirm: z.literal(true), businessName: z.string() });
 /** Releasing a number can't be undone: the page sends this only after a confirmation dialog. */
 const releaseBody = z.object({ confirm: z.literal(true) });
 const isTenantId = (value: unknown): value is string => z.uuid().safeParse(value).success;
@@ -91,6 +98,7 @@ export function adminRouter({
   admin,
   numbers,
   enqueueOnboarding,
+  enqueueOffboarding,
   now = () => new Date(),
 }: AdminOptions) {
   const router = Router();
@@ -251,6 +259,7 @@ export function adminRouter({
       return {
         tenantId: tenant.tenantId,
         businessName: tenant.businessName,
+        status: tenant.status,
         cancellationRequestedAt: tenant.cancellationRequestedAt.toISOString(),
         releaseDueAt: due.toISOString(),
         number: tenant.number,
@@ -275,14 +284,14 @@ export function adminRouter({
     const tenant = isTenantId(tenantId)
       ? (await listCancellingTenants(admin)).find((row) => row.tenantId === tenantId)
       : undefined;
-    if (!tenant) {
+    if (tenant?.status !== "cancelling") {
       res.status(409).json({ error: "Only a business that's cancelling has a number to release" });
       return;
     }
     const due = releaseDueAt(tenant.cancellationRequestedAt);
     if (due > now()) {
       res.status(409).json({
-        error: `Callers hear "service has ended" until ${due.toISOString()}; release it after that`,
+        error: `Callers hear "service has ended" until ${ukDateTime(due)} UK time; release it after that`,
       });
       return;
     }
@@ -295,6 +304,47 @@ export function adminRouter({
     }
     await recordNumberReleased(admin, tenantId, principalOf(res).userId);
     res.json({ released: tenant.number, status: "cancelled" } satisfies ReleasedNumberView);
+  });
+
+  // Deletes a business's data under the DPA (BUILD_PLAN Step 13): at the providers and here,
+  // with a written confirmation. Only once it has left (number released), and only after its
+  // name is typed, because nothing brings the data back. The worker does the deleting.
+  router.post("/tenants/:tenantId/delete-data", async (req, res) => {
+    const body = deleteDataBody.safeParse(req.body);
+    if (!body.success) {
+      res
+        .status(400)
+        .json({ error: "Invalid body", issues: z.flattenError(body.error).fieldErrors });
+      return;
+    }
+    const { tenantId } = req.params;
+    const tenant = isTenantId(tenantId)
+      ? (await listCancellingTenants(admin)).find((row) => row.tenantId === tenantId)
+      : undefined;
+    if (tenant?.status !== "cancelled") {
+      res.status(409).json({
+        error:
+          "Only a business that has cancelled and had its number released can have its data deleted",
+      });
+      return;
+    }
+    if (body.data.businessName.trim().toLowerCase() !== tenant.businessName.trim().toLowerCase()) {
+      res.status(409).json({ error: "That isn't the business's name" });
+      return;
+    }
+    if (!enqueueOffboarding) {
+      res.status(503).json({ error: "The job queue isn't available" });
+      return;
+    }
+    const actorUserId = principalOf(res).userId;
+    await enqueueOffboarding({ tenantId, action: "delete-data", actorUserId });
+    await auditAdminAction(admin, {
+      tenantId,
+      actorUserId,
+      action: "tenant.deletion-requested",
+      details: { via: "dashboard" },
+    });
+    res.status(202).json({ queued: true } satisfies DataDeletionView);
   });
 
   // One business's onboarding checklist (BUILD_PLAN Step 11).

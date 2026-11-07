@@ -23,4 +23,9 @@ export interface AuthProvider {
    * make a network call. An adapter must never return an unverified address here.
    */
   verifiedEmail(subject: string): Promise<string | null>;
+  /**
+   * Deletes the person's login at the provider, for good. Safe to repeat: a login that's
+   * already gone counts as deleted. For deleting a business's data (BUILD_PLAN Step 13).
+   */
+  deleteLogin(subject: string): Promise<void>;
 }

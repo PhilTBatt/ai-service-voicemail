@@ -164,6 +164,23 @@ export class RetellApiStub {
         ? json(200, call)
         : json(404, { message: "call not found" });
     }
+    if (method === "DELETE" && first === "delete-agent" && second) {
+      // As documented: 204 when deleted; the documented 422 for an asset it can't find.
+      if (!this.agents.delete(second)) {
+        return json(422, { message: "Cannot find requested asset under given api key." });
+      }
+      return new Response(null, { status: 204 });
+    }
+    if (method === "DELETE" && first === "delete-conversation-flow" && second) {
+      if (!this.flows.has(second))
+        return json(404, { message: "The requested resource was not found." });
+      const inUse = [...this.agents.values()].some((agent) => agent.flowId === second);
+      if (inUse && query.get("force_delete") !== "true") {
+        return json(400, { message: "conversation flow is used by an agent" });
+      }
+      this.flows.delete(second);
+      return new Response(null, { status: 204 });
+    }
     if (method === "DELETE" && first === "v2" && second === "delete-call" && segments[2]) {
       if (this.deletedCalls.has(segments[2])) return json(404, { message: "call not found" });
       this.deletedCalls.add(segments[2]);

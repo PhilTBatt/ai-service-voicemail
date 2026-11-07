@@ -4,6 +4,7 @@ import type {
   CancellationsView,
   CostRowView,
   CostsView,
+  DataDeletionView,
   HealthView,
   KillSwitchView,
   ReleasedNumberView,
@@ -271,14 +272,16 @@ function Costs() {
 }
 
 /**
- * Businesses that have cancelled (BUILD_PLAN Step 13). For 30 days their callers hear "service
- * has ended"; after that their number can be released, which is a live action and final.
+ * Businesses that are leaving (BUILD_PLAN Step 13). For 30 days their callers hear "service has
+ * ended"; after that their number can be released, which is a live action and final. Once it
+ * has gone, their data can be deleted, which is final too, so the business's name is typed first.
  */
 function Leaving() {
   const { api } = useApi();
   const leaving = useLoad(() => api<CancellationsView>("/admin/cancellations"), "cancellations");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<Error | null>(null);
+  const [queued, setQueued] = useState<string[]>([]);
 
   if (leaving.status === "loading") return <p className="muted">Loading cancellations…</p>;
   if (leaving.status === "error") return <ErrorNote error={leaving.error} retry={leaving.reload} />;
@@ -303,12 +306,32 @@ function Leaving() {
     }
   };
 
+  const deleteData = async (tenantId: string, businessName: string) => {
+    const typed = window.prompt(
+      `This deletes everything AnswerMate holds for ${businessName}: calls, recordings, transcripts, messages and contact details, here and at Retell and Twilio. Only the billing totals, the terms they accepted and the account log stay. It can't be undone.\n\nType the business's name to delete its data.`,
+    );
+    if (typed === null) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api<DataDeletionView>(`/admin/tenants/${tenantId}/delete-data`, {
+        method: "POST",
+        body: { confirm: true, businessName: typed },
+      });
+      setQueued((ids) => [...ids, tenantId]);
+    } catch (caught) {
+      setError(asError(caught));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <section>
       <h2>Leaving businesses</h2>
       <p className="muted">
         Callers hear that the service has ended for 30 days after a cancellation. Then the number
-        can be released.
+        can be released, and after that the business's data deleted.
       </p>
       <ul className="list">
         {leaving.data.tenants.map((tenant) => (
@@ -319,10 +342,27 @@ function Leaving() {
               </p>
               <p className="muted">
                 Cancelled {formatUkDateTime(tenant.cancellationRequestedAt)}
-                {tenant.number ? ` · ${formatPhone(tenant.number)}` : " · no number"}
+                {tenant.status === "cancelled"
+                  ? " · number released, data still held"
+                  : tenant.number
+                    ? ` · ${formatPhone(tenant.number)}`
+                    : " · no number"}
               </p>
             </div>
-            {tenant.due ? (
+            {tenant.status === "cancelled" ? (
+              queued.includes(tenant.tenantId) ? (
+                <span className="muted">Deleting: the worker is on it</span>
+              ) : (
+                <button
+                  type="button"
+                  className="danger"
+                  disabled={busy}
+                  onClick={() => void deleteData(tenant.tenantId, tenant.businessName)}
+                >
+                  Delete data
+                </button>
+              )
+            ) : tenant.due ? (
               <button
                 type="button"
                 className="danger"

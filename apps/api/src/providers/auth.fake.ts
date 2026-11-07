@@ -29,4 +29,13 @@ export class FakeAuthProvider implements AuthProvider {
   verifiedEmail(subject: string): Promise<string | null> {
     return Promise.resolve(this.emails.get(subject) ?? null);
   }
+
+  readonly deletedLogins: string[] = [];
+
+  deleteLogin(subject: string): Promise<void> {
+    this.deletedLogins.push(subject);
+    this.emails.delete(subject);
+    for (const [token, owner] of this.tokens) if (owner === subject) this.tokens.delete(token);
+    return Promise.resolve();
+  }
 }

@@ -27,6 +27,19 @@ function makeHarness() {
       twilio.getExpectedTwilioSignature(AUTH_TOKEN, url, params),
     seedRecording: (url: string, bytes: Uint8Array<ArrayBuffer>) =>
       stub.recordingAudio.set(url.slice(url.lastIndexOf("/") + 1), bytes),
+    seedCallRecord: (record: {
+      sid: string;
+      to: string;
+      startedAt: Date;
+      parentCallSid: string | null;
+    }) =>
+      stub.callRecords.push({
+        sid: record.sid,
+        to: record.to,
+        // RFC 2822 in UTC, as Twilio sends it: "Fri, 18 Oct 2019 17:02:00 +0000".
+        start_time: record.startedAt.toUTCString().replace("GMT", "+0000"),
+        parent_call_sid: record.parentCallSid,
+      }),
   };
 }
 

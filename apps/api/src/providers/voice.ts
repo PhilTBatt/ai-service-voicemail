@@ -100,6 +100,11 @@ export interface VoiceProvider {
   verifyAndParseFunctionCall(rawBody: Buffer, headers: WebhookHeaders): FunctionCallEvent;
   /** Deletes the recording, transcript and logs at the platform. Must be safe to repeat. */
   deleteCallData(providerCallId: string): Promise<void>;
+  /**
+   * Deletes an agent, with everything it holds about the business (its prompt and flow), at the
+   * platform. Must be safe to repeat. For deleting a business's data (BUILD_PLAN Step 13).
+   */
+  deleteAgent(providerAgentId: string): Promise<void>;
   /** The call's recording, fetched fresh from the platform, or null if it has none (or no longer). */
   fetchRecording(providerCallId: string): Promise<RecordingAudio | null>;
   /**

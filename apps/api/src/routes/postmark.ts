@@ -1,5 +1,5 @@
 // Postmark's bounce and spam-complaint webhooks (decision 010). Postmark doesn't sign
-// webhooks; the docs (read 2026-11-08) say to protect the URL with HTTP Basic auth and an IP
+// webhooks; the docs (read 2026-11-07) say to protect the URL with HTTP Basic auth and an IP
 // allowlist, so the webhook URL registered at Postmark carries a username and password that
 // must match POSTMARK_WEBHOOK_SECRET. A bounce or complaint marks the email undelivered
 // with Postmark's reason and raises an alert; a complaint is also Postmark deactivating that

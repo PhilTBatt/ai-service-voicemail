@@ -522,3 +522,45 @@ describe("RetellVoiceProvider webhook key", () => {
     );
   });
 });
+
+describe("RetellVoiceProvider.deleteAgent", () => {
+  async function agentAtRetell() {
+    const { stub, provider } = makeStubHarness();
+    const { providerAgentId } = await provider.upsertAgent({
+      definition: sampleAgentDefinition(),
+      existingProviderAgentId: null,
+    });
+    return { stub, provider, providerAgentId, flowId: stub.agents.get(providerAgentId)!.flowId };
+  }
+
+  it("deletes the flow while the agent still uses it, then the agent", async () => {
+    const { stub, provider, providerAgentId, flowId } = await agentAtRetell();
+    await provider.deleteAgent(providerAgentId);
+    expect(stub.flows.has(flowId)).toBe(false);
+    expect(stub.agents.has(providerAgentId)).toBe(false);
+  });
+
+  it("finishes on a retry after a run that stopped between the flow and the agent", async () => {
+    const { stub, provider, providerAgentId, flowId } = await agentAtRetell();
+    stub.flows.delete(flowId); // as far as the earlier run got
+    await provider.deleteAgent(providerAgentId);
+    expect(stub.agents.has(providerAgentId)).toBe(false);
+  });
+
+  it("takes Retell's 422 for an agent it can't find as already deleted", async () => {
+    const stub = new RetellApiStub();
+    const cannotFind: typeof fetch = (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      return url.includes("/get-agent/")
+        ? Promise.resolve(
+            Response.json(
+              { message: "Cannot find requested asset under given api key." },
+              { status: 422 },
+            ),
+          )
+        : stub.fetch(input, init);
+    };
+    const provider = new RetellVoiceProvider({ apiKey: TEST_API_KEY, fetch: cannotFind });
+    await expect(provider.deleteAgent("agent_gone")).resolves.toBeUndefined();
+  });
+});

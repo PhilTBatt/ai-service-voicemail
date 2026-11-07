@@ -1,6 +1,8 @@
 // The business's account: its number, where messages go, a download of everything we hold,
 // and leaving.
 import {
+  CSV_EXPORTS,
+  CSV_EXPORT_LABELS,
   notificationSettingsSchema,
   type CancellationView,
   type MeView,
@@ -135,15 +137,15 @@ function DataDownload({ tenantId }: { tenantId: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<Error | null>(null);
 
-  const download = async () => {
+  const download = async (path: string, name: string, extension: string) => {
     setBusy(true);
     setError(null);
     try {
-      const file = await fetchBlob(`/tenants/${tenantId}/export`);
+      const file = await fetchBlob(`/tenants/${tenantId}/${path}`);
       const url = URL.createObjectURL(file);
       const link = document.createElement("a");
       link.href = url;
-      link.download = `answermate-export-${ukDate(new Date())}.json`;
+      link.download = `answermate-${name}-${ukDate(new Date())}.${extension}`;
       link.click();
       URL.revokeObjectURL(url);
     } catch (caught) {
@@ -160,9 +162,28 @@ function DataDownload({ tenantId }: { tenantId: string }) {
         Download everything AnswerMate holds about this business, as one file: its details, the
         assistant's settings, every call with its transcript, and the messages sent about them.
       </p>
-      <button type="button" className="secondary" disabled={busy} onClick={() => void download()}>
+      <button
+        type="button"
+        className="secondary"
+        disabled={busy}
+        onClick={() => void download("export", "export", "json")}
+      >
         {busy ? "Preparing…" : "Download my data"}
       </button>
+      <p className="muted">Or one table at a time, for a spreadsheet (times are UK time):</p>
+      <div className="actions">
+        {CSV_EXPORTS.map((table) => (
+          <button
+            key={table}
+            type="button"
+            className="secondary"
+            disabled={busy}
+            onClick={() => void download(`export.csv?table=${table}`, table, "csv")}
+          >
+            {CSV_EXPORT_LABELS[table]} (CSV)
+          </button>
+        ))}
+      </div>
       {error && <ErrorNote error={error} />}
     </section>
   );

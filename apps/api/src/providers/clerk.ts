@@ -1,4 +1,4 @@
-// The Clerk adapter for the login seam (decision 012). Docs read 2026-11-08:
+// The Clerk adapter for the login seam (decision 012). Docs read 2026-11-07:
 //   https://clerk.com/docs/reference/backend/verify-token
 //   https://clerk.com/docs/reference/backend/user/get-user
 //   https://clerk.com/docs/guides/sessions/session-tokens
@@ -9,7 +9,11 @@
 // ID. Their email isn't in the token, so a first login asks Clerk for it, once, to match the
 // invitation; after that the user ID alone finds the account.
 import { createClerkClient, verifyToken } from "@clerk/backend";
-import { TokenVerificationError, TokenVerificationErrorReason } from "@clerk/backend/errors";
+import {
+  TokenVerificationError,
+  TokenVerificationErrorReason,
+  isClerkAPIResponseError,
+} from "@clerk/backend/errors";
 import { logger } from "../logger.ts";
 import type { AuthProvider, Identity } from "./auth.ts";
 
@@ -28,10 +32,11 @@ export interface ClerkUserEmails {
   emailAddresses: { id: string; emailAddress: string; verification: { status: string } | null }[];
 }
 
-/** The two Clerk calls the adapter makes. Tests pass stand-ins; production uses the SDK. */
+/** The Clerk calls the adapter makes. Tests pass stand-ins; production uses the SDK. */
 export interface ClerkCalls {
   verify(token: string): Promise<{ sub?: unknown }>;
   getUser(userId: string): Promise<ClerkUserEmails>;
+  deleteUser(userId: string): Promise<unknown>;
 }
 
 /**
@@ -63,6 +68,7 @@ export class ClerkAuthProvider implements AuthProvider {
           authorizedParties: options.authorizedParties,
         }),
       getUser: (userId) => client.users.getUser(userId),
+      deleteUser: (userId) => client.users.deleteUser(userId),
     };
   }
 
@@ -87,5 +93,17 @@ export class ClerkAuthProvider implements AuthProvider {
       (address) => address.id === user.primaryEmailAddressId,
     );
     return primary?.verification?.status === "verified" ? primary.emailAddress : null;
+  }
+
+  // Clerk's docs (read 2026-11-07): users.deleteUser(userId) wraps DELETE /users/{user_id}. They
+  // don't say what deleting a user who's already gone returns. The SDK raises API failures as
+  // ClerkAPIResponseError with the HTTP status, and a 404 is taken to mean already deleted.
+  async deleteLogin(subject: string): Promise<void> {
+    try {
+      await this.calls.deleteUser(subject);
+    } catch (error) {
+      if (isClerkAPIResponseError(error) && error.status === 404) return;
+      throw error;
+    }
   }
 }

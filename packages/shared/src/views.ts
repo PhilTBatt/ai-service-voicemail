@@ -210,6 +210,8 @@ export interface CancellationsView {
   tenants: {
     tenantId: string;
     businessName: string;
+    /** cancelling: in its 30 days. cancelled: number released, data still here to delete. */
+    status: "cancelling" | "cancelled";
     cancellationRequestedAt: string;
     releaseDueAt: string;
     /** Their AnswerMate number, or null if they never had one. */
@@ -217,6 +219,11 @@ export interface CancellationsView {
     /** The 30 days are up: the number can be released. */
     due: boolean;
   }[];
+}
+
+/** POST /api/admin/tenants/:id/delete-data: the worker does the deleting. */
+export interface DataDeletionView {
+  queued: true;
 }
 
 /** POST /api/admin/tenants/:id/release-number */

@@ -399,21 +399,23 @@ export async function estimateCosts(
 export interface CancellingTenant {
   tenantId: string;
   businessName: string;
+  /** cancelling: in its 30 days; cancelled: number released, data not yet deleted. */
+  status: "cancelling" | "cancelled";
   cancellationRequestedAt: Date;
   number: string | null;
   providerSid: string | null;
 }
 
-/** Businesses that have asked to cancel and still hold their number's place: oldest first. */
+/** Businesses that are leaving: in their 30 days, or gone with their data still here. Oldest first. */
 export async function listCancellingTenants(admin: AdminPool): Promise<CancellingTenant[]> {
   const { rows } = await admin.query<CancellingTenant>(
-    `SELECT t.id AS "tenantId", t.business_name AS "businessName",
+    `SELECT t.id AS "tenantId", t.business_name AS "businessName", t.status,
             coalesce(t.cancellation_requested_at, t.updated_at) AS "cancellationRequestedAt",
             n.number, n.provider_sid AS "providerSid"
      FROM tenants t
      LEFT JOIN phone_numbers n ON n.tenant_id = t.id AND n.status = 'active'
-     WHERE t.status = 'cancelling'
-     ORDER BY 3`,
+     WHERE t.status = 'cancelling' OR (t.status = 'cancelled' AND t.data_deleted_at IS NULL)
+     ORDER BY "cancellationRequestedAt"`,
   );
   return rows;
 }
@@ -455,6 +457,180 @@ export async function recordNumberReleased(
   } finally {
     client.release();
   }
+}
+
+/** Everything about a business that has to go at the providers, and where to confirm it. */
+export interface DeletionPlan {
+  status: string;
+  dataDeletedAt: Date | null;
+  businessName: string;
+  notificationEmail: string | null;
+  notificationMobile: string | null;
+  /** Each call, so its data can be deleted where it's held. */
+  calls: { providerCallId: string; viaFallback: boolean; recordingRef: string | null }[];
+  /** The agents the business ever had at the voice platform. */
+  agentIds: string[];
+  /** The numbers it had, and when: call records at the telephony provider are by number. */
+  numbers: { number: string; since: Date; until: Date | null }[];
+  /** The texts we sent about it that the SMS provider still holds, by its reference. */
+  messageRefs: string[];
+  /** Logins at the login provider of the people whose only business this was. */
+  logins: string[];
+  /** The written confirmation already went (the audit log says so). */
+  confirmationSent: boolean;
+}
+
+export async function deletionPlan(
+  admin: AdminPool,
+  tenantId: string,
+): Promise<DeletionPlan | null> {
+  const tenant = (
+    await admin.query<{
+      status: string;
+      data_deleted_at: Date | null;
+      business_name: string;
+      notification_email: string | null;
+      notification_mobile: string | null;
+      confirmation_sent: boolean;
+    }>(
+      `SELECT status, data_deleted_at, business_name, notification_email, notification_mobile,
+              EXISTS (SELECT 1 FROM audit_log a WHERE a.tenant_id = t.id
+                      AND a.action = 'tenant.deletion-confirmed') AS confirmation_sent
+       FROM tenants t WHERE id = $1`,
+      [tenantId],
+    )
+  ).rows[0];
+  if (!tenant) return null;
+  const calls = await admin.query<{
+    providerCallId: string;
+    viaFallback: boolean;
+    recordingRef: string | null;
+  }>(
+    `SELECT provider_call_id AS "providerCallId", via_fallback AS "viaFallback",
+            recording_ref AS "recordingRef"
+     FROM calls WHERE tenant_id = $1`,
+    [tenantId],
+  );
+  const agents = await admin.query<{ id: string }>(
+    "SELECT DISTINCT provider_agent_id AS id FROM agent_profiles WHERE tenant_id = $1 AND provider_agent_id IS NOT NULL",
+    [tenantId],
+  );
+  const numbers = await admin.query<{ number: string; since: Date; until: Date | null }>(
+    'SELECT number, created_at AS "since", released_at AS "until" FROM phone_numbers WHERE tenant_id = $1',
+    [tenantId],
+  );
+  // Every text we sent about the business: call summaries, emergency texts (to callers too),
+  // setup and leaving texts. Emails aren't here: Postmark keeps those for its retention period.
+  const messages = await admin.query<{ ref: string }>(
+    `SELECT provider_ref AS ref FROM notifications
+       WHERE tenant_id = $1 AND channel <> 'email' AND provider_ref IS NOT NULL
+     UNION SELECT provider_ref FROM onboarding_texts
+       WHERE tenant_id = $1 AND provider_ref IS NOT NULL
+     UNION SELECT provider_ref FROM offboarding_messages
+       WHERE tenant_id = $1 AND channel = 'sms' AND provider_ref IS NOT NULL`,
+    [tenantId],
+  );
+  // The people deleteTenantData anonymises (the same rule), where they have ever logged in.
+  const logins = await admin.query<{ subject: string }>(
+    `SELECT u.auth_subject AS subject FROM tenant_memberships m JOIN users u ON u.id = m.user_id
+     WHERE m.tenant_id = $1 AND u.role = 'owner' AND u.auth_subject IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM tenant_memberships other
+                       WHERE other.user_id = m.user_id AND other.tenant_id <> $1)`,
+    [tenantId],
+  );
+  return {
+    status: tenant.status,
+    dataDeletedAt: tenant.data_deleted_at,
+    businessName: tenant.business_name,
+    notificationEmail: tenant.notification_email,
+    notificationMobile: tenant.notification_mobile,
+    calls: calls.rows,
+    agentIds: agents.rows.map((row) => row.id),
+    numbers: numbers.rows,
+    messageRefs: messages.rows.map((row) => row.ref),
+    logins: logins.rows.map((row) => row.subject),
+    confirmationSent: tenant.confirmation_sent,
+  };
+}
+
+/**
+ * Deletes a business's data here (BUILD_PLAN Step 13), in one transaction, once the providers'
+ * copies are gone. What goes: calls (with their costs and messages), the assistant's settings,
+ * blocked numbers, onboarding and offboarding messages, memberships, and the people's login
+ * details (their accounts are kept only as an anonymous reference for the terms record). What
+ * stays: the business row, anonymised; usage periods (the billing record, kept for the period
+ * Phil's accountant confirms); terms acceptances and the audit log, which are append-only
+ * records; and the numbers it had, which are ours, not personal data.
+ */
+export async function deleteTenantData(
+  admin: AdminPool,
+  tenantId: string,
+  { now, actorUserId }: { now: Date; actorUserId: string | null },
+): Promise<{ calls: number }> {
+  const client = await admin.connect();
+  try {
+    await client.query("BEGIN");
+    // People whose only business this was: their accounts are anonymised, not deleted, because
+    // the terms record refers to them.
+    const people = await client.query<{ user_id: string }>(
+      `SELECT m.user_id FROM tenant_memberships m JOIN users u ON u.id = m.user_id
+       WHERE m.tenant_id = $1 AND u.role = 'owner'
+         AND NOT EXISTS (SELECT 1 FROM tenant_memberships other
+                         WHERE other.user_id = m.user_id AND other.tenant_id <> $1)`,
+      [tenantId],
+    );
+    const calls = await client.query("DELETE FROM calls WHERE tenant_id = $1", [tenantId]);
+    for (const table of [
+      "agent_profiles",
+      "blocked_numbers",
+      "onboarding_texts",
+      "offboarding_messages",
+      "tenant_memberships",
+    ]) {
+      await client.query(`DELETE FROM ${table} WHERE tenant_id = $1`, [tenantId]);
+    }
+    for (const { user_id: userId } of people.rows) {
+      await client.query(
+        "UPDATE users SET auth_subject = NULL, email = 'deleted-' || id || '@deleted.invalid' WHERE id = $1",
+        [userId],
+      );
+    }
+    await client.query(
+      `UPDATE tenants SET business_name = 'Deleted business', contact_name = NULL,
+              notification_mobile = NULL, notification_email = NULL, mobile_network = NULL,
+              uses_network_voicemail = NULL, voicemail_restore_code = NULL, data_deleted_at = $2
+       WHERE id = $1`,
+      [tenantId, now],
+    );
+    await client.query(
+      "INSERT INTO audit_log (tenant_id, actor_user_id, action, details) VALUES ($1, $2, 'tenant.data-deleted', $3)",
+      [tenantId, actorUserId, { calls: calls.rowCount ?? 0, people: people.rowCount ?? 0 }],
+    );
+    await client.query("COMMIT");
+    return { calls: calls.rowCount ?? 0 };
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+/** Records that the written confirmation of a deletion went out (BUILD_PLAN Step 13). */
+export async function recordDeletionConfirmed(
+  admin: AdminPool,
+  tenantId: string,
+  details:
+    { sentBy: "email" | "sms"; providerRef: string } | { sentBy: null; email: string; sms: string },
+): Promise<void> {
+  await admin.query(
+    "INSERT INTO audit_log (tenant_id, actor_user_id, action, details) VALUES ($1, NULL, $2, $3)",
+    [
+      tenantId,
+      details.sentBy ? "tenant.deletion-confirmed" : "tenant.deletion-confirmation-failed",
+      details,
+    ],
+  );
 }
 
 // ─── People who log in (BUILD_PLAN Step 10) ────────────────────────────────────────────

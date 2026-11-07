@@ -1,7 +1,7 @@
 # 011: Azure hosting, estimated monthly cost (Step 8 gate)
 
-- **Date:** 2026-11-08
-- **Status:** accepted 2026-11-08 in its cheapest shape (section 8): **production only**, on a new account's free tier if it qualifies; staging is deferred until there are paying customers. No Azure resource exists yet; creating the subscription is still Phil's step.
+- **Date:** 2026-11-07
+- **Status:** accepted 2026-11-07 in its cheapest shape (section 8): **production only**, on a new account's free tier if it qualifies; staging is deferred until there are paying customers. No Azure resource exists yet; creating the subscription is still Phil's step.
 - **Code:** none yet. `infra/` (Bicep) follows approval.
 
 ## 1. What gets built (from BUILD_PLAN Step 8)
@@ -19,7 +19,7 @@ Production's `api` must never cold-start (webhooks), so both production apps kee
 
 ## 2. Where the prices come from
 
-Azure's pricing web pages don't render figures without a browser, so every price below comes from Microsoft's public **Azure Retail Prices API**, filtered to `armRegionName eq 'uksouth'` and `currencyCode='GBP'`, read on **2026-11-08**:
+Azure's pricing web pages don't render figures without a browser, so every price below comes from Microsoft's public **Azure Retail Prices API**, filtered to `armRegionName eq 'uksouth'` and `currencyCode='GBP'`, read on **2026-11-07**:
 
 - API reference: https://learn.microsoft.com/en-us/rest/api/cost-management/retail-prices/azure-retail-prices
 - Example query: `https://prices.azure.com/api/retail/prices?currencyCode='GBP'&$filter=armRegionName eq 'uksouth' and serviceName eq 'Azure Container Apps'`
@@ -100,7 +100,7 @@ Creating, in a personal Azure subscription with a budget alert set first:
 
 Nothing runs until Phil says yes. The first deploy will include the Bicep `what-if` output, and the first invoice should be checked against this table.
 
-## 8. What Phil approved (2026-11-08)
+## 8. What Phil approved (2026-11-07)
 
 Phil chose the cheapest shape, to keep costs down before any customer pays:
 

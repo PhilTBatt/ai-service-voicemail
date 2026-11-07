@@ -8,5 +8,6 @@ describeTelephonyProviderContract("Fake", () => {
     providerWithoutPurchases: new FakeTelephonyProvider({ purchasesEnabled: false }),
     sign: (url, params) => provider.sign(url, params),
     seedRecording: (url, bytes) => provider.recordingAudio.set(url, bytes),
+    seedCallRecord: ({ sid, ...record }) => provider.callRecords.set(sid, record),
   };
 });

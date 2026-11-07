@@ -3,7 +3,7 @@
 // prices are decimal strings, so the estimate is summed exactly in the database (numeric) and
 // rounded to whole pence once, never in floating point (CLAUDE.md).
 
-/** Twilio's prices for this account, which it prices in pounds. Read from its Pricing API on 2026-11-08. */
+/** Twilio's prices for this account, which it prices in pounds. Read from its Pricing API on 2026-11-07. */
 export const TWILIO_PRICES_GBP = {
   /** A text to a UK mobile, per segment (GET pricing.twilio.com/v1/Messaging/Countries/GB). */
   smsSegment: "0.042325",
@@ -68,7 +68,7 @@ export function describePrices(prices: CostPrices): string[] {
   return [
     `Voice platform: Retell's own cost for each call, in dollars at £${prices.gbpPerUsd} per $1.`,
     `AI summaries: tokens at the model's list price, at £${prices.gbpPerUsd} per $1.`,
-    `Texts: £${prices.smsSegmentGbp} a segment (Twilio, this account, 8 Nov 2026).`,
+    `Texts: £${prices.smsSegmentGbp} a segment (Twilio, this account, 7 Nov 2026).`,
     `Phone minutes: each call rounded up to whole minutes, at £${prices.inboundCallPerMinuteGbp} a minute for the incoming call, plus $${prices.sipPerMinuteUsd} a minute for the leg to the voice platform when the assistant answered.`,
     `Number: £${prices.localNumberPerMonthGbp} a month for a local number.`,
     "Email isn't counted: Postmark's free 100 a month covers it for now.",

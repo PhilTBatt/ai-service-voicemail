@@ -16,4 +16,10 @@ export interface SmsReceipt {
 
 export interface SmsProvider {
   send(message: SmsMessage): Promise<SmsReceipt>;
+  /**
+   * Deletes a text we sent, its body included, by the reference `send` returned. Safe to
+   * repeat: one that's already gone counts as deleted. For deleting a business's data
+   * (BUILD_PLAN Step 13).
+   */
+  deleteMessage(providerRef: string): Promise<void>;
 }

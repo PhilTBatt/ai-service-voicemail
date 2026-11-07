@@ -1,7 +1,7 @@
 # 010: Email provider for notifications
 
 - **Date:** 2026-11-07
-- **Status:** accepted 2026-11-08 (Postmark; Phil is buying a domain for the sending address). Adapter: `apps/api/src/providers/postmark.ts`.
+- **Status:** accepted 2026-11-07 (Postmark; Phil is buying a domain for the sending address). Adapter: `apps/api/src/providers/postmark.ts`.
 - **Code:** `apps/api/src/providers/email*.ts` (the seam and fake), `jobs/notify-email.ts`. The provider adapter follows the pick.
 
 ## 1. What the email is for

@@ -2,11 +2,13 @@ import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type {
-  AvailableNumbersView,
-  OnboardingView,
-  ProvisionedNumberView,
-  TenantView,
+import {
+  CSV_EXPORTS,
+  type AvailableNumbersView,
+  type CancellationsView,
+  type OnboardingView,
+  type ProvisionedNumberView,
+  type TenantView,
 } from "@callmate/shared";
 import type { PgBoss } from "pg-boss";
 import { createApp } from "../app.ts";
@@ -201,6 +203,7 @@ describe("authorisation matrix", () => {
       method: "POST",
     },
     { name: "GET /tenants/:id/export", path: `/tenants/${tenantA}/export` },
+    { name: "GET /tenants/:id/export.csv", path: `/tenants/${tenantA}/export.csv?table=calls` },
     { name: "GET /admin/health", path: "/admin/health" },
     { name: "PUT /admin/kill-switch", path: "/admin/kill-switch", body: {} },
     { name: "GET /admin/review-queue", path: "/admin/review-queue" },
@@ -240,6 +243,13 @@ describe("authorisation matrix", () => {
       body: {},
       method: "POST",
     },
+    // No confirmation or name: refused (400) even for the admin, so nothing is deleted.
+    {
+      name: "POST /admin/tenants/:id/delete-data",
+      path: `/admin/tenants/${tenantA}/delete-data`,
+      body: {},
+      method: "POST",
+    },
   ];
   // What tenant A's data looks like to each person. "allowed" means the door opened: the
   // request may still 400, 404 or 409 on its merits (no audio at the fake, invalid body).
@@ -260,6 +270,7 @@ describe("authorisation matrix", () => {
       "POST /admin/tenants/:id/onboarding/divert-instructions": 403,
       "GET /admin/cancellations": 403,
       "POST /admin/tenants/:id/release-number": 403,
+      "POST /admin/tenants/:id/delete-data": 403,
       "POST /signup-links": 403,
     },
     ownerB: { "GET /me": "allowed", "GET /tenants": "allowed", default: 403 },
@@ -301,6 +312,7 @@ describe("authorisation matrix", () => {
       `/tenants/${tenantA}/calls/${callA}/recording`,
       `/tenants/${tenantA}/profile`,
       `/tenants/${tenantA}/export`,
+      `/tenants/${tenantA}/export.csv?table=calls`,
     ]) {
       const response = await get(path, tokens.reseller);
       expect(response.status, path).toBe(403);
@@ -785,7 +797,51 @@ describe("cancellation", () => {
     );
     expect(audit.rows).toHaveLength(1);
     expect(audit.rows[0]!.actor_user_id).not.toBeNull();
-    expect(await listed()).toBeUndefined();
+    // Still listed, as gone with its data here, until that's deleted too.
+    expect(await listed()).toMatchObject({ number: null });
+    const { tenants } = await json<CancellationsView>(get("/admin/cancellations", tokens.admin));
+    expect(tenants.find((row) => row.tenantId === tenant)?.status).toBe("cancelled");
+  });
+
+  it("queues a gone business's data for deletion only once it has left, and only with its name", async () => {
+    const tenant = await createTenant(admin, { businessName: "Gone Glazing", trade: "plumber" });
+    await admin.query(
+      "UPDATE tenants SET status = 'cancelling', cancellation_requested_at = '2026-10-01T10:00:00Z' WHERE id = $1",
+      [tenant],
+    );
+    const remove = (body: unknown) =>
+      send("POST", `/admin/tenants/${tenant}/delete-data`, body, tokens.admin);
+    const named = { confirm: true, businessName: "gone glazing " };
+
+    // Still in its 30 days, or with its number not yet released: nothing to delete yet.
+    expect((await remove(named)).status).toBe(409);
+    await admin.query("UPDATE tenants SET status = 'cancelled' WHERE id = $1", [tenant]);
+    expect((await remove({ confirm: true })).status).toBe(400);
+    const wrong = await remove({ confirm: true, businessName: "Dash Plumbing" });
+    expect(wrong.status).toBe(409);
+    expect(await wrong.json()).toEqual({ error: "That isn't the business's name" });
+
+    const queued = await remove(named);
+    expect(queued.status).toBe(202);
+    expect(await queued.json()).toEqual({ queued: true });
+    const job = await app.query<{
+      data: { tenantId: string; action: string; actorUserId: string };
+    }>("SELECT data FROM pgboss.job WHERE name = 'offboarding' AND singleton_key = $1", [
+      `${tenant}:delete-data`,
+    ]);
+    expect(job.rows).toHaveLength(1);
+    expect(job.rows[0]!.data).toMatchObject({ tenantId: tenant, action: "delete-data" });
+    const audit = await admin.query<{ actor_user_id: string }>(
+      "SELECT actor_user_id FROM audit_log WHERE tenant_id = $1 AND action = 'tenant.deletion-requested'",
+      [tenant],
+    );
+    expect(audit.rows).toHaveLength(1);
+    // The job carries who asked, for the deletion's own audit row.
+    expect(job.rows[0]!.data.actorUserId).toBe(audit.rows[0]!.actor_user_id);
+
+    // Listed as gone with its data still here until the worker has done its job.
+    const { tenants } = await json<CancellationsView>(get("/admin/cancellations", tokens.admin));
+    expect(tenants.find((row) => row.tenantId === tenant)).toMatchObject({ status: "cancelled" });
   });
 
   it("moves a live tenant to cancelling once, and records who asked", async () => {
@@ -826,6 +882,52 @@ describe("export", () => {
     expect(data.calls.map((call) => call.id)).toContain(callA);
     expect(data.calls.map((call) => call.id)).not.toContain(callB);
     expect(data.calls.every((call) => call.summary !== "Fuse box tripping.")).toBe(true);
+    // And everything else held for it, down to the terms it accepted and its billing totals.
+    for (const key of [
+      "phoneNumbers",
+      "termsAcceptances",
+      "usagePeriods",
+      "blockedNumbers",
+      "onboardingTexts",
+      "offboardingMessages",
+    ]) {
+      expect(Array.isArray((data as unknown as Record<string, unknown>)[key]), key).toBe(true);
+    }
+    expect(data.tenant).toHaveProperty("mobile_network");
+  });
+});
+
+describe("CSV export", () => {
+  it("hands the owner one table of their own data, ready for a spreadsheet", async () => {
+    const response = await get(`/tenants/${tenantA}/export.csv?table=calls`, tokens.ownerA);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("text/csv; charset=utf-8");
+    expect(response.headers.get("content-disposition")).toBe(
+      'attachment; filename="answermate-calls.csv"',
+    );
+    // A byte-order mark first, so Excel reads it as UTF-8; then the table.
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    expect([...bytes.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
+    const csv = new TextDecoder().decode(bytes);
+    expect(csv.split("\r\n")[0]).toBe(
+      "started_at,ended_at,caller_number,caller_name,callback_number,postcode,urgency,summary,voicemail,flags,transcript",
+    );
+    expect(csv).toContain("Boiler leaking.");
+    expect(csv).not.toContain("Fuse box tripping.");
+    // The caller's number can't turn into a sum, or a formula, in a spreadsheet.
+    expect(csv).toContain("'+447700900123");
+  });
+
+  it("serves every table it offers, and nothing else", async () => {
+    for (const table of CSV_EXPORTS) {
+      const response = await get(`/tenants/${tenantA}/export.csv?table=${table}`, tokens.ownerA);
+      expect(response.status, table).toBe(200);
+      await response.text();
+    }
+    for (const query of ["", "?table=tenants", "?table=calls&table=messages"]) {
+      const response = await get(`/tenants/${tenantA}/export.csv${query}`, tokens.ownerA);
+      expect(response.status, query).toBe(400);
+    }
   });
 });
 

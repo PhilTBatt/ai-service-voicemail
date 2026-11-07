@@ -6,6 +6,7 @@
 // even a bug in requireTenantAccess() couldn't hand one tenant's calls to another. The
 // cross-tenant list (admin and reseller) uses the admin pool, as the admin screens are meant to.
 import {
+  CSV_EXPORTS,
   URGENCIES,
   type CallListView,
   type AgentProfileInput,
@@ -39,6 +40,7 @@ import {
 import { withTenant } from "../db/tenant.ts";
 import {
   exportTenant,
+  exportTenantCsv,
   notificationSettingsSchema,
   requestCancellation,
   updateNotificationSettings,
@@ -115,6 +117,7 @@ interface ProfileRow {
 }
 
 const switchBody = z.object({ on: z.boolean() });
+const csvExportQuery = z.object({ table: z.enum(CSV_EXPORTS) });
 const signupLinkBody = z.object({ forTest: z.boolean().default(false) });
 
 export function dashboardRouter({
@@ -161,6 +164,7 @@ export function dashboardRouter({
       admin,
       numbers,
       enqueueOnboarding: enqueueOnboardingWith(boss),
+      enqueueOffboarding: enqueueOffboardingWith(boss),
       ...(now && { now }),
     }),
   );
@@ -334,7 +338,25 @@ export function dashboardRouter({
     res.json(result satisfies CancellationView);
   });
 
-  // Everything we hold for the tenant, as one JSON file (CSV comes with Step 13).
+  // One table of the business's data as CSV, for a spreadsheet (BUILD_PLAN Step 13).
+  tenant.get("/export.csv", async (req, res) => {
+    const table = csvExportQuery.safeParse(req.query);
+    if (!table.success) {
+      res.status(400).json({ error: "Choose a table: " + CSV_EXPORTS.join(", ") });
+      return;
+    }
+    const csv = await exportTenantCsv(pool, tenantIdOf(res), table.data.table);
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="answermate-${table.data.table}.csv"`,
+    );
+    // A byte-order mark first: without one, Excel on Windows reads a CSV in the PC's own code
+    // page and garbles £ signs and curly quotes.
+    res.send(`\uFEFF${csv}`);
+  });
+
+  // Everything we hold for the tenant, as one JSON file.
   tenant.get("/export", async (_req, res) => {
     const tenantId = tenantIdOf(res);
     const data = await exportTenant(pool, tenantId);

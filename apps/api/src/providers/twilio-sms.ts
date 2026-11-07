@@ -56,4 +56,22 @@ export class TwilioSmsProvider implements SmsProvider {
     const segments = Number(message.num_segments);
     return { providerRef: message.sid, segments: Number.isFinite(segments) ? segments : null };
   }
+
+  // Twilio's docs (read 2026-11-07): DELETE /Messages/{Sid}.json deletes the message with its
+  // media and answers 204, and a deleted message can't be recovered, though its body may stay
+  // in Twilio's backups for up to 30 days. What a missing message returns isn't stated; a 404
+  // is taken to mean it's already gone.
+  async deleteMessage(providerRef: string): Promise<void> {
+    const { accountSid, authToken } = this.options;
+    const path = `/2010-04-01/Accounts/${encodeURIComponent(accountSid)}/Messages/${encodeURIComponent(providerRef)}.json`;
+    const response = await (this.options.fetch ?? fetch)(`https://api.twilio.com${path}`, {
+      method: "DELETE",
+      headers: {
+        Authorization: `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString("base64")}`,
+      },
+      signal: AbortSignal.timeout(this.options.timeoutMs ?? 15_000),
+    });
+    if (response.ok || response.status === 404) return;
+    throw new TwilioApiError(response.status, path, (await response.text()).slice(0, 300));
+  }
 }

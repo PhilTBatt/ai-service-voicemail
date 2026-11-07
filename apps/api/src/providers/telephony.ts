@@ -98,6 +98,15 @@ export interface TelephonyProvider {
   getCall(callSid: string): Promise<CallDetails | null>;
   /** Deletes a recording held at the provider. Safe to repeat. */
   deleteRecording(recordingSid: string): Promise<void>;
+  /**
+   * The provider's call records for calls to `to` that started on or after the UTC day `since`
+   * falls on, and before `until` (when the number was released: a number can be bought again,
+   * and the next holder's calls aren't ours to delete). Each comes after the calls it spawned
+   * (the leg that dialled the voice platform). For deleting a business's data.
+   */
+  listCallSids(filter: { to: string; since: Date; until: Date | null }): Promise<string[]>;
+  /** Deletes a call record (not its recordings: delete those separately). Safe to repeat. */
+  deleteCall(callSid: string): Promise<void>;
   /** The audio of a recording, by the reference stored on the call, or null if the provider no longer has it. */
   fetchRecording(recordingUrl: string): Promise<RecordingAudio | null>;
 }

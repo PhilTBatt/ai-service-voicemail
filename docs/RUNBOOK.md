@@ -118,6 +118,29 @@ to turn their diverts off and get their voicemail back. The business appears und
 businesses" on the Admin page. After 30 days the "Release number" button appears: it gives the
 number back to Twilio for good and marks the business cancelled.
 
+The business then stays on that list as "number released, data still held", with a **Delete
+data** button. Type the business's name when asked, and the worker deletes, in this order:
+
+1. At Retell: each call's data, then the business's conversation flow and its agent.
+2. At Twilio: the voicemail recordings, the call records for each number the business held
+   (from when it was bought until it was released), and every text we sent about it.
+3. At Clerk: the logins of the people whose only business this was.
+4. The written confirmation: by email, or by text if the email can't go (outside production,
+   only to addresses on `OUTBOUND_ALLOWLIST`).
+5. Here: calls, messages, the assistant's settings, contact details and those people's
+   accounts. The billing totals, the terms the business accepted and the account log stay.
+
+The worker needs `ADMIN_DATABASE_URL`, the Twilio settings and `CLERK_SECRET_KEY` for this.
+A step that fails is retried; after the last retry the job goes to the dead-letter queue, which
+alerts you. If the confirmation can't go by email or text, the deletion still happens and you
+get a `deletion-confirmation-not-sent` alert naming the business: confirm it to them another
+way.
+
+What it can't reach: Twilio call records older than 13 months (only Twilio's Bulk Export deletes
+those); the texts a tradesperson sends to control their account (STATUS, PAUSE and so on) and
+our automatic replies, which we don't keep Twilio's references for; copies in Twilio's backups
+(texts for up to 30 days); and the copies of sent emails Postmark keeps for 45 days.
+
 ## 10. Spending
 
 Anything named `live-*` touches a paid service and asks for `--confirm`. Day to day the only money that moves is per call (Retell and Twilio per minute, Anthropic per extraction, Twilio per text segment). Evals (`npm run evals`) cost a few pence per run under their cap.

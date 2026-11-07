@@ -15,6 +15,16 @@ export class TwilioApiStub {
   readonly recordings: Record<string, unknown>[] = [];
   readonly calls = new Map<string, Record<string, unknown>>();
   readonly deletedRecordingSids = new Set<string>();
+  /**
+   * Call records in Twilio's JSON shape (start_time in RFC 2822, as Twilio sends it). GET
+   * /Calls.json filters them, DELETE removes them.
+   */
+  readonly callRecords: {
+    sid: string;
+    to: string;
+    start_time: string;
+    parent_call_sid: string | null;
+  }[] = [];
   /** Recordings per page from GET /Recordings.json, with Twilio-style next_page_uri. */
   recordingsPageSize = 100;
   /** Recording audio by SID, for the .mp3 media endpoint. */
@@ -88,7 +98,29 @@ export class TwilioApiStub {
       this.deletedRecordingSids.add(sid);
       return new Response(null, { status: 204 });
     }
+    if (method === "GET" && tail === "/Calls.json") {
+      const to = query.get("To");
+      const after = query.get("StartTime>"); // a UTC date: on or after it
+      const parent = query.get("ParentCallSid");
+      const calls = this.callRecords.filter(
+        (call) =>
+          (to === null || call.to === to) &&
+          (after === null || new Date(call.start_time).toISOString().slice(0, 10) >= after) &&
+          (parent === null || call.parent_call_sid === parent),
+      );
+      return json(200, {
+        calls: calls.map((call) => ({ sid: call.sid, start_time: call.start_time })),
+        next_page_uri: null,
+      });
+    }
     const callMatch = /^\/Calls\/([^/]+)\.json$/.exec(tail);
+    if (method === "DELETE" && callMatch) {
+      const sid = decodeURIComponent(callMatch[1]!);
+      const index = this.callRecords.findIndex((call) => call.sid === sid);
+      if (index === -1) return json(404, { code: 20404, message: "not found" });
+      this.callRecords.splice(index, 1);
+      return new Response(null, { status: 204 });
+    }
     if (method === "GET" && callMatch) {
       const call = this.calls.get(decodeURIComponent(callMatch[1]!));
       return call ? json(200, call) : json(404, { code: 20404, message: "not found" });

@@ -23,4 +23,11 @@ export class FakeSmsProvider implements SmsProvider {
     this.sent.push({ ...message, ...receipt });
     return Promise.resolve(receipt);
   }
+
+  readonly deletedMessages: string[] = [];
+
+  deleteMessage(providerRef: string): Promise<void> {
+    this.deletedMessages.push(providerRef);
+    return Promise.resolve();
+  }
 }

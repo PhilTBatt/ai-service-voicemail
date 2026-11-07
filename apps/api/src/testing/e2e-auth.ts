@@ -30,4 +30,9 @@ export class E2eAuthProvider implements AuthProvider {
   verifiedEmail(subject: string): Promise<string | null> {
     return Promise.resolve(this.emails.get(subject) ?? null);
   }
+
+  /** The smoke tests never delete a business's data. */
+  deleteLogin(): Promise<void> {
+    return Promise.resolve();
+  }
 }

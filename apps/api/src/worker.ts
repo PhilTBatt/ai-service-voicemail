@@ -36,6 +36,7 @@ import { runRetention } from "./jobs/retention.ts";
 import { runSyncAgent, type SyncAgentJobData } from "./jobs/sync-agent.ts";
 import { logger } from "./logger.ts";
 import { AnthropicLlmProvider } from "./providers/anthropic.ts";
+import { ClerkAuthProvider } from "./providers/clerk.ts";
 import { PostmarkEmailProvider } from "./providers/postmark.ts";
 import { RetellVoiceProvider } from "./providers/retell.ts";
 import { TwilioSmsProvider } from "./providers/twilio-sms.ts";
@@ -48,6 +49,7 @@ try {
     throw new ConfigError(["RETELL_API_KEY is missing (the worker syncs agents to Retell)"]);
 
   const pool = createPool(config.databaseUrl);
+  const admin = config.adminDatabaseUrl ? createAdminPool(config.adminDatabaseUrl) : null;
   const boss = await startQueue(config.databaseUrl);
   // The worker syncs agents, so it decides their webhook and function URLs.
   const voice = new RetellVoiceProvider({ apiKey: config.retellApiKey, ...retellUrls(config) });
@@ -108,8 +110,23 @@ try {
     });
     // When a business leaves: the text, and the email where email is set up.
     const leavingEmail = config.email ? new PostmarkEmailProvider(config.email) : undefined;
+    // Deleting a business's data needs the admin pool and Twilio as well as Retell, and Clerk
+    // for the logins. The worker never checks a login token, so it names no sites for one.
+    const deletion =
+      admin && config.twilio
+        ? {
+            admin,
+            voice,
+            telephony: new TwilioTelephonyProvider(config.twilio),
+            auth: config.clerkSecretKey
+              ? new ClerkAuthProvider({ secretKey: config.clerkSecretKey, authorizedParties: [] })
+              : undefined,
+          }
+        : undefined;
     await boss.work<OffboardingJobData>(OFFBOARDING_QUEUE, async (jobs) => {
-      for (const job of jobs) await runOffboardingJob({ ...deps, email: leavingEmail }, job.data);
+      for (const job of jobs) {
+        await runOffboardingJob({ ...deps, email: leavingEmail, deletion }, job.data);
+      }
     });
     queues.push(NOTIFY_EMERGENCY_QUEUE, NOTIFY_SMS_QUEUE, ONBOARDING_QUEUE, OFFBOARDING_QUEUE);
   } else {
@@ -136,7 +153,6 @@ try {
     );
   }
 
-  const admin = config.adminDatabaseUrl ? createAdminPool(config.adminDatabaseUrl) : null;
   if (admin) {
     // Agent calls whose webhook never arrived (and provisional mid-call rows): stored every 15 min.
     await boss.work(RECONCILE_CALLS_QUEUE, async () => {

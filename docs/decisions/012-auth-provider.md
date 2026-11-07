@@ -1,7 +1,7 @@
 # 012: Login provider for the dashboard (Step 10 gate)
 
-- **Date:** 2026-11-08
-- **Status:** accepted 2026-11-08: **Clerk**. Phil created the development instance (email codes and links, Google; passwords off).
+- **Date:** 2026-11-07
+- **Status:** accepted 2026-11-07: **Clerk**. Phil created the development instance (email codes and links, Google; passwords off).
 - **Code:** `apps/api/src/providers/auth.ts` (the seam), `auth.fake.ts`, `clerk.ts` (the adapter).
 
 ## 1. What login is for
@@ -21,7 +21,7 @@ What the provider holds about a user is just name and email. Call content never 
 
 ## 3. The candidates
 
-Facts read on 2026-11-08 from the pages linked. Prices in US dollars as published.
+Facts read on 2026-11-07 from the pages linked. Prices in US dollars as published.
 
 |                         | Clerk                                                                                      | Microsoft Entra External ID                                                                            | Auth0                                                     | Supabase Auth                                                                                   | WorkOS AuthKit                                               |
 | ----------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ | --------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
@@ -58,7 +58,7 @@ At 10, 100 or 500 users every hosted option is **£0**. Clerk charges nothing un
 
 The seam built alongside this record asks the provider for one thing: given a bearer token, who is this (a stable subject ID and an email)? Everything else, roles, tenant membership and the reseller's blindfold, lives in our tables and is enforced in our middleware, so the provider can be swapped without touching the rest.
 
-## 7. How the Clerk adapter works (2026-11-08)
+## 7. How the Clerk adapter works (2026-11-07)
 
 Docs read: [verifyToken](https://clerk.com/docs/reference/backend/verify-token), [getUser](https://clerk.com/docs/reference/backend/user/get-user), [session tokens](https://clerk.com/docs/guides/sessions/session-tokens), [restricting access](https://clerk.com/docs/guides/secure/restricting-access), [secret keys shown once](https://clerk.com/changelog/2026-10-19-secret-keys-visible-only-on-creation).
 

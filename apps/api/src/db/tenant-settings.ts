@@ -4,10 +4,12 @@
 import type pg from "pg";
 import {
   notificationSettingsSchema,
+  type CsvExport,
   type NotificationSettings,
   type TenantStatus,
 } from "@callmate/shared";
 import type { EnqueueOffboarding } from "../jobs/offboarding.ts";
+import { toCsv } from "../core/csv.ts";
 import { withTenant } from "./tenant.ts";
 
 // The rules live in packages/shared/src/settings.ts, so the dashboard checks them too.
@@ -93,12 +95,7 @@ export async function exportTenant(pool: pg.Pool, tenantId: string) {
   return withTenant(pool, tenantId, async (client) => {
     // One after another: a connection runs one query at a time, and handing it several at once
     // is deprecated in pg (removed in pg 9). They share the transaction, so they see one snapshot.
-    const tenant = await client.query(
-      `SELECT id, business_name, trade, status, contact_name, notification_mobile, notification_email,
-              service_region, created_at, updated_at
-       FROM tenants WHERE id = $1`,
-      [tenantId],
-    );
+    const tenant = await client.query("SELECT * FROM tenants WHERE id = $1", [tenantId]);
     const profiles = await client.query(
       `SELECT version, trade_template, services, service_areas, opening_hours, holiday_mode,
               holiday_until, faqs, emergency_policy, synced_at, sync_error, created_at
@@ -120,6 +117,33 @@ export async function exportTenant(pool: pg.Pool, tenantId: string) {
       "SELECT action, details, created_at FROM audit_log WHERE tenant_id = $1 ORDER BY created_at",
       [tenantId],
     );
+    const numbers = await client.query(
+      "SELECT number, status, created_at, released_at FROM phone_numbers WHERE tenant_id = $1 ORDER BY created_at",
+      [tenantId],
+    );
+    const terms = await client.query(
+      "SELECT document_type, document_version, accepted_at FROM terms_acceptances WHERE tenant_id = $1 ORDER BY accepted_at",
+      [tenantId],
+    );
+    // Dates as text: pg would turn a date into a Date at local midnight, a day out in BST.
+    const usage = await client.query(
+      `SELECT to_char(period_start, 'YYYY-MM-DD') AS period_start,
+              to_char(period_end, 'YYYY-MM-DD') AS period_end, billable_seconds
+       FROM usage_periods WHERE tenant_id = $1 ORDER BY period_start`,
+      [tenantId],
+    );
+    const blocked = await client.query(
+      "SELECT number, reason, created_at FROM blocked_numbers WHERE tenant_id = $1 ORDER BY created_at",
+      [tenantId],
+    );
+    const setupTexts = await client.query(
+      "SELECT kind, status, created_at FROM onboarding_texts WHERE tenant_id = $1 ORDER BY created_at",
+      [tenantId],
+    );
+    const leavingMessages = await client.query(
+      "SELECT kind, channel, status, created_at FROM offboarding_messages WHERE tenant_id = $1 ORDER BY created_at",
+      [tenantId],
+    );
     return {
       exportedAt: new Date().toISOString(),
       tenant: (tenant.rows[0] as Record<string, unknown> | undefined) ?? null,
@@ -127,6 +151,96 @@ export async function exportTenant(pool: pg.Pool, tenantId: string) {
       calls: calls.rows,
       notifications: notifications.rows,
       auditLog: audit.rows,
+      phoneNumbers: numbers.rows,
+      termsAcceptances: terms.rows,
+      usagePeriods: usage.rows,
+      blockedNumbers: blocked.rows,
+      onboardingTexts: setupTexts.rows,
+      offboardingMessages: leavingMessages.rows,
     };
   });
+}
+
+/** Each CSV table (BUILD_PLAN Step 13), as a spreadsheet would want it. */
+const CSV_QUERIES: Record<CsvExport, { header: string[]; sql: string }> = {
+  business: {
+    header: [
+      "business_name",
+      "trade",
+      "contact_name",
+      "notification_mobile",
+      "notification_email",
+      "mobile_network",
+      "status",
+      "onboarding_state",
+      "created_at",
+      "cancellation_requested_at",
+    ],
+    sql: `SELECT business_name, trade, contact_name, notification_mobile, notification_email,
+                 mobile_network, status, onboarding_state, created_at, cancellation_requested_at
+          FROM tenants WHERE id = $1`,
+  },
+  calls: {
+    header: [
+      "started_at",
+      "ended_at",
+      "caller_number",
+      "caller_name",
+      "callback_number",
+      "postcode",
+      "urgency",
+      "summary",
+      "voicemail",
+      "flags",
+      "transcript",
+    ],
+    sql: `SELECT started_at, ended_at, caller_number, extracted_fields->>'callerName',
+                 extracted_fields->>'callbackNumber', extracted_fields->>'postcode', urgency,
+                 summary, via_fallback, array_to_string(flags, '; '), transcript
+          FROM calls WHERE tenant_id = $1 ORDER BY started_at`,
+  },
+  messages: {
+    header: ["created_at", "call_started_at", "channel", "status", "attempts", "failure_code"],
+    sql: `SELECT n.created_at, c.started_at, n.channel, n.status, n.attempts, n.failure_code
+          FROM notifications n JOIN calls c ON c.id = n.call_id
+          WHERE n.tenant_id = $1 ORDER BY n.created_at`,
+  },
+  assistant: {
+    header: [
+      "version",
+      "saved_at",
+      "trade",
+      "services",
+      "service_areas",
+      "opening_hours",
+      "holiday_mode",
+      "holiday_until",
+      "faqs",
+      "takes_urgent_call_outs",
+      "live_since",
+    ],
+    sql: `SELECT version, created_at, trade_template,
+                 (SELECT string_agg(value, '; ') FROM jsonb_array_elements_text(services)),
+                 (SELECT string_agg(value, '; ') FROM jsonb_array_elements_text(service_areas)),
+                 opening_hours, holiday_mode, to_char(holiday_until, 'YYYY-MM-DD'), faqs,
+                 emergency_policy->'takesEmergencyCalls', synced_at
+          FROM agent_profiles WHERE tenant_id = $1 ORDER BY version`,
+  },
+  "account-log": {
+    header: ["at", "action", "details"],
+    sql: "SELECT created_at, action, details FROM audit_log WHERE tenant_id = $1 ORDER BY created_at",
+  },
+};
+
+/** One table of the business's data as CSV. Row-level security keeps it to that business. */
+export async function exportTenantCsv(
+  pool: pg.Pool,
+  tenantId: string,
+  table: CsvExport,
+): Promise<string> {
+  const { header, sql } = CSV_QUERIES[table];
+  const result = await withTenant(pool, tenantId, (client) =>
+    client.query<unknown[]>({ text: sql, values: [tenantId], rowMode: "array" }),
+  );
+  return toCsv(header, result.rows);
 }

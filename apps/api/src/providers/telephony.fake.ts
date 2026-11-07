@@ -33,6 +33,12 @@ export class FakeTelephonyProvider implements TelephonyProvider {
   readonly deletedRecordings: string[] = [];
   /** Audio by recording URL; tests fill this in. */
   readonly recordingAudio = new Map<string, Uint8Array<ArrayBuffer>>();
+  /** Call records at the "provider", by SID; tests fill these in. */
+  readonly callRecords = new Map<
+    string,
+    { to: string; startedAt: Date; parentCallSid: string | null }
+  >();
+  readonly deletedCalls: string[] = [];
   /** Recording URLs whose stream breaks after the first chunk, for robustness tests. */
   readonly brokenRecordings = new Set<string>();
   private readonly purchasesEnabled: boolean;
@@ -82,6 +88,33 @@ export class FakeTelephonyProvider implements TelephonyProvider {
   releaseNumber(providerSid: string) {
     this.purchased.delete(providerSid);
     this.released.push(providerSid);
+    return Promise.resolve();
+  }
+
+  listCallSids({ to, since, until }: { to: string; since: Date; until: Date | null }) {
+    // As Twilio does it: from the start of the UTC day `since` falls on, and before `until`.
+    const day = (date: Date) => date.toISOString().slice(0, 10);
+    const parents = [...this.callRecords]
+      .filter(
+        ([, record]) =>
+          record.to === to &&
+          day(record.startedAt) >= day(since) &&
+          (until === null || record.startedAt < until),
+      )
+      .map(([sid]) => sid);
+    return Promise.resolve(
+      parents.flatMap((parent) => [
+        ...[...this.callRecords]
+          .filter(([, record]) => record.parentCallSid === parent)
+          .map(([sid]) => sid),
+        parent,
+      ]),
+    );
+  }
+
+  deleteCall(callSid: string) {
+    this.callRecords.delete(callSid);
+    this.deletedCalls.push(callSid);
     return Promise.resolve();
   }
 

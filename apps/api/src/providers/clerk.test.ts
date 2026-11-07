@@ -1,4 +1,8 @@
-import { TokenVerificationError, TokenVerificationErrorReason } from "@clerk/backend/errors";
+import {
+  ClerkAPIResponseError,
+  TokenVerificationError,
+  TokenVerificationErrorReason,
+} from "@clerk/backend/errors";
 import { describe, expect, it } from "vitest";
 import { ClerkAuthProvider, type ClerkCalls, type ClerkUserEmails } from "./clerk.ts";
 
@@ -8,6 +12,7 @@ function providerWith(calls: Partial<ClerkCalls>) {
   return new ClerkAuthProvider(OPTIONS, {
     verify: () => Promise.reject(new Error("verify not stubbed")),
     getUser: () => Promise.reject(new Error("getUser not stubbed")),
+    deleteUser: () => Promise.reject(new Error("deleteUser not stubbed")),
     ...calls,
   });
 }
@@ -94,5 +99,31 @@ describe("ClerkAuthProvider.verifiedEmail", () => {
   it("lets a Clerk API failure surface as an error", async () => {
     const provider = providerWith({ getUser: () => Promise.reject(new Error("Clerk is down")) });
     await expect(provider.verifiedEmail("user_abc")).rejects.toThrow("Clerk is down");
+  });
+});
+
+describe("ClerkAuthProvider.deleteLogin", () => {
+  it("deletes the user at Clerk", async () => {
+    const deleted: string[] = [];
+    const provider = providerWith({
+      deleteUser: (userId) => {
+        deleted.push(userId);
+        return Promise.resolve({});
+      },
+    });
+    await provider.deleteLogin("user_abc");
+    expect(deleted).toEqual(["user_abc"]);
+  });
+
+  it("counts a user Clerk no longer has as deleted", async () => {
+    const gone = new ClerkAPIResponseError("Not Found", { data: [], status: 404 });
+    const provider = providerWith({ deleteUser: () => Promise.reject(gone) });
+    await expect(provider.deleteLogin("user_gone")).resolves.toBeUndefined();
+  });
+
+  it("passes on any other failure", async () => {
+    const down = new ClerkAPIResponseError("Internal Server Error", { data: [], status: 500 });
+    const provider = providerWith({ deleteUser: () => Promise.reject(down) });
+    await expect(provider.deleteLogin("user_abc")).rejects.toBe(down);
   });
 });

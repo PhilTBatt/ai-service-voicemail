@@ -62,6 +62,27 @@ interface CallJson {
   duration: string | null;
 }
 
+/** A call in Twilio's list, as much of it as deleting needs. */
+interface ListedCall {
+  sid: string;
+  /** RFC 2822 in UTC, e.g. "Fri, 18 Oct 2019 17:02:00 +0000"; empty if it was never dialled. */
+  start_time: string | null;
+}
+
+/**
+ * Whether a listed call started before `until`. One that never started is kept: it was made to
+ * the number within the range Twilio was asked for. A start time that can't be read stops the
+ * deletion rather than risk deleting another business's record.
+ */
+function startedBefore(call: ListedCall, until: Date | null): boolean {
+  if (!until || !call.start_time) return true;
+  const started = new Date(call.start_time);
+  if (Number.isNaN(started.getTime())) {
+    throw new Error(`Twilio call ${call.sid} has a start_time we can't read: ${call.start_time}`);
+  }
+  return started < until;
+}
+
 export class TwilioTelephonyProvider implements TelephonyProvider {
   private readonly options: TwilioOptions;
   private readonly baseUrl: string;
@@ -203,6 +224,62 @@ export class TwilioTelephonyProvider implements TelephonyProvider {
   async deleteRecording(recordingSid: string): Promise<void> {
     try {
       await this.request("DELETE", `/Recordings/${encodeURIComponent(recordingSid)}.json`);
+    } catch (error) {
+      if (!(error instanceof TwilioApiError && error.status === 404)) throw error;
+    }
+  }
+
+  // Twilio's docs (read 2026-11-07): GET /Calls.json filters by To, "StartTime>" (a UTC date,
+  // on or after) and ParentCallSid, up to 1,000 a page with next_page_uri; each call's
+  // start_time is RFC 2822 in UTC. The end of the range is checked here, on start_time. Calls
+  // older than 13 months can't be read or deleted this way, only through Bulk Export.
+  async listCallSids({
+    to,
+    since,
+    until,
+  }: {
+    to: string;
+    since: Date;
+    until: Date | null;
+  }): Promise<string[]> {
+    const day = since.toISOString().slice(0, 10);
+    const parents = (
+      await this.callPages(
+        `/Calls.json?${new URLSearchParams({ To: to, "StartTime>": day, PageSize: "1000" })}`,
+      )
+    ).filter((call) => startedBefore(call, until));
+    const sids: string[] = [];
+    for (const parent of parents) {
+      // The leg that dialled the voice platform is its own record, spawned by this call.
+      const children = await this.callPages(
+        `/Calls.json?${new URLSearchParams({ ParentCallSid: parent.sid, PageSize: "1000" })}`,
+      );
+      sids.push(...children.map((call) => call.sid), parent.sid);
+    }
+    return sids;
+  }
+
+  private async callPages(firstPath: string): Promise<ListedCall[]> {
+    const calls: ListedCall[] = [];
+    let path: string | null = firstPath;
+    while (path) {
+      const result: { calls: ListedCall[]; next_page_uri: string | null } = await this.request(
+        "GET",
+        path,
+      );
+      calls.push(...result.calls);
+      path = result.next_page_uri
+        ? result.next_page_uri.replace(/^\/2010-04-01\/Accounts\/[^/]+/, "")
+        : null;
+    }
+    return calls;
+  }
+
+  // "This will delete a call record from your account... but will not delete associated
+  // recordings" (Twilio's docs). A record that's already gone is the outcome we wanted.
+  async deleteCall(callSid: string): Promise<void> {
+    try {
+      await this.request("DELETE", `/Calls/${encodeURIComponent(callSid)}.json`);
     } catch (error) {
       if (!(error instanceof TwilioApiError && error.status === 404)) throw error;
     }

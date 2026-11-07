@@ -103,7 +103,10 @@ export async function startQueue(connectionString: string): Promise<PgBoss> {
     retryLimit: 5,
     retryDelay: 60,
     retryBackoff: true,
-    expireInSeconds: 600, // deleting a busy business's data at the providers takes a while
+    // Deleting a busy business's data at the providers is one request at a time, which for
+    // thousands of calls takes many minutes. A run that outlasts this is retried; a lock keeps
+    // the two apart (jobs/offboarding.ts).
+    expireInSeconds: 3600,
     deadLetter: DEAD_LETTER_QUEUE,
   });
   await ensureQueue(boss, RETENTION_QUEUE, {

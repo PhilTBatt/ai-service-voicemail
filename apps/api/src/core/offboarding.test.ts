@@ -1,6 +1,12 @@
 import { MOBILE_NETWORK_KEYS, voicemailRestoreCode } from "@callmate/shared";
 import { describe, expect, it } from "vitest";
-import { cancellationEmail, cancellationText, releaseDueAt } from "./offboarding.ts";
+import {
+  cancellationEmail,
+  cancellationText,
+  deletionConfirmationEmail,
+  deletionConfirmationText,
+  releaseDueAt,
+} from "./offboarding.ts";
 import { isGsm7, smsEncoding } from "./sms.ts";
 
 describe("releaseDueAt", () => {
@@ -59,5 +65,24 @@ describe("the cancellation notices", () => {
     expect(email.text).toContain(
       "delete your calls, recordings and details, and email you to confirm",
     );
+  });
+});
+
+describe("the deletion confirmation", () => {
+  it("fits a text in GSM-7, in at most three segments, even for a long business name", () => {
+    const text = deletionConfirmationText(
+      "Sam's Plumbing, Heating and Bathroom Fitting Services (North Leeds) Ltd",
+    );
+    expect(isGsm7(text)).toBe(true);
+    expect(smsEncoding(text).segments).toBeLessThanOrEqual(3);
+  });
+
+  it("says in the email what has gone, what takes longer and what stays, with the name escaped", () => {
+    const email = deletionConfirmationEmail("Gone <Plumbing>");
+    expect(email.subject).toBe("Your AnswerMate data has been deleted");
+    expect(email.text).toContain("Retell AI and Twilio");
+    expect(email.text).toContain("Postmark");
+    expect(email.text).toContain("billing totals");
+    expect(email.html).toContain("Gone &lt;Plumbing&gt;");
   });
 });

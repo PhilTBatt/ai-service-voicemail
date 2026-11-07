@@ -187,6 +187,23 @@ export function describeVoiceProviderContract(
       }
     });
 
+    it("deletes an agent for good, and doesn't mind being asked twice", async () => {
+      const { provider } = makeHarness();
+      const { providerAgentId } = await provider.upsertAgent({
+        definition: sampleAgentDefinition(),
+        existingProviderAgentId: null,
+      });
+      await provider.deleteAgent(providerAgentId);
+      await expect(provider.deleteAgent(providerAgentId)).resolves.toBeUndefined();
+      // Gone: syncing against the old ID makes a new agent instead of updating that one.
+      const again = await provider.upsertAgent({
+        definition: sampleAgentDefinition(),
+        existingProviderAgentId: providerAgentId,
+      });
+      expect(again.providerAgentId).not.toBe(providerAgentId);
+      await provider.deleteAgent(again.providerAgentId);
+    });
+
     it("deletes call data without error, even when asked twice", async () => {
       const { provider } = makeHarness();
       await provider.deleteCallData("call_contract_delete");

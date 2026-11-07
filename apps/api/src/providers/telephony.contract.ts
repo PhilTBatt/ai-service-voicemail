@@ -10,6 +10,13 @@ export interface TelephonyHarness {
   sign: (url: string, params: Record<string, string>) => string;
   /** Puts a recording's audio at the "provider" under this URL. */
   seedRecording: (recordingUrl: string, bytes: Uint8Array<ArrayBuffer>) => void;
+  /** Puts a call record at the "provider". */
+  seedCallRecord: (record: {
+    sid: string;
+    to: string;
+    startedAt: Date;
+    parentCallSid: string | null;
+  }) => void;
 }
 
 const CONFIG = {
@@ -71,6 +78,51 @@ export function describeTelephonyProviderContract(
       ).resolves.toBeUndefined();
       await expect(provider.releaseNumber(bought.providerSid)).resolves.toBeUndefined();
       await expect(provider.releaseNumber(bought.providerSid)).resolves.toBeUndefined(); // repeatable
+    });
+
+    it("lists a number's call records between two dates, children first, and deletes them, safely twice", async () => {
+      const { provider, seedCallRecord } = makeHarness();
+      const to = "+441632960500";
+      seedCallRecord({
+        sid: "CAparent1",
+        to,
+        startedAt: new Date("2026-11-01T10:00:00Z"),
+        parentCallSid: null,
+      });
+      seedCallRecord({
+        sid: "CAchild1",
+        to: "sip:agent@sip.example.com",
+        startedAt: new Date("2026-11-01T10:00:01Z"),
+        parentCallSid: "CAparent1",
+      });
+      seedCallRecord({
+        sid: "CAold",
+        to,
+        startedAt: new Date("2026-09-01T10:00:00Z"),
+        parentCallSid: null,
+      });
+      seedCallRecord({
+        sid: "CAelsewhere",
+        to: "+441632960501",
+        startedAt: new Date("2026-11-01T10:00:00Z"),
+        parentCallSid: null,
+      });
+      // After the number was released: whoever holds it next.
+      seedCallRecord({
+        sid: "CAnextHolder",
+        to,
+        startedAt: new Date("2026-11-05T10:00:00Z"),
+        parentCallSid: null,
+      });
+      const since = new Date("2026-10-15T00:00:00Z");
+      const until = new Date("2026-11-03T12:00:00Z");
+
+      const sids = await provider.listCallSids({ to, since, until });
+      expect(sids).toEqual(["CAchild1", "CAparent1"]);
+      for (const sid of sids) await provider.deleteCall(sid);
+      await expect(provider.deleteCall("CAparent1")).resolves.toBeUndefined();
+      expect(await provider.listCallSids({ to, since, until })).toEqual([]);
+      expect(await provider.listCallSids({ to, since, until: null })).toEqual(["CAnextHolder"]);
     });
 
     it("streams a recording's audio, and returns null for one it no longer has", async () => {

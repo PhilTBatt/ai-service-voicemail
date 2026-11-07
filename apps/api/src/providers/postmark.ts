@@ -1,5 +1,5 @@
 // Postmark's email API (decision 010), over fetch like the other adapters so it's testable
-// offline. Docs read 2026-11-08: https://postmarkapp.com/developer/api/email-api
+// offline. Docs read 2026-11-07: https://postmarkapp.com/developer/api/email-api
 import type { EmailMessage, EmailProvider, EmailReceipt } from "./email.ts";
 
 export interface PostmarkOptions {

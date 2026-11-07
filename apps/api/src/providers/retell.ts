@@ -22,7 +22,7 @@ export interface RetellOptions {
   /**
    * Retell signs webhooks and function calls with one specific API key: the one marked with
    * a "webhook" badge in its dashboard. When that isn't the key used for REST calls, it goes
-   * here (docs.retellai.com/features/secure-webhook, read 2026-11-08).
+   * here (docs.retellai.com/features/secure-webhook, read 2026-11-07).
    */
   webhookKey?: string;
   /** Where Retell sends call events. Omit until there's a public URL (Step 4). */
@@ -63,6 +63,10 @@ export class RetellApiError extends Error {
     this.path = path;
   }
 }
+
+/** Retell's answer for something it doesn't have: 404, or the documented 422 "Cannot find requested asset". */
+const isGone = (error: unknown) =>
+  error instanceof RetellApiError && (error.status === 404 || error.status === 422);
 
 export class RetellVoiceProvider implements VoiceProvider {
   private readonly options: RetellOptions;
@@ -213,6 +217,42 @@ export class RetellVoiceProvider implements VoiceProvider {
     } catch (error) {
       // Already deleted (or expired at Retell): the outcome we wanted.
       if (!(error instanceof RetellApiError && error.status === 404)) throw error;
+    }
+  }
+
+  // Retell's docs (read 2026-11-07): DELETE /delete-conversation-flow/{id} deletes the flow and
+  // all its versions (204; 404 when it's missing), and with force_delete=true it does so even
+  // while an agent still uses the flow. DELETE /delete-agent/{id} deletes every version of the
+  // agent (204). A missing agent isn't documented as a 404; the documented 422 is "Cannot find
+  // requested asset", so both mean gone. The flow goes first: if a run stops between the two, a
+  // retry still finds the flow through the agent. The other way round, the flow, with the
+  // business's prompt in it, would be stranded.
+  async deleteAgent(providerAgentId: string) {
+    let flowId: string | null;
+    try {
+      const agent = await this.request<{ response_engine?: { conversation_flow_id?: string } }>(
+        "GET",
+        `/get-agent/${encodeURIComponent(providerAgentId)}`,
+      );
+      flowId = agent.response_engine?.conversation_flow_id ?? null;
+    } catch (error) {
+      if (isGone(error)) return; // the agent goes last, so its flow went before it
+      throw error;
+    }
+    if (flowId) {
+      try {
+        await this.request(
+          "DELETE",
+          `/delete-conversation-flow/${encodeURIComponent(flowId)}?force_delete=true`,
+        );
+      } catch (error) {
+        if (!(error instanceof RetellApiError && error.status === 404)) throw error;
+      }
+    }
+    try {
+      await this.request("DELETE", `/delete-agent/${encodeURIComponent(providerAgentId)}`);
+    } catch (error) {
+      if (!isGone(error)) throw error;
     }
   }
 

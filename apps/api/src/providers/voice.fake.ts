@@ -122,6 +122,14 @@ export class FakeVoiceProvider implements VoiceProvider {
     return this.signedRequest(Buffer.from(JSON.stringify({ name, call, args: {} })));
   }
 
+  readonly deletedAgents: string[] = [];
+
+  deleteAgent(providerAgentId: string) {
+    this.agents.delete(providerAgentId);
+    this.deletedAgents.push(providerAgentId);
+    return Promise.resolve();
+  }
+
   deleteCallData(providerCallId: string) {
     this.deleteCalls.push(providerCallId);
     this.recordingAudio.delete(providerCallId);
