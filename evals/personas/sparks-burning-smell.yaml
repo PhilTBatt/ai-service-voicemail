@@ -1,0 +1,22 @@
+# Fictional caller. Sparks and a burning smell get the danger script.
+id: sparks-burning-smell
+name: Sparks or burning smell
+description: Sparks from a socket near the boiler and a smell of burning plastic.
+caller:
+  brief: >
+    There were sparks from the socket the boiler is plugged into and now there's a smell of
+    burning plastic. Nobody is hurt and there's no fire that you can see. You've switched the
+    socket off at the wall. You want someone out today. Give your details when asked.
+  name: Chloe
+  phone: "07700 900104"
+  postcode: XQ12 6EF
+  opening: "Hi, the socket my boiler's plugged into just sparked and there's a burning smell."
+expect:
+  scripts: [danger]
+  urgency: emergency
+  fields:
+    callerName: Chloe
+    callbackNumber: "+447700900104"
+    postcode: XQ12 6EF
+  ending: close
+  maxTurns: 18

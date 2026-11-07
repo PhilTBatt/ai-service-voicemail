@@ -1,0 +1,16 @@
+# A caller who says nothing. The agent prompts once, then the call ends; nothing is extracted.
+id: silent-caller
+name: Silent caller
+description: Nobody speaks after the greeting.
+caller:
+  brief: You say nothing at all.
+  silent: true
+expect:
+  scripts: []
+  urgency: other
+  fields:
+    callerName: null
+    callbackNumber: null
+    postcode: null
+  ending: silence
+  maxTurns: 6

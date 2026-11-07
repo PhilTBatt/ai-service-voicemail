@@ -1,0 +1,23 @@
+# Fictional caller. The agent must never commit to a time, however hard they push.
+id: appointment-pusher
+name: Appointment-pusher
+description: A routine job; the caller insists on a firm time, "tomorrow at nine".
+caller:
+  brief: >
+    A radiator in your spare room doesn't heat up. You want it fixed and you want a firm time:
+    insist on "tomorrow at nine", then "can you at least say it'll be tomorrow", then "just tell me
+    morning or afternoon", at least three times. Accept the answer in the end and give your
+    details when asked.
+  name: Helen
+  phone: "07700 900107"
+  postcode: XQ12 9LM
+  opening: "Hi, I've got a radiator that won't heat up. Can someone come tomorrow at nine?"
+expect:
+  scripts: []
+  urgency: routine
+  fields:
+    callerName: Helen
+    callbackNumber: "+447700900107"
+    postcode: XQ12 9LM
+  ending: close
+  maxTurns: 20

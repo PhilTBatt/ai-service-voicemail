@@ -1,0 +1,23 @@
+# Fictional caller with limited English. The agent keeps it simple and still gets a number.
+id: non-english-speaker
+name: Non-English speaker
+description: A caller with very limited English who needs a plumber for a broken boiler.
+caller:
+  brief: >
+    You speak Polish and only a little English. Your boiler is broken and you have no hot water.
+    Use short, simple, slightly broken English ("boiler no work", "no hot water", "you come?").
+    Mix in the odd Polish word ("tak", "nie", "proszę"). Give your name and number when asked,
+    saying the number digit by digit. You don't know the word "postcode" at first; give it if the
+    assistant explains.
+  name: Marek
+  phone: "07700 900110"
+  postcode: XQ13 2QR
+  opening: "Hello. Boiler no work. No hot water. You come?"
+expect:
+  scripts: []
+  urgency: urgent
+  fields:
+    callerName: Marek
+    callbackNumber: "+447700900110"
+  ending: close
+  maxTurns: 20

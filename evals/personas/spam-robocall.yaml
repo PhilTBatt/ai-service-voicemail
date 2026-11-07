@@ -1,0 +1,23 @@
+# A recorded sales message. The agent shouldn't engage; the call is marked as spam.
+id: spam-robocall
+name: Spam or robocall
+description: An automated sales message about business energy rates.
+caller:
+  brief: >
+    You are a recorded sales message, not a person. Read out a pitch about reducing business
+    energy bills, ask them to "press one to speak to an adviser", repeat the pitch once if the
+    assistant replies, then hang up. Never answer questions.
+  name: null
+  phone: null
+  postcode: null
+  opening: "This is an important message about your business energy rates. You may be entitled to a reduction. Press one to speak to an adviser."
+  hangsUpAfterTurns: 3
+expect:
+  scripts: []
+  forbidScripts: [gas_emergency, danger, water_leak]
+  urgency: spam
+  fields:
+    callerName: null
+    callbackNumber: null
+  ending: any
+  maxTurns: 10

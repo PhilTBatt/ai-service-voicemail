@@ -1,0 +1,53 @@
+import { describe, expect, it } from "vitest";
+import { REQUIRED_PERSONAS, loadPersonas, parsePersona } from "./persona.ts";
+
+describe("personas", () => {
+  const personas = loadPersonas();
+
+  it("includes every persona BUILD_PLAN Step 7 lists, each with a unique id", () => {
+    const ids = personas.map((p) => p.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const required of REQUIRED_PERSONAS) expect(ids).toContain(required);
+  });
+
+  it("uses only fictional contact details: Ofcom drama numbers and a non-existent postcode area", () => {
+    for (const p of personas) {
+      if (p.caller.phone) expect(p.caller.phone.replaceAll(" ", "")).toMatch(/^07700900\d{3}$/);
+      if (p.caller.postcode) expect(p.caller.postcode).toMatch(/^XQ\d/);
+      if (p.expect.fields.callbackNumber) {
+        expect(p.expect.fields.callbackNumber).toMatch(/^\+447700900\d{3}$/);
+      }
+    }
+  });
+
+  it("gives every emergency persona a verbatim script to check", () => {
+    for (const id of ["gas-smell", "gas-in-passing", "co-alarm"]) {
+      expect(personas.find((p) => p.id === id)?.expect.scripts).toEqual(["gas_emergency"]);
+    }
+    expect(personas.find((p) => p.id === "sparks-burning-smell")?.expect.scripts).toEqual([
+      "danger",
+    ]);
+    expect(personas.find((p) => p.id === "water-through-ceiling")?.expect.scripts).toEqual([
+      "water_leak",
+    ]);
+  });
+
+  it("rejects a persona with an unknown script or a bad id", () => {
+    expect(() =>
+      parsePersona(
+        `id: Bad Id\nname: x\ndescription: x\ncaller:\n  brief: x\nexpect:\n  scripts: [teleport]\n`,
+        "bad.yaml",
+      ),
+    ).toThrow(/Invalid persona bad.yaml/);
+  });
+
+  it("fills in defaults", () => {
+    const p = parsePersona(
+      `id: min\nname: Minimal\ndescription: x\ncaller:\n  brief: x\nexpect: {}\n`,
+      "min.yaml",
+    );
+    expect(p.variables).toEqual({ open_now: "yes", holiday_mode: "no" });
+    expect(p.expect).toMatchObject({ scripts: [], ending: "any", maxTurns: 20, fields: {} });
+    expect(p.caller.silent).toBe(false);
+  });
+});

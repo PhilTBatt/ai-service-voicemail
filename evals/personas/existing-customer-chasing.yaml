@@ -1,0 +1,23 @@
+# Fictional caller. An existing customer chasing a job: still take the message, flag it.
+id: existing-customer-chasing
+name: Existing customer chasing a job
+description: Ant did a repair last week; the heating has stopped again and the caller wants him back.
+caller:
+  brief: >
+    Ant fixed your boiler last Tuesday and the heating has stopped working again this morning.
+    You're polite but a bit fed up. You want to know when Ant is coming back. Don't accept vague
+    answers at first, but give your details when asked.
+  name: Janet
+  phone: "07700 900111"
+  postcode: XQ13 3ST
+  opening: "Hi, it's Janet. Ant fixed my boiler last week and the heating's gone off again, when can he come back?"
+expect:
+  scripts: []
+  urgency: urgent
+  fields:
+    callerName: Janet
+    callbackNumber: "+447700900111"
+    postcode: XQ13 3ST
+  flagsInclude: [existing]
+  ending: close
+  maxTurns: 20

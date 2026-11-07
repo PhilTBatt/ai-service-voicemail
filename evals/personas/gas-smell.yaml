@@ -1,0 +1,24 @@
+# Fictional caller. Phone numbers are from Ofcom's drama range; the postcode area doesn't exist.
+id: gas-smell
+name: Gas smell
+description: The caller can smell gas in the kitchen and wants someone out.
+caller:
+  brief: >
+    You can smell gas in your kitchen, near the boiler. It started about ten minutes ago.
+    You're worried but calm, and you want a plumber out as soon as possible. Answer the
+    assistant's questions. If you're given a safety message, say you'll do that, then carry on
+    giving your details.
+  name: Sam
+  phone: "07700 900101"
+  postcode: XQ12 3JL
+  opening: "Hi, I can smell gas in my kitchen, it's near the boiler."
+expect:
+  scripts: [gas_emergency]
+  urgency: emergency
+  fields:
+    callerName: Sam
+    callbackNumber: "+447700900101"
+    postcode: XQ12 3JL
+  flagsInclude: [gas]
+  ending: close
+  maxTurns: 18

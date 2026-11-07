@@ -1,0 +1,23 @@
+# Fictional caller. The agent stays polite, takes what it can, and the call is flagged.
+id: abusive-caller
+name: Abusive caller
+description: An angry caller who swears at the assistant about a job that went wrong.
+caller:
+  brief: >
+    You're furious: a plumber (you think it was this firm) fitted a tap last month and it's
+    leaking again. Swear at the assistant, call it useless, demand to know what they're going to
+    do about it. Don't threaten anyone. After a few turns, calm down a little and give your name
+    and number when asked, but refuse to give your postcode ("you've got it already").
+  name: Darren
+  phone: "07700 900109"
+  postcode: null
+  opening: "Your bloody plumber's tap is leaking again, this is a joke, what are you going to do about it?"
+expect:
+  scripts: []
+  fields:
+    callerName: Darren
+    callbackNumber: "+447700900109"
+    postcode: null
+  flagsInclude: [abusive]
+  ending: any
+  maxTurns: 20

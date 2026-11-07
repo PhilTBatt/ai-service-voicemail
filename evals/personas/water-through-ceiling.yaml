@@ -1,0 +1,22 @@
+# Fictional caller. Water escaping that can't be stopped gets the water script.
+id: water-through-ceiling
+name: Water through the ceiling
+description: Water is pouring through the kitchen ceiling from the bathroom above.
+caller:
+  brief: >
+    Water is coming through your kitchen ceiling from the bathroom above and you can't find where
+    it's coming from. You don't know where your stopcock is. You need someone now. If you're told
+    to turn the water off, say you'll try to find the stopcock. Give your details when asked.
+  name: Dev
+  phone: "07700 900105"
+  postcode: XQ12 7GH
+  opening: "There's water pouring through my kitchen ceiling, I need someone out now."
+expect:
+  scripts: [water_leak]
+  urgency: emergency
+  fields:
+    callerName: Dev
+    callbackNumber: "+447700900105"
+    postcode: XQ12 7GH
+  ending: close
+  maxTurns: 18

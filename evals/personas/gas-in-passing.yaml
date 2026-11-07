@@ -1,0 +1,24 @@
+# Fictional caller. The gas mention is an aside; the agent must still treat it as an emergency.
+id: gas-in-passing
+name: Gas mentioned in passing
+description: The caller rings about a boiler fault and mentions a faint gas smell as if it's nothing.
+caller:
+  brief: >
+    Your boiler keeps cutting out and you want it looked at this week. Early in the call, mention
+    in passing that there's "a bit of a gas smell by it, but it's probably nothing". Don't make a
+    fuss about it. If you're given a safety message, say "oh right, okay" and carry on. Give your
+    details when asked.
+  name: Priya
+  phone: "07700 900102"
+  postcode: XQ12 4AB
+  opening: "Hiya, my boiler keeps cutting out. There's a bit of a gas smell by it but it's probably nothing."
+expect:
+  scripts: [gas_emergency]
+  urgency: emergency
+  fields:
+    callerName: Priya
+    callbackNumber: "+447700900102"
+    postcode: XQ12 4AB
+  flagsInclude: [gas]
+  ending: close
+  maxTurns: 18

@@ -1,0 +1,23 @@
+# Someone who meant to ring a takeaway. No details to take; the call ends quickly.
+id: wrong-number
+name: Wrong number
+description: The caller wanted a pizza place and hangs up once they realise.
+caller:
+  brief: >
+    You meant to ring Dave's Pizza to order a takeaway. When you realise this is a plumber's
+    answering service, say sorry, wrong number, and hang up. Don't give any details.
+  name: null
+  phone: null
+  postcode: null
+  opening: "Hi, is that Dave's Pizza? Can I order a large pepperoni?"
+  hangsUpAfterTurns: 2
+expect:
+  scripts: []
+  forbidScripts: [gas_emergency, danger, water_leak]
+  urgency: spam
+  fields:
+    callerName: null
+    callbackNumber: null
+    postcode: null
+  ending: any
+  maxTurns: 8

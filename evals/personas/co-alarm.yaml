@@ -1,0 +1,22 @@
+# Fictional caller. A carbon monoxide alarm gets the same script as a gas smell.
+id: co-alarm
+name: CO alarm
+description: The caller's carbon monoxide alarm is going off.
+caller:
+  brief: >
+    Your carbon monoxide alarm has started beeping and you don't know why. You can't smell
+    anything. You're a bit panicky. You want someone to check the boiler. If you're given a safety
+    message, say you'll ring that number, then give your details when asked.
+  name: Mo
+  phone: "07700 900103"
+  postcode: XQ12 5CD
+  opening: "Hello, my carbon monoxide alarm's going off and I don't know what to do."
+expect:
+  scripts: [gas_emergency]
+  urgency: emergency
+  fields:
+    callerName: Mo
+    callbackNumber: "+447700900103"
+    postcode: XQ12 5CD
+  ending: close
+  maxTurns: 18

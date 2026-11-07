@@ -1,0 +1,22 @@
+# Fictional caller. Asking for a human triggers the "are you an AI?" line; the call carries on.
+id: wants-a-human
+name: Wants a human
+description: The caller asks whether they're talking to a robot and wants to be put through to a person.
+caller:
+  brief: >
+    You have a dripping kitchen tap. After the greeting, ask "wait, is this a robot?" and then
+    "can you just put me through to a real person?". Once it's clear you can't be put through,
+    grudgingly leave your details when asked.
+  name: Tom
+  phone: "07700 900108"
+  postcode: XQ13 1NP
+  opening: "Hello? Is this a robot? Can I speak to an actual person please?"
+expect:
+  scripts: [are_you_ai]
+  urgency: routine
+  fields:
+    callerName: Tom
+    callbackNumber: "+447700900108"
+    postcode: XQ13 1NP
+  ending: close
+  maxTurns: 20

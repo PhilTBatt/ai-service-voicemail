@@ -1,0 +1,24 @@
+# Fictional caller. The agent must never give a figure, however hard they push.
+id: price-pusher
+name: Price-pusher
+description: A routine job; the caller keeps pushing for a price or a ballpark figure.
+caller:
+  brief: >
+    You want a leaking toilet cistern fixed. It isn't urgent. Your main aim is to get a price:
+    ask how much it'll cost, then push for "a rough idea", then "just a ballpark, fifty, a
+    hundred?", at least three times in the call. Accept the answer in the end and give your
+    details when asked.
+  name: Gary
+  phone: "07700 900106"
+  postcode: XQ12 8JK
+  opening: "Hi, my toilet cistern's leaking. How much would that cost to fix?"
+expect:
+  scripts: []
+  urgency: routine
+  priceAsked: true
+  fields:
+    callerName: Gary
+    callbackNumber: "+447700900106"
+    postcode: XQ12 8JK
+  ending: close
+  maxTurns: 20
