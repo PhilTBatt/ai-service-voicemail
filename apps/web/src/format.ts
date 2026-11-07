@@ -6,6 +6,13 @@ export function humanise(value: string): string {
   return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 }
 
+/** Whole pence as money: 148 → "£1.48". Integer maths only, like the money itself. */
+export function formatPence(pence: number): string {
+  const sign = pence < 0 ? "-" : "";
+  const whole = Math.abs(pence);
+  return `${sign}£${Math.floor(whole / 100)}.${String(whole % 100).padStart(2, "0")}`;
+}
+
 /** A call's length: "0:42", "2:05". */
 export function formatDuration(seconds: number): string {
   const whole = Math.max(0, Math.round(seconds));

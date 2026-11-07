@@ -435,3 +435,11 @@ table.usage td {
   padding: 0.5rem;
   border-bottom: 1px solid var(--line);
 }
+
+.small {
+  font-size: 0.85rem;
+}
+
+table.usage tfoot th {
+  border-top: 2px solid var(--line);
+}

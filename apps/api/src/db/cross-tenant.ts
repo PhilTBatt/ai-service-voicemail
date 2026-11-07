@@ -4,6 +4,7 @@
 // └──────────────────────────────────────────────────────────────────────────────────────┘
 import type { Trade } from "@callmate/shared";
 import type pg from "pg";
+import type { CostPrices } from "../core/prices.ts";
 import { createPool } from "./pool.ts";
 
 /**
@@ -247,6 +248,131 @@ export async function listCurrentUsage(admin: AdminPool, today: Date): Promise<T
     [today],
   );
   return rows;
+}
+
+/** One tenant's estimated cost in a window. Whole pence, each part rounded once. */
+export interface TenantCostEstimate {
+  tenantId: string;
+  businessName: string;
+  status: string;
+  calls: number;
+  pence: {
+    voicePlatform: number;
+    languageModel: number;
+    texts: number;
+    phoneMinutes: number;
+    number: number;
+    total: number;
+  };
+}
+
+/**
+ * What each tenant's calls cost us in a window, estimated (BUILD_PLAN Step 10's admin screen).
+ * - Voice platform: the cost Retell reports for each call, in US cents.
+ * - Language model: the extraction's tokens at list price.
+ * - Texts: the segments sent.
+ * - Phone minutes: each call's length rounded up to whole minutes (an assumption about how
+ *   Twilio rounds), for the incoming call, plus the SIP leg to the voice platform when the
+ *   assistant answered. Fallback voicemails have no SIP leg.
+ * - Number: one month's rental if the tenant has a number now.
+ * Everything is summed as exact decimals and rounded to whole pence at the end. Cost lines the
+ * price list doesn't cover come back in `unpriced`, so a gap is visible rather than silent.
+ */
+export async function estimateCosts(
+  admin: AdminPool,
+  window: { from: Date; to: Date },
+  prices: CostPrices,
+): Promise<{ tenants: TenantCostEstimate[]; unpriced: string[] }> {
+  const models = Object.entries(prices.models);
+  const modelArgs = [
+    models.map(([name]) => name),
+    models.map(([, price]) => String(price.input)),
+    models.map(([, price]) => String(price.output)),
+  ];
+  const { rows } = await admin.query<{
+    tenant_id: string;
+    business_name: string;
+    status: string;
+    calls: number;
+    voice_platform: number;
+    language_model: number;
+    texts: number;
+    phone_minutes: number;
+    number: number;
+  }>(
+    `WITH period_calls AS (
+       SELECT id, tenant_id, via_fallback,
+              ceil(extract(epoch FROM ended_at - started_at) / 60) AS minutes
+       FROM calls WHERE started_at >= $1 AND started_at < $2
+     ),
+     costs AS (
+       SELECT cc.tenant_id, cc.component, cc.unit_type, cc.units
+       FROM call_costs cc JOIN period_calls pc ON pc.id = cc.call_id
+     ),
+     models AS (
+       SELECT * FROM unnest($8::text[], $9::numeric[], $10::numeric[]) AS m(model, input_price, output_price)
+     )
+     SELECT t.id AS tenant_id, t.business_name, t.status,
+       (SELECT count(*) FROM period_calls pc WHERE pc.tenant_id = t.id)::int AS calls,
+       round(coalesce((SELECT sum(units) FROM costs c
+                       WHERE c.tenant_id = t.id AND c.unit_type = 'usd_cents'), 0)
+             * $3::numeric)::int AS voice_platform,
+       round(coalesce((SELECT sum(c.units * CASE WHEN c.component = m.model || ':input_tokens'
+                                                 THEN m.input_price ELSE m.output_price END)
+                       FROM costs c
+                       JOIN models m ON c.component IN (m.model || ':input_tokens', m.model || ':output_tokens')
+                       WHERE c.tenant_id = t.id), 0)
+             * $3::numeric / 10000)::int AS language_model,
+       round(coalesce((SELECT sum(units) FROM costs c
+                       WHERE c.tenant_id = t.id AND c.unit_type = 'segments'), 0)
+             * $4::numeric * 100)::int AS texts,
+       round(coalesce((SELECT sum(minutes) FROM period_calls pc WHERE pc.tenant_id = t.id), 0)
+               * $5::numeric * 100
+             + coalesce((SELECT sum(minutes) FROM period_calls pc
+                         WHERE pc.tenant_id = t.id AND NOT pc.via_fallback), 0)
+               * $6::numeric * $3::numeric * 100)::int AS phone_minutes,
+       CASE WHEN EXISTS (SELECT 1 FROM phone_numbers p WHERE p.tenant_id = t.id AND p.status = 'active')
+            THEN round($7::numeric * 100)::int ELSE 0 END AS number
+     FROM tenants t
+     ORDER BY t.business_name`,
+    [
+      window.from,
+      window.to,
+      prices.gbpPerUsd,
+      prices.smsSegmentGbp,
+      prices.inboundCallPerMinuteGbp,
+      prices.sipPerMinuteUsd,
+      prices.localNumberPerMonthGbp,
+      ...modelArgs,
+    ],
+  );
+  const unpriced = await admin.query<{ component: string }>(
+    `SELECT DISTINCT cc.component
+     FROM call_costs cc JOIN calls c ON c.id = cc.call_id
+     WHERE c.started_at >= $1 AND c.started_at < $2
+       AND cc.unit_type NOT IN ('usd_cents', 'segments', 'seconds')
+       AND NOT (cc.unit_type = 'tokens'
+                AND regexp_replace(cc.component, ':(input|output)_tokens$', '') = ANY($3::text[]))
+     ORDER BY 1`,
+    [window.from, window.to, modelArgs[0]],
+  );
+  return {
+    tenants: rows.map((row) => ({
+      tenantId: row.tenant_id,
+      businessName: row.business_name,
+      status: row.status,
+      calls: row.calls,
+      pence: {
+        voicePlatform: row.voice_platform,
+        languageModel: row.language_model,
+        texts: row.texts,
+        phoneMinutes: row.phone_minutes,
+        number: row.number,
+        total: row.voice_platform + row.language_model + row.texts + row.phone_minutes + row.number,
+      },
+    })),
+    unpriced: unpriced.rows.map((row) => row.component),
+  };
 }
 
 // ─── People who log in (BUILD_PLAN Step 10) ────────────────────────────────────────────

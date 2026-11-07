@@ -5,6 +5,7 @@ import {
   assignPhoneNumber,
   createAdminPool,
   createTenant,
+  estimateCosts,
   findTenantIdByNumber,
   listTenants,
 } from "./cross-tenant.ts";
@@ -124,5 +125,83 @@ describe("admin pool", () => {
     await expect(
       assignPhoneNumber(admin, tenantA, dramaNumber(), `PN${randomUUID()}`),
     ).rejects.toMatchObject({ code: "23505" });
+  });
+});
+
+describe("estimateCosts", () => {
+  it("adds up each tenant's recorded costs at the given prices, rounding to pence once", async () => {
+    const tenantId = await createTenant(admin, {
+      businessName: "Costly Plumbing",
+      trade: "plumber",
+    });
+    // Ofcom's drama range 01632 960000 to 960999, freed first because runs reuse numbers.
+    const number = `+441632960${String(Math.floor(Math.random() * 990)).padStart(3, "0")}`;
+    await admin.query(
+      "UPDATE phone_numbers SET status = 'released', released_at = now() WHERE number = $1 AND status = 'active'",
+      [number],
+    );
+    await assignPhoneNumber(admin, tenantId, number, `PN${randomUUID()}`);
+
+    const call = async (startedAt: string, seconds: number, viaFallback: boolean) =>
+      (
+        await admin.query<{ id: string }>(
+          `INSERT INTO calls (tenant_id, provider_call_id, started_at, ended_at, via_fallback)
+           VALUES ($1, $2, $3, $3::timestamptz + make_interval(secs => $4), $5) RETURNING id`,
+          [tenantId, `call_${randomUUID()}`, startedAt, seconds, viaFallback],
+        )
+      ).rows[0]!.id;
+    const cost = (callId: string, component: string, units: number, unitType: string) =>
+      admin.query(
+        `INSERT INTO call_costs (tenant_id, call_id, component, units, unit_type, is_estimated)
+         VALUES ($1, $2, $3, $4, $5, false)`,
+        [tenantId, callId, component, units, unitType],
+      );
+
+    // A 2:05 call the assistant answered (3 minutes rounded up) and a 0:42 voicemail (1 minute).
+    const answered = await call("2031-03-10T10:00:00Z", 125, false);
+    const voicemail = await call("2031-03-11T10:00:00Z", 42, true);
+    const nextMonth = await call("2031-04-02T10:00:00Z", 600, false);
+    await cost(answered, "retell:llm", 33.28, "usd_cents");
+    await cost(answered, "retell:voice", 7.8, "usd_cents");
+    await cost(answered, "retell:duration", 125, "seconds");
+    await cost(answered, "priced-model:input_tokens", 1_000_000, "tokens");
+    await cost(answered, "priced-model:output_tokens", 200_000, "tokens");
+    await cost(answered, "sms:segments", 2, "segments");
+    await cost(voicemail, "mystery:widgets", 3, "widgets");
+    await cost(voicemail, "unpriced-model:input_tokens", 500, "tokens");
+    await cost(nextMonth, "retell:llm", 1000, "usd_cents");
+
+    const { tenants, unpriced } = await estimateCosts(
+      admin,
+      { from: new Date("2031-03-01T00:00:00Z"), to: new Date("2031-04-01T00:00:00Z") },
+      {
+        gbpPerUsd: "0.8",
+        smsSegmentGbp: "0.042325",
+        inboundCallPerMinuteGbp: "0.007558",
+        sipPerMinuteUsd: "0.004",
+        localNumberPerMonthGbp: "0.86917",
+        models: { "priced-model": { input: 0.1, output: 0.5 } },
+      },
+    );
+    expect(tenants.find((row) => row.tenantId === tenantId)).toEqual({
+      tenantId,
+      businessName: "Costly Plumbing",
+      status: "onboarding",
+      calls: 2,
+      pence: {
+        // (33.28 + 7.8) US cents at 0.8 = 32.864p
+        voicePlatform: 33,
+        // (1,000,000 x $0.10 + 200,000 x $0.50) per million = $0.20, at 0.8 = 16p
+        languageModel: 16,
+        // 2 x £0.042325 = 8.465p
+        texts: 8,
+        // 4 incoming minutes x £0.007558 + 3 SIP minutes x $0.004 at 0.8 = 3.9832p
+        phoneMinutes: 4,
+        // £0.86917 a month
+        number: 87,
+        total: 148,
+      },
+    });
+    expect(unpriced).toEqual(["mystery:widgets", "unpriced-model:input_tokens"]);
   });
 });

@@ -31,3 +31,9 @@ export function overagePence(
   const minutes = Math.ceil(periodBillableSeconds / 60);
   return Math.max(0, minutes - includedMinutes) * overagePencePerMinute;
 }
+
+/** The instant a UK calendar date (YYYY-MM-DD) begins: midnight UK time, as UTC. */
+export function startOfUkDate(date: string): Date {
+  const start = Temporal.PlainDate.from(date).toZonedDateTime({ timeZone: "Europe/London" });
+  return new Date(start.epochMilliseconds);
+}

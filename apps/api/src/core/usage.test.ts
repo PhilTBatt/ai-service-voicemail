@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { billableSeconds, overagePence, usagePeriodFor } from "./usage.ts";
+import { billableSeconds, overagePence, startOfUkDate, usagePeriodFor } from "./usage.ts";
 
 describe("billableSeconds", () => {
   it("doesn't bill calls under 5 seconds", () => {
@@ -52,5 +52,12 @@ describe("overagePence (200 included minutes, 20p a minute)", () => {
 
   it("stays in integer pence", () => {
     expect(Number.isInteger(overagePence(12345, 200, 20))).toBe(true);
+  });
+});
+
+describe("startOfUkDate", () => {
+  it("is midnight UTC in winter and 23:00 UTC the day before in summer", () => {
+    expect(startOfUkDate("2026-11-01").toISOString()).toBe("2026-11-01T00:00:00.000Z");
+    expect(startOfUkDate("2026-07-01").toISOString()).toBe("2026-06-30T23:00:00.000Z");
   });
 });

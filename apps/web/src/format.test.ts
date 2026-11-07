@@ -1,11 +1,25 @@
 import { describe, expect, it } from "vitest";
 import { callsQuery, NO_FILTERS } from "./calls-query.ts";
-import { formatDuration, formatPhone, humanise, toUkMobileE164, urgencyLabel } from "./format.ts";
+import {
+  formatDuration,
+  formatPence,
+  formatPhone,
+  humanise,
+  toUkMobileE164,
+  urgencyLabel,
+} from "./format.ts";
 
 describe("format", () => {
   it("humanises stored values", () => {
     expect(humanise("heating_engineer")).toBe("Heating engineer");
     expect(humanise("live")).toBe("Live");
+  });
+
+  it("shows whole pence as pounds and pence", () => {
+    expect(formatPence(148)).toBe("£1.48");
+    expect(formatPence(7)).toBe("£0.07");
+    expect(formatPence(0)).toBe("£0.00");
+    expect(formatPence(-250)).toBe("-£2.50");
   });
 
   it("shows call lengths as minutes and seconds", () => {

@@ -151,3 +151,30 @@ export interface UsageRowView {
 export interface UsageView {
   tenants: UsageRowView[];
 }
+
+/** One business in GET /api/admin/costs. Whole pence. */
+export interface CostRowView {
+  tenantId: string;
+  businessName: string;
+  status: string;
+  calls: number;
+  pence: {
+    voicePlatform: number;
+    languageModel: number;
+    texts: number;
+    phoneMinutes: number;
+    number: number;
+    total: number;
+  };
+}
+
+/** GET /api/admin/costs: estimated supplier costs for the UK calendar month containing today. */
+export interface CostsView {
+  periodStart: string;
+  periodEnd: string;
+  tenants: CostRowView[];
+  /** The prices and assumptions behind the figures, in words. */
+  assumptions: string[];
+  /** Cost lines the price list doesn't cover, so they're missing from the figures. */
+  unpriced: string[];
+}

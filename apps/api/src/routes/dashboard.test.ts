@@ -184,6 +184,7 @@ describe("authorisation matrix", () => {
     { name: "PUT /admin/kill-switch", path: "/admin/kill-switch", body: {} },
     { name: "GET /admin/review-queue", path: "/admin/review-queue" },
     { name: "GET /admin/usage", path: "/admin/usage" },
+    { name: "GET /admin/costs", path: "/admin/costs" },
   ];
   // What tenant A's data looks like to each person. "allowed" means the door opened: the
   // request may still 400, 404 or 409 on its merits (no audio at the fake, invalid body).
@@ -195,6 +196,7 @@ describe("authorisation matrix", () => {
       "PUT /admin/kill-switch": 403,
       "GET /admin/review-queue": 403,
       "GET /admin/usage": 403,
+      "GET /admin/costs": 403,
     },
     ownerB: { "GET /me": "allowed", "GET /tenants": "allowed", default: 403 },
     admin: { default: "allowed" },
@@ -742,6 +744,21 @@ describe("admin screens", () => {
     });
     expect(calls.map((call) => call.callId)).not.toContain(callA);
     expect((await get("/admin/review-queue?limit=0", tokens.admin)).status).toBe(400);
+  });
+
+  it("estimates this month's costs per business, saying what it assumed", async () => {
+    const costs = await json<{
+      periodStart: string;
+      periodEnd: string;
+      tenants: { tenantId: string; pence: { total: number } }[];
+      assumptions: string[];
+      unpriced: string[];
+    }>(get("/admin/costs", tokens.admin));
+    // The admin screens' clock is pinned to 7 November 2026.
+    expect(costs.periodStart).toBe("2026-11-01");
+    expect(costs.periodEnd).toBe("2026-12-01");
+    expect(costs.tenants.map((row) => row.tenantId)).toContain(tenantA);
+    expect(costs.assumptions.join(" ")).toContain("a segment");
   });
 
   it("lists each tenant's usage for the current period", async () => {

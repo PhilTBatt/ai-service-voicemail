@@ -3,13 +3,10 @@
 // rounded up and the exchange rate is a setting, so the cap errs on the side of stopping.
 import type { LlmUsage } from "../providers/llm.ts";
 
-/** Published list prices, US dollars per million tokens, as of 2026-11-07. */
-export const MODEL_PRICES_USD_PER_MTOK: Record<string, { input: number; output: number }> = {
-  "claude-haiku-5-5": { input: 0.1, output: 0.5 },
-  "claude-sonnet-5-5": { input: 2, output: 10 },
-  "claude-opus-5-5": { input: 4, output: 20 },
-  "fake-model": { input: 0, output: 0 },
-};
+// One price list for the whole app: core/prices.ts.
+import { MODEL_PRICES_USD_PER_MTOK } from "../core/prices.ts";
+
+export { MODEL_PRICES_USD_PER_MTOK };
 
 export class CostCapExceededError extends Error {
   override readonly name = "CostCapExceededError";

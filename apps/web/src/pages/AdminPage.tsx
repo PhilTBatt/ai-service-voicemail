@@ -1,10 +1,17 @@
-// Phil's view of the whole service: is it healthy, which calls need a look, and how much each
-// business is using. The API answers these only for the admin role; this page is just a view.
-import type { HealthView, KillSwitchView, ReviewQueueView, UsageView } from "@callmate/shared";
+// Phil's view of the whole service: is it healthy, which calls need a look, how much each
+// business is using, and what that costs us. The API answers these only for the admin role; this page is just a view.
+import type {
+  CostRowView,
+  CostsView,
+  HealthView,
+  KillSwitchView,
+  ReviewQueueView,
+  UsageView,
+} from "@callmate/shared";
 import { useState } from "react";
 import { Link } from "react-router";
 import { asError, useApi, useLoad } from "../api.ts";
-import { formatDuration } from "../format.ts";
+import { formatDuration, formatPence } from "../format.ts";
 import { formatUkDateTime } from "../time.ts";
 import { ErrorNote, StatusBadge, UrgencyBadge } from "../ui.tsx";
 
@@ -15,6 +22,7 @@ export function AdminPage() {
       <Health />
       <ReviewQueue />
       <Usage />
+      <Costs />
     </>
   );
 }
@@ -179,6 +187,82 @@ function Usage() {
           </tbody>
         </table>
       </div>
+    </section>
+  );
+}
+
+const COST_COLUMNS: { label: string; pick: (row: CostRowView) => number }[] = [
+  { label: "Voice platform", pick: (row) => row.pence.voicePlatform },
+  { label: "AI summaries", pick: (row) => row.pence.languageModel },
+  { label: "Texts", pick: (row) => row.pence.texts },
+  { label: "Phone minutes", pick: (row) => row.pence.phoneMinutes },
+  { label: "Number", pick: (row) => row.pence.number },
+  { label: "Total", pick: (row) => row.pence.total },
+];
+
+/** What each business cost us this month, estimated. Integer pence throughout, summed here too. */
+function Costs() {
+  const { api } = useApi();
+  const costs = useLoad(() => api<CostsView>("/admin/costs"), "costs");
+
+  if (costs.status === "loading") return <p className="muted">Loading costs…</p>;
+  if (costs.status === "error") return <ErrorNote error={costs.error} retry={costs.reload} />;
+
+  const { tenants, periodStart, assumptions, unpriced } = costs.data;
+  const sum = (pick: (row: CostRowView) => number) =>
+    tenants.reduce((total, row) => total + pick(row), 0);
+  return (
+    <section>
+      <h2>Estimated costs this month</h2>
+      <p className="muted">
+        What each business's calls cost us since {periodStart}: an estimate from what the suppliers
+        reported and today's price list, not a bill.
+      </p>
+      {unpriced.length > 0 && (
+        <p className="card error">
+          Not counted, because the price list doesn't cover them: {unpriced.join(", ")}.
+        </p>
+      )}
+      <div className="table-wrap">
+        <table className="usage">
+          <thead>
+            <tr>
+              <th>Business</th>
+              <th>Calls</th>
+              {COST_COLUMNS.map((column) => (
+                <th key={column.label}>{column.label}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {tenants.map((row) => (
+              <tr key={row.tenantId}>
+                <td>
+                  <Link to={`/tenants/${row.tenantId}`}>{row.businessName}</Link>
+                </td>
+                <td>{row.calls}</td>
+                {COST_COLUMNS.map((column) => (
+                  <td key={column.label}>{formatPence(column.pick(row))}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr>
+              <th>All businesses</th>
+              <th>{sum((row) => row.calls)}</th>
+              {COST_COLUMNS.map((column) => (
+                <th key={column.label}>{formatPence(sum(column.pick))}</th>
+              ))}
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      <ul className="muted small">
+        {assumptions.map((line) => (
+          <li key={line}>{line}</li>
+        ))}
+      </ul>
     </section>
   );
 }

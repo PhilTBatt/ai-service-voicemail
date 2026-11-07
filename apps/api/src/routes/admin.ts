@@ -1,11 +1,20 @@
 // The admin API (BUILD_PLAN Step 10): Phil's view of the whole service. Mounted under
 // /api/admin behind authenticate() and requireRole("admin"), so nothing here is reachable by
 // an owner or the reseller. Cross-tenant reads go through the admin pool, as decision 006 says.
-import type { HealthView, KillSwitchView, ReviewQueueView, UsageView } from "@callmate/shared";
+import type {
+  CostsView,
+  HealthView,
+  KillSwitchView,
+  ReviewQueueView,
+  UsageView,
+} from "@callmate/shared";
 import { Router } from "express";
 import type pg from "pg";
 import { z } from "zod";
+import { CURRENT_PRICES, describePrices } from "../core/prices.ts";
+import { startOfUkDate, usagePeriodFor } from "../core/usage.ts";
 import {
+  estimateCosts,
   healthSnapshot,
   listCurrentUsage,
   listFlaggedCalls,
@@ -74,6 +83,23 @@ export function adminRouter({ pool, admin, now = () => new Date() }: AdminOption
   // Billable seconds per tenant for the period that contains today. Prices come with Step 12.
   router.get("/usage", async (_req, res) => {
     res.json({ tenants: await listCurrentUsage(admin, now()) } satisfies UsageView);
+  });
+
+  // What each business cost us this month, estimated from the recorded costs and the price list.
+  router.get("/costs", async (_req, res) => {
+    const { periodStart, periodEnd } = usagePeriodFor(now());
+    const { tenants, unpriced } = await estimateCosts(
+      admin,
+      { from: startOfUkDate(periodStart), to: startOfUkDate(periodEnd) },
+      CURRENT_PRICES,
+    );
+    res.json({
+      periodStart,
+      periodEnd,
+      tenants,
+      assumptions: describePrices(CURRENT_PRICES),
+      unpriced,
+    } satisfies CostsView);
   });
 
   return router;

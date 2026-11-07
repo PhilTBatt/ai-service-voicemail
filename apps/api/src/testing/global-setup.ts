@@ -3,8 +3,7 @@ import { resolveBinary } from "dbmate";
 import pg from "pg";
 import { TEST_MIGRATION_DATABASE_URL } from "./databases.ts";
 
-// Every tenant table, in one TRUNCATE so the foreign keys don't matter. pg-boss's tables are
-// left alone: they belong to the app role, and jobs are keyed uniquely per test anyway.
+// Every tenant table, in one TRUNCATE so the foreign keys don't matter.
 const TENANT_TABLES = [
   "tenants",
   "users",
@@ -52,6 +51,12 @@ export default async function setup(): Promise<void> {
   await owner.connect();
   try {
     await owner.query(`TRUNCATE ${TENANT_TABLES.join(", ")} CASCADE`);
+    // Jobs too. Left over from earlier runs, they point at tenants just deleted, and a worker a
+    // test starts has to get through all of them (failing, then retrying) before it reaches
+    // the test's own job: hundreds had piled up, enough to time the sync test out. The queue
+    // definitions stay; only queued, retrying and finished jobs go. The tables belong to the app
+    // role, which the owner role is a member of.
+    await owner.query("TRUNCATE pgboss.job, pgboss.job_dependency");
   } finally {
     await owner.end();
   }
