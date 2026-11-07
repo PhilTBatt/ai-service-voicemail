@@ -112,6 +112,57 @@ export async function listTenants(admin: AdminPool): Promise<TenantSummary[]> {
   return rows;
 }
 
+/** A tenant as the dashboard lists it (Step 10): the summary plus how busy its line is. */
+export interface TenantWithCallCounts extends TenantSummary {
+  trade: string;
+  createdAt: Date;
+  callsLast30Days: number;
+  callsTotal: number;
+}
+
+/** Every tenant with its call counts. Counts are safe for the reseller; nothing else here is content. */
+export async function listTenantsWithCallCounts(admin: AdminPool): Promise<TenantWithCallCounts[]> {
+  const { rows } = await admin.query<TenantWithCallCounts>(
+    `SELECT t.id, t.business_name AS "businessName", t.trade, t.status, t.created_at AS "createdAt",
+            COUNT(c.id) FILTER (WHERE c.started_at >= now() - interval '30 days')::int AS "callsLast30Days",
+            COUNT(c.id)::int AS "callsTotal"
+     FROM tenants t LEFT JOIN calls c ON c.tenant_id = t.id
+     GROUP BY t.id ORDER BY t.created_at`,
+  );
+  return rows;
+}
+
+// ─── People who log in (BUILD_PLAN Step 10) ────────────────────────────────────────────
+// Creating accounts is an admin act (Step 11's onboarding invites owners; Phil and Ant are
+// created once). Reading an account at login time goes through db/accounts.ts.
+
+export interface NewUser {
+  /** The login provider's stable ID for the person (decision 012). */
+  authSubject: string;
+  email: string;
+  role: "owner" | "admin" | "reseller";
+}
+
+export async function createUser(admin: AdminPool, user: NewUser): Promise<string> {
+  const { rows } = await admin.query<{ id: string }>(
+    "INSERT INTO users (auth_subject, email, role) VALUES ($1, $2, $3) RETURNING id",
+    [user.authSubject, user.email, user.role],
+  );
+  return rows[0]!.id;
+}
+
+/** Makes a user a member of a tenant. Owners see only the tenants they're members of. */
+export async function addMembership(
+  admin: AdminPool,
+  tenantId: string,
+  userId: string,
+): Promise<void> {
+  await admin.query(
+    "INSERT INTO tenant_memberships (tenant_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+    [tenantId, userId],
+  );
+}
+
 // ─── Retention (BUILD_PLAN Step 5) ─────────────────────────────────────────────────────
 // Runs across every tenant, so it lives here with the other cross-tenant code.
 

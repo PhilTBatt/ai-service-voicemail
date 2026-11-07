@@ -7,12 +7,15 @@ import { logger } from "./logger.ts";
 import type { TelephonyProvider } from "./providers/telephony.ts";
 import type { CallEndedEvent, FunctionCallEvent, VoiceProvider } from "./providers/voice.ts";
 import { callPageRouter } from "./routes/calls.ts";
+import { dashboardRouter, type DashboardOptions } from "./routes/dashboard.ts";
 import { postmarkRouter } from "./routes/postmark.ts";
 import { twilioRouter } from "./routes/twilio.ts";
 import { voiceWebhookRouter } from "./routes/webhooks.ts";
 
 export interface AppOptions {
   pool: pg.Pool;
+  /** The logged-in dashboard API (/api). Absent until a login provider is configured (decision 012). */
+  dashboard?: Omit<DashboardOptions, "pool"> | undefined;
   /** Postmark's bounce and complaint webhook. Absent until POSTMARK_WEBHOOK_SECRET is configured. */
   postmark?: { webhookSecret: string; alert?: AlertFn } | undefined;
   /** The signed call pages (/c/:token). Absent until SIGNING_SECRET is configured. */
@@ -51,6 +54,7 @@ export function createApp({
   telephony,
   callPages,
   postmark,
+  dashboard,
 }: AppOptions) {
   const app = express();
   app.disable("x-powered-by");
@@ -90,6 +94,7 @@ export function createApp({
 
   if (postmark) app.use("/webhooks/postmark", postmarkRouter({ pool, ...postmark }));
   if (callPages) app.use("/c", callPageRouter({ pool, ...callPages }));
+  if (dashboard) app.use("/api", dashboardRouter({ pool, ...dashboard }));
 
   // Last: Express's own handler prints the stack with console.error, unredacted, and shows
   // it to the client outside production. Log through the redacting logger instead, and
