@@ -1,7 +1,7 @@
 # 011: Azure hosting, estimated monthly cost (Step 8 gate)
 
 - **Date:** 2026-11-08
-- **Status:** proposed. 🛑 BUILD_PLAN Step 8: Phil approves this before any `az` command or deploy that creates resources. No Azure resource exists yet.
+- **Status:** accepted 2026-11-08 in its cheapest shape (section 8): **production only**, on a new account's free tier if it qualifies; staging is deferred until there are paying customers. No Azure resource exists yet; creating the subscription is still Phil's step.
 - **Code:** none yet. `infra/` (Bicep) follows approval.
 
 ## 1. What gets built (from BUILD_PLAN Step 8)
@@ -99,3 +99,17 @@ Creating, in a personal Azure subscription with a budget alert set first:
 - an estimated **£52 a month for both environments** at list prices, less for the first year if the free tier applies, with the environment-management meter as the known unknown
 
 Nothing runs until Phil says yes. The first deploy will include the Bicep `what-if` output, and the first invoice should be checked against this table.
+
+## 8. What Phil approved (2026-11-08)
+
+Phil chose the cheapest shape, to keep costs down before any customer pays:
+
+| Shape                                                      | Monthly                                                                   | Given up                                              |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------- | ----------------------------------------------------- |
+| Both environments (sections 4 and 5)                       | about £52                                                                 | nothing                                               |
+| Production only                                            | about £33                                                                 | rehearsing deploys and migrations away from real data |
+| **Production only, on a new account's free tier (chosen)** | **about £20 for the first year** if the account qualifies, then about £33 | the same                                              |
+
+Everything in section 1 is still built for production: the private network for the database, Key Vault with managed identity, Log Analytics and the alerts. Staging is added when a paying customer would notice a bad deploy. Until then, migrations are tested against the local and CI databases, and production's daily backups are the safety net.
+
+The environment management meter (section 6) is still the known unknown. The budget alert, set when the subscription is created, catches it on the first bill.
