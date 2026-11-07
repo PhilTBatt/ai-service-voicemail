@@ -25,6 +25,8 @@ export const NOTIFY_EMAIL_QUEUE = "notify-email";
 export const NOTIFY_EMERGENCY_QUEUE = "notify-emergency";
 /** Jobs that failed every retry land here, and anything in here raises an alert (Step 5). */
 export const DEAD_LETTER_QUEUE = "dead-letter";
+/** Onboarding texts and going live after the test call (BUILD_PLAN Step 11). */
+export const ONBOARDING_QUEUE = "onboarding";
 
 /**
  * Starts pg-boss as the app role. Its schema was installed by a migration (decision 008),
@@ -82,6 +84,14 @@ export async function startQueue(connectionString: string): Promise<PgBoss> {
     policy: "exclusive",
     retryLimit: 5,
     retryDelay: 10, // seconds: an emergency can't wait half a minute between tries
+    retryBackoff: true,
+    expireInSeconds: 60,
+    deadLetter: DEAD_LETTER_QUEUE,
+  });
+  await ensureQueue(boss, ONBOARDING_QUEUE, {
+    policy: "exclusive", // one of each action per business queued or running
+    retryLimit: 5,
+    retryDelay: 30,
     retryBackoff: true,
     expireInSeconds: 60,
     deadLetter: DEAD_LETTER_QUEUE,

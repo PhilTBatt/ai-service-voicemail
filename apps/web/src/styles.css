@@ -503,3 +503,8 @@ fieldset.stacked {
   border-top: 1px solid var(--line);
   padding: 0.5rem 0;
 }
+
+table.codes code {
+  font-size: 1rem;
+  white-space: nowrap;
+}

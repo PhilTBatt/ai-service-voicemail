@@ -68,6 +68,22 @@ function Checklist({
         body: { to },
       }),
     );
+  const [divertQueued, setDivertQueued] = useState(false);
+  const textDivertInstructions = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api<{ queued: true }>(`/admin/tenants/${tenantId}/onboarding/divert-instructions`, {
+        method: "POST",
+        body: {},
+      });
+      setDivertQueued(true);
+    } catch (caught) {
+      setError(asError(caught));
+    } finally {
+      setBusy(false);
+    }
+  };
   const setPilot = (pilot: boolean) =>
     run(() =>
       api<OnboardingView>(`/admin/tenants/${tenantId}/pilot`, { method: "PUT", body: { pilot } }),
@@ -110,6 +126,28 @@ function Checklist({
           <p className="notice card ok">This business is live.</p>
         )}
         {error && <ErrorNote error={error} />}
+      </section>
+
+      <section className="card">
+        <h2>Divert instructions</h2>
+        <p className="hint">
+          Texts the tradesperson the codes for their network, with a link to the Phone setup page.
+          Once it's sent, a business at "Assistant set up" moves on by itself; then its first call
+          moves it to "Test call received", and it goes live when the rule allows.
+        </p>
+        <button
+          type="button"
+          className="secondary"
+          disabled={busy}
+          onClick={() => void textDivertInstructions()}
+        >
+          Text the divert instructions
+        </button>
+        {divertQueued && (
+          <p className="muted">
+            Queued: the worker sends it within a few seconds while it's running.
+          </p>
+        )}
       </section>
 
       <section className="card">

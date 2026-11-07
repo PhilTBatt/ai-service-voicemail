@@ -12,6 +12,7 @@ import {
   type CreatedSignupLinkView,
   type CancellationView,
   type MeView,
+  type MobileNetwork,
   type NotificationSettings,
   type ProfileView,
   type SaveProfileView,
@@ -25,6 +26,7 @@ import type { PgBoss } from "pg-boss";
 import type pg from "pg";
 import { z } from "zod";
 import { agentProfileInputSchema, saveAgentProfile } from "../db/agent-profiles.ts";
+import { enqueueOnboardingWith } from "../jobs/onboarding.ts";
 import { adminRouter, type NumberProvisioning } from "./admin.ts";
 import {
   createSignupLink,
@@ -92,6 +94,7 @@ interface TenantRow {
   service_region: string;
   created_at: Date;
   number: string | null;
+  mobile_network: MobileNetwork | null;
 }
 
 interface ProfileRow {
@@ -148,7 +151,16 @@ export function dashboardRouter({
     res.json({ tenants: visible.map(presentTenantSummary) } satisfies TenantListView);
   });
 
-  router.use("/admin", adminRouter({ pool, admin, numbers, ...(now && { now }) }));
+  router.use(
+    "/admin",
+    adminRouter({
+      pool,
+      admin,
+      numbers,
+      enqueueOnboarding: enqueueOnboardingWith(boss),
+      ...(now && { now }),
+    }),
+  );
 
   // A single-use signup link for a new business (BUILD_PLAN Step 11): Phil or Ant hands it
   // to a tradesperson. Only the admin can make a test link, because a test business may go
@@ -187,7 +199,7 @@ export function dashboardRouter({
         (
           await client.query<TenantRow>(
             `SELECT id, business_name, trade, status, contact_name, notification_mobile,
-                    notification_email, service_region, created_at,
+                    notification_email, service_region, created_at, mobile_network,
                     (SELECT number FROM phone_numbers
                      WHERE tenant_id = tenants.id AND status = 'active') AS number
              FROM tenants WHERE id = $1`,
@@ -210,6 +222,7 @@ export function dashboardRouter({
       serviceRegion: row.service_region,
       createdAt: row.created_at.toISOString(),
       number: row.number,
+      mobileNetwork: row.mobile_network,
     } satisfies TenantView);
   });
 

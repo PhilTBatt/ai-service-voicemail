@@ -111,3 +111,13 @@ test("a new tradesperson signs up through a link and lands on their business", a
 
   await expect(page.getByRole("heading", { name: "Kestrel Roofing" })).toBeVisible();
 });
+
+test("a tradesperson sees the divert codes for their network and number", async ({ page }) => {
+  await signIn(page, "owner@example.com");
+  await page.getByRole("link", { name: "Phone setup" }).click();
+  await expect(page.getByText("**61*+441134960150*11*20#")).toBeVisible();
+  await expect(page.getByText("**61*901#")).toBeVisible(); // O2's voicemail restore code
+  // Another network changes the codes on the spot.
+  await page.getByLabel("Your mobile network").selectOption("three");
+  await expect(page.getByText("**61*+441134960150#", { exact: true })).toBeVisible();
+});

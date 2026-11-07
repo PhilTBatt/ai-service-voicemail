@@ -24,6 +24,7 @@ export function TenantHeader({ me, tenant }: { me: MeView; tenant: TenantView })
           Calls
         </NavLink>
         <NavLink to={`${base}/profile`}>Assistant</NavLink>
+        <NavLink to={`${base}/phone`}>Phone setup</NavLink>
         <NavLink to={`${base}/settings`}>Account</NavLink>
         {me.role === "admin" && <NavLink to={`${base}/onboarding`}>Onboarding</NavLink>}
       </nav>

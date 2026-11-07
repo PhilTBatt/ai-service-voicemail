@@ -32,7 +32,9 @@ async function seed(admin: AdminPool): Promise<void> {
     contactName: "Sam",
     notificationMobile: "+447700900123",
   });
-  await admin.query("UPDATE tenants SET status = 'live' WHERE id = $1", [plumbing]);
+  await admin.query("UPDATE tenants SET status = 'live', mobile_network = 'o2' WHERE id = $1", [
+    plumbing,
+  ]);
   await assignPhoneNumber(admin, plumbing, "+441134960150", "PNe2eFernLane");
   await admin.query(
     `INSERT INTO calls (tenant_id, provider_call_id, caller_number, started_at, ended_at,

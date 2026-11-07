@@ -8,6 +8,7 @@ import { ApiError, useApi, useLoad } from "./api.ts";
 import { AdminPage } from "./pages/AdminPage.tsx";
 import { CallPage } from "./pages/CallPage.tsx";
 import { OnboardingPage } from "./pages/OnboardingPage.tsx";
+import { PhonePage } from "./pages/PhonePage.tsx";
 import { ProfilePage } from "./pages/ProfilePage.tsx";
 import { SettingsPage } from "./pages/SettingsPage.tsx";
 import { SignupPage } from "./pages/SignupPage.tsx";
@@ -57,6 +58,7 @@ function SignedIn() {
             <Route path="/" element={<Home me={me.data} />} />
             <Route path="/tenants/:tenantId" element={<TenantPage me={me.data} />} />
             <Route path="/tenants/:tenantId/profile" element={<ProfilePage me={me.data} />} />
+            <Route path="/tenants/:tenantId/phone" element={<PhonePage me={me.data} />} />
             <Route path="/tenants/:tenantId/settings" element={<SettingsPage me={me.data} />} />
             <Route path="/tenants/:tenantId/onboarding" element={<OnboardingPage me={me.data} />} />
             <Route path="/admin" element={<AdminPage />} />

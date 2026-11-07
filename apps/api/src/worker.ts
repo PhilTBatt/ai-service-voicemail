@@ -14,6 +14,7 @@ import {
   RECONCILE_CALLS_CRON,
   RECONCILE_CALLS_QUEUE,
   NOTIFY_SMS_QUEUE,
+  ONBOARDING_QUEUE,
   PROCESS_CALL_QUEUE,
   RECONCILE_VOICEMAILS_CRON,
   RECONCILE_VOICEMAILS_QUEUE,
@@ -23,6 +24,11 @@ import {
   startQueue,
 } from "./jobs/queue.ts";
 import { reconcileCalls } from "./jobs/reconcile-calls.ts";
+import {
+  enqueueOnboardingWith,
+  runOnboardingJob,
+  type OnboardingJobData,
+} from "./jobs/onboarding.ts";
 import { reconcileVoicemails } from "./jobs/reconcile-voicemails.ts";
 import { runRetention } from "./jobs/retention.ts";
 import { runSyncAgent, type SyncAgentJobData } from "./jobs/sync-agent.ts";
@@ -92,7 +98,13 @@ try {
     await boss.work<NotifySmsJobData>(NOTIFY_SMS_QUEUE, async (jobs) => {
       for (const job of jobs) await runNotifySms(deps, job.data);
     });
-    queues.push(NOTIFY_EMERGENCY_QUEUE, NOTIFY_SMS_QUEUE);
+    // Onboarding texts, and going live after the test call (which then texts).
+    await boss.work<OnboardingJobData>(ONBOARDING_QUEUE, async (jobs) => {
+      for (const job of jobs) {
+        await runOnboardingJob({ ...deps, dashboardOrigin: config.dashboardOrigin }, job.data);
+      }
+    });
+    queues.push(NOTIFY_EMERGENCY_QUEUE, NOTIFY_SMS_QUEUE, ONBOARDING_QUEUE);
   } else {
     logger.warn(
       "SMS notifications disabled: needs TWILIO_SMS_FROM, SIGNING_SECRET and PUBLIC_BASE_URL (jobs wait in the queue)",
@@ -132,7 +144,12 @@ try {
   if (config.twilio) {
     const telephony = new TwilioTelephonyProvider(config.twilio);
     await boss.work(RECONCILE_VOICEMAILS_QUEUE, async () => {
-      await reconcileVoicemails({ pool, telephony, enqueueNotifications });
+      await reconcileVoicemails({
+        pool,
+        telephony,
+        enqueueNotifications,
+        enqueueOnboarding: enqueueOnboardingWith(boss),
+      });
     });
     await boss.schedule(RECONCILE_VOICEMAILS_QUEUE, RECONCILE_VOICEMAILS_CRON, null, {
       tz: "Europe/London",

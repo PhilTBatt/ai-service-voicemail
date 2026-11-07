@@ -225,6 +225,13 @@ describe("authorisation matrix", () => {
     { name: "PUT /admin/tenants/:id/pilot", path: `/admin/tenants/${tenantA}/pilot`, body: {} },
     // Making a signup link changes nothing but the links table.
     { name: "POST /signup-links", path: "/signup-links", body: {}, method: "POST" },
+    // Business A has no number, so even the admin gets a 409 and nothing is queued.
+    {
+      name: "POST /admin/tenants/:id/onboarding/divert-instructions",
+      path: `/admin/tenants/${tenantA}/onboarding/divert-instructions`,
+      body: {},
+      method: "POST",
+    },
   ];
   // What tenant A's data looks like to each person. "allowed" means the door opened: the
   // request may still 400, 404 or 409 on its merits (no audio at the fake, invalid body).
@@ -242,6 +249,7 @@ describe("authorisation matrix", () => {
       "GET /admin/tenants/:id/onboarding": 403,
       "POST /admin/tenants/:id/onboarding/advance": 403,
       "PUT /admin/tenants/:id/pilot": 403,
+      "POST /admin/tenants/:id/onboarding/divert-instructions": 403,
       "POST /signup-links": 403,
     },
     ownerB: { "GET /me": "allowed", "GET /tenants": "allowed", default: 403 },
@@ -1012,6 +1020,12 @@ describe("admin screens", () => {
     const live = await advance("live");
     expect(live.status).toBe(200);
     expect(await live.json()).toMatchObject({ state: "live", next: null });
+    // Live by hand still gets the go-live text: the job is queued.
+    const goLive = await app.query(
+      "SELECT 1 FROM pgboss.job WHERE name = 'onboarding' AND singleton_key = $1",
+      [`${tenant}:go-live`],
+    );
+    expect(goLive.rowCount).toBe(1);
     expect((await json<TenantView>(get(`/tenants/${tenant}`, tokens.admin))).status).toBe("live");
 
     const audit = await admin.query<{ action: string; actor_user_id: string | null }>(
@@ -1021,6 +1035,35 @@ describe("admin screens", () => {
     expect(audit.rows.filter((row) => row.action === "onboarding.advanced")).toHaveLength(8);
     expect(audit.rows.map((row) => row.action)).toContain("pilot.on");
     expect(audit.rows.every((row) => row.actor_user_id !== null)).toBe(true);
+  });
+
+  it("queues the divert instructions text, once the business has a number and a mobile", async () => {
+    const tenant = await createTenant(admin, { businessName: "Divert Plumbing", trade: "plumber" });
+    const send = () => fetchAs("POST", `/admin/tenants/${tenant}/onboarding/divert-instructions`);
+    const refused = await send();
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toEqual({
+      error: "The business needs an AnswerMate number and a mobile for texts first",
+    });
+
+    const number = `+441632960${String(Math.floor(Math.random() * 990)).padStart(3, "0")}`;
+    await admin.query(
+      "UPDATE phone_numbers SET status = 'released', released_at = now() WHERE number = $1 AND status = 'active'",
+      [number],
+    );
+    await assignPhoneNumber(admin, tenant, number, `PN${randomUUID()}`);
+    await admin.query("UPDATE tenants SET notification_mobile = '+447700900612' WHERE id = $1", [
+      tenant,
+    ]);
+    const accepted = await send();
+    expect(accepted.status).toBe(202);
+    const job = await app.query<{ data: unknown }>(
+      "SELECT data FROM pgboss.job WHERE name = 'onboarding' AND singleton_key = $1",
+      [`${tenant}:send-divert-instructions`],
+    );
+    expect(job.rows.map((row) => row.data)).toEqual([
+      { tenantId: tenant, action: "send-divert-instructions" },
+    ]);
   });
 
   it("won't take a demo business live, even with every step done", async () => {
@@ -1106,6 +1149,11 @@ describe("admin screens", () => {
     });
   });
 });
+
+/** A request with no body, as the admin. */
+function fetchAs(method: "POST", path: string) {
+  return send(method, path, {}, tokens.admin);
+}
 
 /** An owner who belongs to just this tenant. */
 async function personFor(tenantId: string) {

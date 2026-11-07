@@ -86,7 +86,21 @@ http://localhost:5173 and sign in. The API logs "Dashboard API on" at startup wh
 dashboard must stay on port 5173 (`DASHBOARD_ORIGIN`): Clerk's login tokens name the site they
 were made for, and the API refuses tokens from any other.
 
-## 7. Buying a number for a business
+## 7. Taking a business from signup to live
+
+1. Create a signup link (business list) and send it. Their business appears at "Terms accepted".
+2. On its Onboarding tab, tick "Pilot" while billing doesn't exist, and move it on.
+3. Buy its number (Account tab, below), then move on.
+4. Its owner fills in the Assistant tab; the worker syncs it; move on twice.
+5. "Text the divert instructions" (Onboarding tab). Once the text goes, it moves on by itself.
+6. The tradesperson dials the code and rings themselves from another phone. That call moves it to
+   "Test call received", and it goes live by itself if the rule allows (until the solicitor's
+   documents are in, only for a test business), with a "you're live" text. Otherwise the tab says
+   why not.
+
+The worker must be running for steps 5 and 6: it sends the texts and takes the business live.
+
+## 8. Buying a number for a business
 
 As admin, open the business, then its Account tab. With no number yet, there's a search: type an
 area code such as 0113, pick a number, and confirm the monthly price. The API only buys when it
@@ -96,6 +110,6 @@ second number this way: the old one would carry on costing money at Twilio. If a
 but can't be recorded, the API raises a `number-bought-not-recorded` alert with its SID: record
 it by hand or release it in the Twilio console.
 
-## 8. Spending
+## 9. Spending
 
 Anything named `live-*` touches a paid service and asks for `--confirm`. Day to day the only money that moves is per call (Retell and Twilio per minute, Anthropic per extraction, Twilio per text segment). Evals (`npm run evals`) cost a few pence per run under their cap.

@@ -3,6 +3,7 @@ import type pg from "pg";
 import type { AlertFn } from "./alerts.ts";
 import type { OutboundPolicy } from "./core/outbound-allowlist.ts";
 import type { EnqueueNotifications } from "./jobs/enqueue-notifications.ts";
+import type { EnqueueOnboarding } from "./jobs/onboarding.ts";
 import { logger } from "./logger.ts";
 import type { TelephonyProvider } from "./providers/telephony.ts";
 import type { CallEndedEvent, FunctionCallEvent, VoiceProvider } from "./providers/voice.ts";
@@ -41,6 +42,7 @@ export interface AppOptions {
         outbound: OutboundPolicy;
         enqueueSync: (job: { tenantId: string; profileVersion: number }) => Promise<unknown>;
         enqueueNotifications: EnqueueNotifications;
+        enqueueOnboarding?: EnqueueOnboarding;
         alert?: AlertFn;
         now?: () => Date;
       }

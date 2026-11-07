@@ -1,4 +1,6 @@
 import type pg from "pg";
+import type { EnqueueOnboarding } from "../jobs/onboarding.ts";
+import { noteTestCall } from "./onboarding.ts";
 import type { EnqueueNotifications } from "../jobs/enqueue-notifications.ts";
 import { findTenantIdByNumber } from "./cross-tenant.ts";
 import { withTenant } from "./tenant.ts";
@@ -27,6 +29,8 @@ export async function storeFallbackVoicemail(
   pool: pg.Pool,
   voicemail: FallbackVoicemail,
   enqueueNotifications?: EnqueueNotifications,
+  /** Takes a business live after its test call (BUILD_PLAN Step 11). */
+  enqueueOnboarding?: EnqueueOnboarding,
 ): Promise<StoreVoicemailResult> {
   const tenantId = await findTenantIdByNumber(pool, voicemail.to);
   if (tenantId === null) return { outcome: "unknown-number", tenantId: null };
@@ -54,6 +58,10 @@ export async function storeFallbackVoicemail(
     if (callId === undefined) return false;
     // The "new voicemail" text, committed with the row (BUILD_PLAN Step 6).
     await enqueueNotifications?.(client, { tenantId, callId, urgency: null });
+    // A business still onboarding gets the fallback voicemail, so this is where its test call lands.
+    if (await noteTestCall(client, tenantId)) {
+      await enqueueOnboarding?.({ tenantId, action: "go-live" }, client);
+    }
     return true;
   });
   return { outcome: inserted ? "stored" : "duplicate", tenantId };

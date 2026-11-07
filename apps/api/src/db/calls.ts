@@ -1,4 +1,6 @@
 import type { PgBoss } from "pg-boss";
+import { enqueueOnboardingWith } from "../jobs/onboarding.ts";
+import { noteTestCall } from "./onboarding.ts";
 import type pg from "pg";
 import { billableSeconds, usagePeriodFor } from "../core/usage.ts";
 import { NOTIFY_EMERGENCY_QUEUE, PROCESS_CALL_QUEUE } from "../jobs/queue.ts";
@@ -64,6 +66,9 @@ export async function recordCallEnded(
     );
     const callId = rows[0]?.id;
     if (callId === undefined) return { outcome: "duplicate", tenantId };
+    if (await noteTestCall(client, tenantId)) {
+      await enqueueOnboardingWith(boss)({ tenantId, action: "go-live" }, client);
+    }
 
     // Billable seconds accumulate per period; overage is worked out once per period (Step 12).
     // Demo calls are never billed (Step 9); their costs still land in call_costs, on the demo

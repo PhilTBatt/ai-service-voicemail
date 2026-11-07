@@ -141,7 +141,8 @@ export async function advanceOnboarding(
   pool: pg.Pool,
   tenantId: string,
   to: OnboardingState,
-  actorUserId: string,
+  /** Null when the system took the step (going live after the test call). */
+  actorUserId: string | null,
 ): Promise<AdvanceResult> {
   return withTenant(pool, tenantId, async (client) => {
     const loaded = await loadFacts(client, tenantId, true);
@@ -162,7 +163,11 @@ export async function advanceOnboarding(
     );
     await client.query(
       "INSERT INTO audit_log (tenant_id, actor_user_id, action, details) VALUES ($1, $2, 'onboarding.advanced', $3)",
-      [tenantId, actorUserId, { via: "dashboard", from: loaded.state, to }],
+      [
+        tenantId,
+        actorUserId,
+        { via: actorUserId ? "dashboard" : "automatic", from: loaded.state, to },
+      ],
     );
     return { outcome: "advanced", state: to };
   });
@@ -187,4 +192,22 @@ export async function setPilot(
     );
     return true;
   });
+}
+
+/**
+ * A call reached a business that's waiting for its test call: that's the step done. Runs in the
+ * transaction that stores the call. True when it moved the business on, so the caller can queue
+ * the go-live job through the same transaction.
+ */
+export async function noteTestCall(client: pg.ClientBase, tenantId: string): Promise<boolean> {
+  const moved = await client.query(
+    "UPDATE tenants SET onboarding_state = 'test_call_received' WHERE id = $1 AND onboarding_state = 'divert_instructions_sent'",
+    [tenantId],
+  );
+  if (moved.rowCount !== 1) return false;
+  await client.query(
+    "INSERT INTO audit_log (tenant_id, actor_user_id, action, details) VALUES ($1, NULL, 'onboarding.advanced', $2)",
+    [tenantId, { via: "test call", from: "divert_instructions_sent", to: "test_call_received" }],
+  );
+  return true;
 }

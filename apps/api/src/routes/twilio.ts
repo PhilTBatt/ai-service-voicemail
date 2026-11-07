@@ -1,4 +1,5 @@
 import { Router, urlencoded, type RequestHandler } from "express";
+import type { EnqueueOnboarding } from "../jobs/onboarding.ts";
 import type pg from "pg";
 import { z } from "zod";
 import { raiseAlert, type AlertFn } from "../alerts.ts";
@@ -39,6 +40,8 @@ export interface TwilioRouteOptions {
   enqueueSync: (job: { tenantId: string; profileVersion: number }) => Promise<unknown>;
   /** Queues the "new voicemail" text when a fallback voicemail is stored. */
   enqueueNotifications: EnqueueNotifications;
+  /** Takes a business live after its test call, which arrives as a voicemail (Step 11). */
+  enqueueOnboarding?: EnqueueOnboarding;
   alert?: AlertFn;
   now?: () => Date;
 }
@@ -91,6 +94,7 @@ export function twilioRouter({
   outbound,
   enqueueSync,
   enqueueNotifications,
+  enqueueOnboarding,
   alert = raiseAlert,
   now = () => new Date(),
 }: TwilioRouteOptions) {
@@ -227,6 +231,7 @@ export function twilioRouter({
         endedAt: call.endedAt,
       },
       enqueueNotifications,
+      enqueueOnboarding,
     );
     logger.info("Fallback voicemail callback handled", { callSid, ...result });
     res.status(204).end();

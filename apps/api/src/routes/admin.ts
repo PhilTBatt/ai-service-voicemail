@@ -30,6 +30,8 @@ import {
   type AdminPool,
 } from "../db/cross-tenant.ts";
 import { advanceOnboarding, onboardingStatus, setPilot } from "../db/onboarding.ts";
+import { withTenant } from "../db/tenant.ts";
+import type { EnqueueOnboarding } from "../jobs/onboarding.ts";
 import { countDeadLettered } from "../jobs/queue.ts";
 import { PurchaseNotAllowedError, type TelephonyProvider } from "../providers/telephony.ts";
 import { presentCallSummary } from "./call-view.ts";
@@ -51,6 +53,8 @@ export interface AdminOptions {
   admin: AdminPool;
   /** Absent until Twilio, PUBLIC_BASE_URL and FALLBACK_VOICEMAIL_URL are configured. */
   numbers?: NumberProvisioning | undefined;
+  /** Onboarding texts and going live (BUILD_PLAN Step 11). */
+  enqueueOnboarding?: EnqueueOnboarding | undefined;
   now?: () => Date;
 }
 
@@ -75,7 +79,13 @@ const buyNumberBody = z.object({
   confirm: z.literal(true),
 });
 
-export function adminRouter({ pool, admin, numbers, now = () => new Date() }: AdminOptions) {
+export function adminRouter({
+  pool,
+  admin,
+  numbers,
+  enqueueOnboarding,
+  now = () => new Date(),
+}: AdminOptions) {
   const router = Router();
   router.use(requireRole("admin"));
 
@@ -258,7 +268,53 @@ export function adminRouter({ pool, admin, numbers, now = () => new Date() }: Ad
       res.status(409).json({ error: result.reason });
       return;
     }
+    // Live by hand: the go-live text still goes out (the job sends it once, ever).
+    if (result.state === "live") await enqueueOnboarding?.({ tenantId, action: "go-live" });
     res.json((await onboardingStatus(pool, tenantId)) satisfies OnboardingView | null);
+  });
+
+  // Texts the divert instructions for the business's network. The worker sends the text and
+  // moves the business on from "assistant set up" once it's gone. Sending again is fine.
+  router.post("/tenants/:tenantId/onboarding/divert-instructions", async (req, res) => {
+    const { tenantId } = req.params;
+    const ready = isTenantId(tenantId)
+      ? await withTenant(
+          pool,
+          tenantId,
+          async (client) =>
+            (
+              await client.query<{ has_number: boolean; has_mobile: boolean }>(
+                `SELECT EXISTS (SELECT 1 FROM phone_numbers n
+                                WHERE n.tenant_id = t.id AND n.status = 'active') AS has_number,
+                        t.notification_mobile IS NOT NULL AS has_mobile
+                 FROM tenants t WHERE t.id = $1`,
+                [tenantId],
+              )
+            ).rows[0],
+        )
+      : undefined;
+    if (!ready) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    if (!ready.has_number || !ready.has_mobile) {
+      res.status(409).json({
+        error: "The business needs an AnswerMate number and a mobile for texts first",
+      });
+      return;
+    }
+    if (!enqueueOnboarding) {
+      res.status(503).json({ error: "The job queue isn't available" });
+      return;
+    }
+    await enqueueOnboarding({ tenantId, action: "send-divert-instructions" });
+    await auditAdminAction(admin, {
+      tenantId,
+      actorUserId: principalOf(res).userId,
+      action: "divert-instructions.requested",
+      details: { via: "dashboard" },
+    });
+    res.status(202).json({ queued: true });
   });
 
   // A free pilot can pass "payment set up" before billing exists (Step 12).

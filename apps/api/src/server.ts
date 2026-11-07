@@ -4,6 +4,7 @@ import { recordCallEnded, recordMidCallEmergency } from "./db/calls.ts";
 import { createAdminPool } from "./db/cross-tenant.ts";
 import { createPool } from "./db/pool.ts";
 import { enqueueNotificationsWith } from "./jobs/enqueue-notifications.ts";
+import { enqueueOnboardingWith } from "./jobs/onboarding.ts";
 import { startQueue } from "./jobs/queue.ts";
 import { enqueueSyncAgent, type SyncAgentJobData } from "./jobs/sync-agent.ts";
 import { logger } from "./logger.ts";
@@ -34,6 +35,7 @@ async function start(config: Config): Promise<void> {
           outbound: config.outbound,
           enqueueSync: (job: SyncAgentJobData) => enqueueSyncAgent(boss, job),
           enqueueNotifications: enqueueNotificationsWith(boss),
+          enqueueOnboarding: enqueueOnboardingWith(boss),
         }
       : undefined;
   if (!telephony) {

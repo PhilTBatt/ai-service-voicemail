@@ -123,3 +123,42 @@ describe("storeFallbackVoicemail", () => {
     });
   });
 });
+
+describe("storeFallbackVoicemail and onboarding", () => {
+  it("moves a business that's waiting for its test call on, and queues the go-live job with the call", async () => {
+    const { tenantId, number } = await makeTenant();
+    await admin.query(
+      "UPDATE tenants SET onboarding_state = 'divert_instructions_sent' WHERE id = $1",
+      [tenantId],
+    );
+    const enqueueOnboarding = vi.fn(() => Promise.resolve());
+
+    await storeFallbackVoicemail(app, voicemail(number), undefined, enqueueOnboarding);
+    const state = await admin.query<{ onboarding_state: string }>(
+      "SELECT onboarding_state FROM tenants WHERE id = $1",
+      [tenantId],
+    );
+    expect(state.rows[0]!.onboarding_state).toBe("test_call_received");
+    expect(enqueueOnboarding).toHaveBeenCalledTimes(1);
+    expect(enqueueOnboarding).toHaveBeenCalledWith(
+      { tenantId, action: "go-live" },
+      expect.anything(),
+    );
+
+    // Only the first call counts.
+    await storeFallbackVoicemail(app, voicemail(number), undefined, enqueueOnboarding);
+    expect(enqueueOnboarding).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves a business at any other step alone", async () => {
+    const { tenantId, number } = await makeTenant();
+    const enqueueOnboarding = vi.fn(() => Promise.resolve());
+    await storeFallbackVoicemail(app, voicemail(number), undefined, enqueueOnboarding);
+    const state = await admin.query<{ onboarding_state: string }>(
+      "SELECT onboarding_state FROM tenants WHERE id = $1",
+      [tenantId],
+    );
+    expect(state.rows[0]!.onboarding_state).toBe("created");
+    expect(enqueueOnboarding).not.toHaveBeenCalled();
+  });
+});

@@ -3,6 +3,7 @@
 // the other doesn't expect fails `npm run typecheck` instead of breaking a page at runtime.
 // Times are ISO 8601 instants in UTC; the dashboard shows them in UK time.
 import type { OnboardingState } from "./onboarding.ts";
+import type { MobileNetwork } from "./signup.ts";
 import type { AgentProfileInput } from "./profile.ts";
 
 export type Role = "owner" | "admin" | "reseller";
@@ -47,6 +48,8 @@ export interface TenantView {
   createdAt: string;
   /** The business's AnswerMate number (E.164), or null before one is bought. */
   number: string | null;
+  /** For the divert instructions; null when the business didn't say (invited, not signed up). */
+  mobileNetwork: MobileNetwork | null;
 }
 
 /** A call as a list shows it: no transcript, no recording. */

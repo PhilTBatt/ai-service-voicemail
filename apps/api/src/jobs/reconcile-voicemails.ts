@@ -6,12 +6,15 @@ import { storeFallbackVoicemail } from "../db/voicemails.ts";
 import { logger } from "../logger.ts";
 import type { TelephonyProvider } from "../providers/telephony.ts";
 import type { EnqueueNotifications } from "./enqueue-notifications.ts";
+import type { EnqueueOnboarding } from "./onboarding.ts";
 
 export interface ReconcileDeps {
   pool: pg.Pool;
   telephony: TelephonyProvider;
   /** Queues the "new voicemail" text for each one stored. */
   enqueueNotifications?: EnqueueNotifications;
+  /** Takes a business live after its test call (Step 11). */
+  enqueueOnboarding?: EnqueueOnboarding;
   now?: () => Date;
   lookbackHours?: number;
 }
@@ -28,6 +31,7 @@ export async function reconcileVoicemails({
   pool,
   telephony,
   enqueueNotifications,
+  enqueueOnboarding,
   now = () => new Date(),
   lookbackHours = 24,
 }: ReconcileDeps): Promise<ReconcileCounts> {
@@ -59,6 +63,7 @@ export async function reconcileVoicemails({
         endedAt: call.endedAt,
       },
       enqueueNotifications,
+      enqueueOnboarding,
     );
     if (outcome === "stored") counts.stored += 1;
     else if (outcome === "duplicate") counts.duplicate += 1;
