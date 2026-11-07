@@ -47,7 +47,7 @@ async function start(config: Config): Promise<void> {
     voiceProviders,
     telephony,
     callPages: config.signingSecret
-      ? { signingSecret: config.signingSecret, telephony: telephony?.provider }
+      ? { signingSecret: config.signingSecret, telephony: telephony?.provider, voice: retell }
       : undefined,
     onCallEnded: async (event) => {
       const result = await recordCallEnded(pool, boss, event);

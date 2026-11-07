@@ -1,5 +1,8 @@
 // The seam between CallMate and the phone-number provider (Twilio). Numbers, their webhook
 // configuration, and verifying that a webhook really came from the provider.
+import type { RecordingAudio } from "./recording.ts";
+
+export type { RecordingAudio } from "./recording.ts";
 
 export interface AvailableNumber {
   /** E.164. */
@@ -47,12 +50,6 @@ export interface RecordingSummary {
   url: string;
   durationSeconds: number;
   createdAt: Date;
-}
-
-/** A recording's audio, as the provider serves it. */
-export interface RecordingAudio {
-  contentType: string;
-  body: ReadableStream<Uint8Array>;
 }
 
 export interface CallDetails {

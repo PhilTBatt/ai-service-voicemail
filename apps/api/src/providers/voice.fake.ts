@@ -10,6 +10,7 @@ import {
   type VoiceProvider,
   type WebhookHeaders,
 } from "./voice.ts";
+import type { RecordingAudio } from "./recording.ts";
 
 const SIGNATURE_HEADER = "x-fake-signature";
 
@@ -43,6 +44,8 @@ export class FakeVoiceProvider implements VoiceProvider {
   /** Every call registered for dialling, in order. */
   readonly calls: InboundCallRegistration[] = [];
   readonly deleteCalls: string[] = [];
+  /** Recording audio by provider call ID; tests fill this in. */
+  readonly recordingAudio = new Map<string, Uint8Array<ArrayBuffer>>();
   private nextId = 1;
 
   upsertAgent({ definition, existingProviderAgentId }: UpsertAgentInput) {
@@ -90,7 +93,14 @@ export class FakeVoiceProvider implements VoiceProvider {
 
   deleteCallData(providerCallId: string) {
     this.deleteCalls.push(providerCallId);
+    this.recordingAudio.delete(providerCallId);
     return Promise.resolve();
+  }
+
+  fetchRecording(providerCallId: string): Promise<RecordingAudio | null> {
+    const bytes = this.recordingAudio.get(providerCallId);
+    if (!bytes) return Promise.resolve(null);
+    return Promise.resolve({ contentType: "audio/wav", body: new Blob([bytes]).stream() });
   }
 
   /** Builds a signed webhook request for an event, as the platform would send it. */

@@ -13,6 +13,9 @@ export class RetellApiStub {
   readonly agents = new Map<string, { flowId: string; body: unknown }>();
   readonly calls: Record<string, unknown>[] = [];
   readonly deletedCalls = new Set<string>();
+  /** Get Call responses by call ID, and recording audio by URL; tests fill these in. */
+  readonly callRecords = new Map<string, Record<string, unknown>>();
+  readonly recordingAudio = new Map<string, Uint8Array<ArrayBuffer>>();
   readonly requests: Captured[] = [];
   private nextId = 1;
 
@@ -26,6 +29,15 @@ export class RetellApiStub {
         ? (JSON.parse(init.body) as Record<string, unknown>)
         : undefined;
     this.requests.push({ method, path: url.pathname, body });
+    if (url.origin !== "https://api.retellai.com") {
+      // A recording URL (Retell's storage, not its API): serve the bytes if we have them.
+      const bytes = this.recordingAudio.get(url.href);
+      return Promise.resolve(
+        bytes
+          ? new Response(bytes, { status: 200, headers: { "content-type": "audio/wav" } })
+          : new Response("not found", { status: 404 }),
+      );
+    }
     return Promise.resolve(this.handle(method, decodeURIComponent(url.pathname), body));
   };
 
@@ -79,6 +91,12 @@ export class RetellApiStub {
       }
       this.calls.push(body ?? {});
       return json(201, { call_id: `call_stub${this.calls.length}`, call_status: "registered" });
+    }
+    if (method === "GET" && first === "v2" && second === "get-call" && segments[2]) {
+      const call = this.callRecords.get(segments[2]);
+      return call && !this.deletedCalls.has(segments[2])
+        ? json(200, call)
+        : json(404, { message: "call not found" });
     }
     if (method === "DELETE" && first === "v2" && second === "delete-call" && segments[2]) {
       if (this.deletedCalls.has(segments[2])) return json(404, { message: "call not found" });

@@ -14,6 +14,7 @@ import {
   type VoiceProvider,
   type WebhookHeaders,
 } from "./voice.ts";
+import type { RecordingAudio } from "./recording.ts";
 
 export interface RetellOptions {
   apiKey: string;
@@ -115,6 +116,35 @@ export class RetellVoiceProvider implements VoiceProvider {
     if (event !== "call_ended") return { type: "ignored", reason: `event ${event}` };
     if (!call.to_number) return { type: "ignored", reason: "no dialled number (not a phone call)" };
     return toCallEndedEvent(call, call.to_number);
+  }
+
+  /**
+   * Recording URLs are signed and expire after 24 hours (buildAgent opts the agent in), so
+   * the one stored at call end is useless later. Ask Retell for the call again and follow
+   * the fresh URL, which needs no further credentials. Null when Retell has no recording
+   * (deleted by retention, or the call was never recorded).
+   */
+  async fetchRecording(providerCallId: string): Promise<RecordingAudio | null> {
+    let call: { recording_url?: string };
+    try {
+      call = await this.request<{ recording_url?: string }>(
+        "GET",
+        `/v2/get-call/${encodeURIComponent(providerCallId)}`,
+      );
+    } catch (error) {
+      if (error instanceof RetellApiError && error.status === 404) return null;
+      throw error;
+    }
+    if (!call.recording_url) return null;
+    const response = await (this.options.fetch ?? fetch)(call.recording_url);
+    if (response.status === 404 || response.status === 403) return null;
+    if (!response.ok || !response.body) {
+      throw new RetellApiError(response.status, "recording", (await response.text()).slice(0, 300));
+    }
+    return {
+      contentType: response.headers.get("content-type") ?? "audio/wav",
+      body: response.body,
+    };
   }
 
   async deleteCallData(providerCallId: string) {
@@ -253,6 +283,12 @@ export function buildAgent(definition: AgentDefinition, webhookUrl?: string) {
     reminder_trigger_ms: limits.silenceReminderSeconds * 1000,
     reminder_max_count: 1,
     end_call_after_silence_ms: limits.endAfterSilenceSeconds * 1000,
+    // Recording and log URLs carry a signature and expire after 24 hours, instead of being
+    // open to anyone with the link. The API fetches a fresh one when it streams a recording.
+    opt_in_signed_url: true,
+    // Retell deletes its copy after 30 days too (BUILD_PLAN Step 5: recordings 30 days at
+    // the provider and ours); our retention job normally gets there first.
+    data_storage_retention_days: 30,
     ...(webhookUrl !== undefined && { webhook_url: webhookUrl }),
   };
 }

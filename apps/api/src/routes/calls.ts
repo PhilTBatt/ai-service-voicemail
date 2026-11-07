@@ -10,17 +10,21 @@ import { withTenant } from "../db/tenant.ts";
 import { parseTranscript } from "../jobs/process-call.ts";
 import { logger } from "../logger.ts";
 import type { TelephonyProvider } from "../providers/telephony.ts";
+import type { VoiceProvider } from "../providers/voice.ts";
 
 export interface CallPageOptions {
   pool: pg.Pool;
   signingSecret: string;
   /** Streams fallback voicemail recordings. Absent until Twilio is configured. */
   telephony?: TelephonyProvider | undefined;
+  /** Streams agent-call recordings. Absent until the voice platform is configured. */
+  voice?: VoiceProvider | undefined;
   now?: () => Date;
 }
 
 interface CallRow {
   id: string;
+  provider_call_id: string;
   started_at: Date;
   ended_at: Date | null;
   billable_seconds: number;
@@ -38,6 +42,7 @@ export function callPageRouter({
   pool,
   signingSecret,
   telephony,
+  voice,
   now = () => new Date(),
 }: CallPageOptions) {
   const router = Router();
@@ -72,7 +77,7 @@ export function callPageRouter({
             async (client) =>
               (
                 await client.query<CallRow>(
-                  `SELECT id, started_at, ended_at, billable_seconds, caller_number, urgency, summary,
+                  `SELECT id, provider_call_id, started_at, ended_at, billable_seconds, caller_number, urgency, summary,
                           flags, extracted_fields, transcript, recording_ref, via_fallback
                    FROM calls WHERE id = $1`,
                   [check.callId],
@@ -109,8 +114,10 @@ export function callPageRouter({
       transcript: call.transcript === null ? null : parseTranscript(call.transcript),
       viaFallback: call.via_fallback,
       recording: {
-        // Agent-call recordings (held at the voice platform) are streamed in a later change.
-        available: call.recording_ref !== null && call.via_fallback && telephony !== undefined,
+        // Voicemails are held by the telephony provider, agent calls by the voice platform.
+        available:
+          call.recording_ref !== null &&
+          (call.via_fallback ? telephony !== undefined : voice !== undefined),
         url: `/c/${req.params.token}/recording`,
       },
     });
@@ -120,11 +127,16 @@ export function callPageRouter({
     const loaded = await loadCall(req.params.token, res);
     if (!loaded) return;
     const { tenantId, call } = loaded;
-    if (call.recording_ref === null || !call.via_fallback || !telephony) {
+    const source = call.via_fallback ? telephony : voice;
+    if (call.recording_ref === null || !source) {
       res.status(404).json({ error: "Recording not available" });
       return;
     }
-    const audio = await telephony.fetchRecording(call.recording_ref);
+    // The telephony provider is keyed by the stored recording URL; the voice platform is asked
+    // for the call itself, because its recording URLs expire.
+    const audio = call.via_fallback
+      ? await (source as TelephonyProvider).fetchRecording(call.recording_ref)
+      : await (source as VoiceProvider).fetchRecording(call.provider_call_id);
     if (!audio) {
       logger.warn("Recording missing at the provider", { tenantId, callId: call.id });
       res.status(404).json({ error: "Recording not available" });

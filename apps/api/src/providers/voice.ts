@@ -2,6 +2,7 @@
 // lives in an adapter behind this interface; core and the rest of the API only see these
 // types. Swapping platforms later is a new adapter, not a rewrite.
 import type { AgentDefinition } from "../core/agent.ts";
+import type { RecordingAudio } from "./recording.ts";
 
 export interface UpsertAgentInput {
   definition: AgentDefinition;
@@ -82,4 +83,6 @@ export interface VoiceProvider {
   verifyAndParseWebhook(rawBody: Buffer, headers: WebhookHeaders): ParsedWebhook;
   /** Deletes the recording, transcript and logs at the platform. Must be safe to repeat. */
   deleteCallData(providerCallId: string): Promise<void>;
+  /** The call's recording, fetched fresh from the platform, or null if it has none (or no longer). */
+  fetchRecording(providerCallId: string): Promise<RecordingAudio | null>;
 }

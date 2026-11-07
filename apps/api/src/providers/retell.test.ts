@@ -77,6 +77,11 @@ function makeStubHarness(): VoiceProviderHarness & { stub: RetellApiStub } {
       ),
     ignorableWebhook: () =>
       signed({ event: "call_started", call: retellPayload(sampleCallEndedEvent()).call }),
+    seedRecording: (callId, bytes) => {
+      const url = `https://retell-recordings.example/${callId}/recording.wav`;
+      stub.callRecords.set(callId, { call_id: callId, recording_url: url });
+      stub.recordingAudio.set(url, bytes);
+    },
   };
 }
 
@@ -217,6 +222,8 @@ describe("RetellVoiceProvider agents", () => {
       reminder_max_count: 1,
       end_call_after_silence_ms: 10_000,
       webhook_url: "https://example.com/webhooks/voice/retell",
+      opt_in_signed_url: true,
+      data_storage_retention_days: 30,
     });
     expect(buildAgent(sampleAgentDefinition({ voice: { gender: "male" } }))).toMatchObject({
       voice_id: "11labs-Anthony",

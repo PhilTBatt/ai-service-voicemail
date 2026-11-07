@@ -13,7 +13,12 @@ export interface AppOptions {
   pool: pg.Pool;
   /** The signed call pages (/c/:token). Absent until SIGNING_SECRET is configured. */
   callPages?:
-    | { signingSecret: string; telephony?: TelephonyProvider | undefined; now?: () => Date }
+    | {
+        signingSecret: string;
+        telephony?: TelephonyProvider | undefined;
+        voice?: VoiceProvider | undefined;
+        now?: () => Date;
+      }
     | undefined;
   voiceProviders?: Record<string, VoiceProvider>;
   onCallEnded?: (event: CallEndedEvent) => Promise<void>;

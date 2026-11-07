@@ -13,6 +13,8 @@ export interface VoiceProviderHarness {
   signedWebhook: (event: CallEndedEvent) => { rawBody: Buffer; headers: WebhookHeaders };
   /** A genuine, correctly signed webhook for an event we don't act on. */
   ignorableWebhook: () => { rawBody: Buffer; headers: WebhookHeaders };
+  /** Puts a recording at the "platform" for a call. Absent for the live run. */
+  seedRecording?: (providerCallId: string, bytes: Uint8Array<ArrayBuffer>) => void;
 }
 
 export interface ContractOptions {
@@ -125,6 +127,20 @@ export function describeVoiceProviderContract(
       expect(() => harness.provider.verifyAndParseWebhook(tampered, headers)).toThrow(
         WebhookVerificationError,
       );
+    });
+
+    it("streams a call's recording, and returns null once the call's data is deleted", async () => {
+      const harness = makeHarness();
+      if (!harness.seedRecording) return; // live platform: nothing to seed
+      harness.seedRecording("call_contract_recording", new Uint8Array([7, 8, 9]));
+      const audio = await harness.provider.fetchRecording("call_contract_recording");
+      expect(audio?.contentType).toContain("audio/");
+      expect(new Uint8Array(await new Response(audio!.body).arrayBuffer())).toEqual(
+        new Uint8Array([7, 8, 9]),
+      );
+      await harness.provider.deleteCallData("call_contract_recording");
+      expect(await harness.provider.fetchRecording("call_contract_recording")).toBeNull();
+      expect(await harness.provider.fetchRecording("call_never_existed")).toBeNull();
     });
 
     it("deletes call data without error, even when asked twice", async () => {
