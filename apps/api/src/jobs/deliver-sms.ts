@@ -5,7 +5,7 @@ import type { OutboundPolicy } from "../core/outbound-allowlist.ts";
 import type { SmsProvider } from "../providers/sms.ts";
 import { deliverNotification, type DeliveryOutcome } from "./deliver-notification.ts";
 
-export type { DeliveryOutcome, NotificationStatus } from "./deliver-notification.ts";
+export type { DeliveryOutcome } from "./deliver-notification.ts";
 
 /** 'sms' is the call summary; the other two are the emergency texts. */
 export type SmsChannel = "sms" | "sms_emergency" | "sms_caller";

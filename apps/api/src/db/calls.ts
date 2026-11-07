@@ -1,7 +1,7 @@
 import type { PgBoss } from "pg-boss";
 import type pg from "pg";
 import { billableSeconds, usagePeriodFor } from "../core/usage.ts";
-import { EMERGENCY_PRIORITY, NOTIFY_EMERGENCY_QUEUE, PROCESS_CALL_QUEUE } from "../jobs/queue.ts";
+import { NOTIFY_EMERGENCY_QUEUE, PROCESS_CALL_QUEUE } from "../jobs/queue.ts";
 import type { CallEndedEvent, FunctionCallEvent } from "../providers/voice.ts";
 import { findTenantIdByNumber } from "./cross-tenant.ts";
 import { withTenant } from "./tenant.ts";
@@ -140,7 +140,6 @@ export async function recordMidCallEmergency(
       { tenantId, callId, kind },
       {
         singletonKey: callId,
-        priority: EMERGENCY_PRIORITY,
         db: { executeSql: (text: string, values?: unknown[]) => client.query(text, values) },
       },
     );

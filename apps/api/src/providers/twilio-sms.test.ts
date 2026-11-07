@@ -57,3 +57,22 @@ describe("TwilioSmsProvider", () => {
     });
   });
 });
+
+describe("TwilioSmsProvider timeouts", () => {
+  it("gives up on a request Twilio never answers, well inside the job expiry", async () => {
+    const hung: typeof fetch = (_input, init) =>
+      new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(init.signal!.reason as Error));
+      });
+    const provider = new TwilioSmsProvider({
+      accountSid: ACCOUNT_SID,
+      authToken: "not-a-real-token",
+      from: "AnswerMate",
+      fetch: hung,
+      timeoutMs: 20,
+    });
+    await expect(provider.send({ to: "+447700900001", body: "x" })).rejects.toThrow(
+      /timed out|abort/i,
+    );
+  });
+});

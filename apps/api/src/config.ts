@@ -136,3 +136,12 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
   });
   throw new ConfigError(problems);
 }
+
+/** Where Retell sends call events and mid-call function requests, once there's a public URL. */
+export function retellUrls(config: Pick<Config, "publicBaseUrl">) {
+  if (!config.publicBaseUrl) return {};
+  return {
+    webhookUrl: `${config.publicBaseUrl}/webhooks/voice/retell`,
+    functionUrl: `${config.publicBaseUrl}/webhooks/voice/retell/function`,
+  };
+}

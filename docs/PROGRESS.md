@@ -64,6 +64,10 @@ Smaller calls, explained when they were made:
 
 ## Watch list
 
+- A provisional call row opened by a mid-call emergency stays open if Retell's call-ended webhook never arrives (no transcript, no summary text). Only Twilio voicemails are reconciled today; a Retell reconciliation (list recent calls) would close the gap.
+- Unverified against Retell until the live contract test runs: the function-node edge shape, and that custom-function requests carry `X-Retell-Signature` in the same `v=,d=` form as webhooks.
+- Unverified at Twilio: whether a UK recipient replying STOP to our sender is opted out carrier-side (error 21610). The SMS commands no longer use STOP/START; if a tradesperson replies STOP anyway, their texts will start failing until they reply START.
+- Retell API calls have no timeout yet; the Twilio ones now time out at 15 s.
 - STATUS by SMS counts every call, spam included (Phil, 2026-11-07: fine for now). Revisit once the dashboard can mark calls as dealt with, e.g. "Calls today: 6 (1 needs a reply)".
 - TypeScript 7: switch once typescript-eslint supports it (decision 001).
 - `npm audit` reports a moderate `minimatch` issue inside ESLint (dev-only; the suggested fix downgrades ESLint). It should clear when ESLint updates the dependency.
@@ -77,6 +81,7 @@ Smaller calls, explained when they were made:
 
 ## Session log (newest first)
 
+- **2026-11-07:** Step 6 review fixes (subagent review against the plan): a mid-call emergency can no longer be downgraded by the extraction or dropped by the job; signed call tokens are redacted from logs; a dropped recording stream no longer crashes the API; STOP/START removed as command aliases; Twilio requests time out at 15 s; Twilio credentials only ever go to api.twilio.com; GSM-7 UCS-2 counting fixed; call texts capped at two segments; email queue retention stated; dead `priority` option removed; duplicated schemas and helpers merged.
 - **2026-11-07:** Step 7 started: eval harness. Personas as YAML (loader with zod, required set enforced); simulation = two model roles plus an engine that speaks opening, scripts and close verbatim, enforces the cool-down and the silence limits; assertions reuse the guardrail scanner and the real extraction prompt; judge; CostMeter from list prices with a settable £/$ rate; report. All unit-tested with the fake model. Added the `yaml` package.
 - **2026-11-07:** Step 6: the email side up to the provider: `EmailProvider` seam and fake, `callEmail`/`voicemailEmail` (text and escaped HTML, UK time), `notify-email` job, channel-agnostic `deliverNotification` (SMS now goes through it too), email jobs queued with every call and voicemail. The worker warns that email is off until the adapter exists.
 - **2026-11-07:** Step 6: email provider decision record (010) from the three providers' current pages: pricing, data location and retention, DPA, approval, SDKs, webhooks. Recommendation Postmark, medium confidence; strongest case against is US hosting of transcripts for 45 days.

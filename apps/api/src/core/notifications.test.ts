@@ -197,3 +197,17 @@ describe("email helpers", () => {
     );
   });
 });
+
+describe("callSms length", () => {
+  it("cuts a long summary so the text never runs past two segments", () => {
+    const longSummary = Array.from(
+      { length: 30 },
+      (_, i) => `Detail number ${i} about the job`,
+    ).join(" ");
+    const { body, segments } = callSms({ ...INPUT, summary: longSummary });
+    expect(segments).toBeLessThanOrEqual(2);
+    expect(body).toContain("...");
+    expect(body).toContain("Call back: tel:+447700900123");
+    expect(body).toContain(`Details: ${INPUT.callUrl}`);
+  });
+});

@@ -5,12 +5,7 @@
 import type { PgBoss } from "pg-boss";
 import type pg from "pg";
 import type { CallExtraction } from "../core/extraction.ts";
-import {
-  EMERGENCY_PRIORITY,
-  NOTIFY_EMAIL_QUEUE,
-  NOTIFY_EMERGENCY_QUEUE,
-  NOTIFY_SMS_QUEUE,
-} from "./queue.ts";
+import { NOTIFY_EMAIL_QUEUE, NOTIFY_EMERGENCY_QUEUE, NOTIFY_SMS_QUEUE } from "./queue.ts";
 
 export interface NotifiableCall {
   tenantId: string;
@@ -25,11 +20,7 @@ export function enqueueNotificationsWith(boss: PgBoss): EnqueueNotifications {
   return async (client, { tenantId, callId, urgency }) => {
     const db = { executeSql: (text: string, values?: unknown[]) => client.query(text, values) };
     if (urgency === "emergency") {
-      await boss.send(
-        NOTIFY_EMERGENCY_QUEUE,
-        { tenantId, callId },
-        { singletonKey: callId, priority: EMERGENCY_PRIORITY, db },
-      );
+      await boss.send(NOTIFY_EMERGENCY_QUEUE, { tenantId, callId }, { singletonKey: callId, db });
     }
     await boss.send(NOTIFY_SMS_QUEUE, { tenantId, callId }, { singletonKey: callId, db });
     await boss.send(NOTIFY_EMAIL_QUEUE, { tenantId, callId }, { singletonKey: callId, db });

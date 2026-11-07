@@ -41,7 +41,8 @@ export async function runProcessCall(
         transcript: string | null;
         summary: string | null;
         via_fallback: boolean;
-      }>("SELECT transcript, summary, via_fallback FROM calls WHERE id = $1", [callId])
+        urgency: string | null;
+      }>("SELECT transcript, summary, via_fallback, urgency FROM calls WHERE id = $1", [callId])
     ).rows[0];
     if (!call) throw new Error(`Call ${callId} not found for tenant ${tenantId}`);
     const tenant = (
@@ -88,21 +89,28 @@ export async function runProcessCall(
     else logger.warn("LLM output didn't match the schema", { tenantId, callId, attempt });
   }
 
+  // A mid-call emergency function already marked the call (db/calls.ts). The extraction can
+  // add to that but never downgrade it: over-trigger on purpose.
+  const stickyEmergency = loaded.call.urgency === "emergency";
+  const finalUrgency: CallExtraction["urgency"] | null = stickyEmergency
+    ? "emergency"
+    : (extraction?.urgency ?? null);
+
   const inputTokens = usages.reduce((n, u) => n + u.inputTokens, 0);
   const outputTokens = usages.reduce((n, u) => n + u.outputTokens, 0);
 
   await withTenant(pool, tenantId, async (client) => {
     if (extraction) {
-      const { jobSummary, urgency, flags, ...fields } = extraction;
+      const { jobSummary, flags, callerName, callbackNumber, postcode, priceAsked } = extraction;
       await client.query(
         `UPDATE calls SET summary = $2, urgency = $3, flags = flags || $4::text[], extracted_fields = $5
          WHERE id = $1`,
         [
           callId,
           jobSummary,
-          urgency,
+          finalUrgency,
           [...flags, ...guardrailFlags],
-          JSON.stringify({ ...fields, priceAsked: extraction.priceAsked, guardrailHits }),
+          JSON.stringify({ callerName, callbackNumber, postcode, priceAsked, guardrailHits }),
         ],
       );
     } else {
@@ -129,11 +137,7 @@ export async function runProcessCall(
       );
     }
     // Even a failed extraction gets a text: the summary says to read the transcript.
-    await enqueueNotifications?.(client, {
-      tenantId,
-      callId,
-      urgency: extraction?.urgency ?? null,
-    });
+    await enqueueNotifications?.(client, { tenantId, callId, urgency: finalUrgency });
   });
 
   if (guardrailHits.length > 0) {
@@ -143,7 +147,7 @@ export async function runProcessCall(
     alert("call-extraction-failed", { tenantId, callId });
     return "extraction-failed";
   }
-  logger.info("Call extracted", { tenantId, callId, urgency: extraction.urgency });
+  logger.info("Call extracted", { tenantId, callId, urgency: finalUrgency });
   return "extracted";
 }
 

@@ -1,5 +1,5 @@
 // The worker process: runs background jobs. Same image as the API, different command.
-import { ConfigError, loadConfig } from "./config.ts";
+import { ConfigError, loadConfig, retellUrls } from "./config.ts";
 import { createAdminPool } from "./db/cross-tenant.ts";
 import { createPool } from "./db/pool.ts";
 import { startDeadLetterWatcher } from "./jobs/dead-letter.ts";
@@ -36,15 +36,7 @@ try {
   const pool = createPool(config.databaseUrl);
   const boss = await startQueue(config.databaseUrl);
   // The worker syncs agents, so it decides their webhook and function URLs.
-  const voice = new RetellVoiceProvider({
-    apiKey: config.retellApiKey,
-    ...(config.publicBaseUrl
-      ? {
-          webhookUrl: `${config.publicBaseUrl}/webhooks/voice/retell`,
-          functionUrl: `${config.publicBaseUrl}/webhooks/voice/retell/function`,
-        }
-      : {}),
-  });
+  const voice = new RetellVoiceProvider({ apiKey: config.retellApiKey, ...retellUrls(config) });
   if (!config.publicBaseUrl) {
     logger.warn("PUBLIC_BASE_URL isn't set: agents sync without webhook or function URLs");
   }

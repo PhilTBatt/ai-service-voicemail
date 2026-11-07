@@ -52,16 +52,16 @@ describe("enqueueNotificationsWith", () => {
     ]);
   });
 
-  it("adds the emergency job, with priority, for an emergency", async () => {
+  it("adds the emergency job for an emergency", async () => {
     const { tenantId, callId } = await makeCall();
     const enqueue = enqueueNotificationsWith(boss);
     await withTenant(app, tenantId, (client) =>
       enqueue(client, { tenantId, callId, urgency: "emergency" }),
     );
-    expect((await jobsFor(callId)).map((job) => [job.name, job.priority])).toEqual([
-      ["notify-email", 0],
-      ["notify-emergency", 10],
-      ["notify-sms", 0],
+    expect((await jobsFor(callId)).map((job) => job.name)).toEqual([
+      "notify-email",
+      "notify-emergency",
+      "notify-sms",
     ]);
   });
 

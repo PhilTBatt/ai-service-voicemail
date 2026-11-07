@@ -1,6 +1,7 @@
 // What Twilio is told to do with a call. Built with Twilio's TwiML builder so text is
 // escaped properly. The snapshot tests pin the exact XML.
 import twilio from "twilio";
+import { nationalNumber } from "./notifications.ts";
 import { FALLBACK_VOICEMAIL_GREETING, SERVICE_ENDED_LINE, VOICEMAIL_THANKS } from "./scripts.ts";
 
 const VoiceResponse = twilio.twiml.VoiceResponse;
@@ -81,7 +82,7 @@ export function serviceEnded(mobile: string | null): string {
     response.say(SAY, `${SERVICE_ENDED_LINE} the business directly. Goodbye.`);
   } else {
     const say = response.say(SAY, `${SERVICE_ENDED_LINE} `);
-    say.sayAs({ "interpret-as": "telephone" }, nationalFormat(mobile));
+    say.sayAs({ "interpret-as": "telephone" }, nationalNumber(mobile));
     say.addText(". Goodbye.");
   }
   response.hangup();
@@ -110,10 +111,4 @@ export function smsReply(text: string): string {
 /** No reply at all: for unknown senders and for replies the outbound allowlist blocks. */
 export function noSmsReply(): string {
   return new MessagingResponse().toString();
-}
-
-/** +447700900123 → 07700 900123, which is how a UK caller expects to hear it. */
-function nationalFormat(e164: string): string {
-  const national = e164.replace(/^\+44/, "0");
-  return national.length === 11 ? `${national.slice(0, 5)} ${national.slice(5)}` : national;
 }

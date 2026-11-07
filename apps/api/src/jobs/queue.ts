@@ -14,9 +14,11 @@ export const RETENTION_CRON = "30 3 * * *"; // 03:30 Europe/London, every day
 export const NOTIFY_SMS_QUEUE = "notify-sms";
 /** The email for a call (BUILD_PLAN Step 6). Waits in the queue until an email provider is configured. */
 export const NOTIFY_EMAIL_QUEUE = "notify-email";
-/** The emergency texts for a call (BUILD_PLAN Step 6). Sent with a higher priority. */
+/**
+ * The emergency texts for a call (BUILD_PLAN Step 6). Its own queue, with short retry
+ * delays, so an emergency never waits behind ordinary texts.
+ */
 export const NOTIFY_EMERGENCY_QUEUE = "notify-emergency";
-export const EMERGENCY_PRIORITY = 10;
 /** Jobs that failed every retry land here, and anything in here raises an alert (Step 5). */
 export const DEAD_LETTER_QUEUE = "dead-letter";
 
@@ -67,6 +69,9 @@ export async function startQueue(connectionString: string): Promise<PgBoss> {
     retryDelay: 60,
     retryBackoff: true,
     expireInSeconds: 60,
+    // Until the email adapter exists (decision 010) nothing works this queue. Waiting jobs are
+    // kept this long, then deleted (not dead-lettered): the default is 14 days, stated here.
+    retentionSeconds: 30 * 24 * 60 * 60,
     deadLetter: DEAD_LETTER_QUEUE,
   });
   await ensureQueue(boss, NOTIFY_EMERGENCY_QUEUE, {

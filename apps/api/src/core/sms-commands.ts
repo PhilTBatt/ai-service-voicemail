@@ -103,13 +103,12 @@ export function parseSmsCommand(body: string, today: Temporal.PlainDate): SmsCom
     .trim();
   const [word = "", ...rest] = text.split(/\s+/);
   switch (word.toUpperCase()) {
+    // Not STOP or START: carriers and Twilio treat those as opt-out and opt-in keywords.
     case "OFF":
     case "PAUSE":
-    case "STOP":
       return { kind: "off" };
     case "ON":
     case "RESUME":
-    case "START":
       return { kind: "on" };
     case "HOLIDAY":
     case "HOLS":

@@ -3,9 +3,10 @@
 // instead of 160, and roughly double the cost. So every text we send is normalised to GSM-7
 // and its segment count is known before it goes.
 
-// The GSM 03.38 basic character set.
+// The GSM 03.38 basic character set, minus ESC (0x1B): it's the extension-table prefix, not
+// a character anyone types, so it's dropped rather than counted.
 const GSM7_BASIC =
-  "@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞ\u001bÆæßÉ !\"#¤%&'()*+,-./0123456789:;<=>?¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà";
+  "@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !\"#¤%&'()*+,-./0123456789:;<=>?¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà";
 // Extension characters: allowed, but each costs two septets.
 const GSM7_EXTENSION = "^{}\\[~]|€";
 
@@ -35,7 +36,8 @@ export function smsEncoding(text: string): SmsEncoding {
     const length = gsm7Length(text);
     return { encoding: "GSM-7", segments: length <= 160 ? 1 : Math.ceil(length / 153) };
   }
-  const length = [...text].length;
+  // UCS-2 counts 16-bit units, so an emoji outside the Basic Multilingual Plane counts twice.
+  const length = text.length;
   return { encoding: "UCS-2", segments: length <= 70 ? 1 : Math.ceil(length / 67) };
 }
 

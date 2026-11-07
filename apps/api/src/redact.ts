@@ -17,6 +17,9 @@ const INTERNATIONAL_PHONE = /\+[1-9](?:[\s-]?\d){7,14}\b/g;
 // UK postcodes in all six shapes (A9 9AA to AA9A 9AA), any case, with or without the space.
 const POSTCODE = /\b[A-Z]{1,2}\d[A-Z\d]?\s?\d[A-Z]{2}\b/gi;
 
+// Signed call-page links (core/signed-links.ts): the token is a seven-day credential.
+const CALL_TOKEN = /\/c\/[0-9a-f]{32}\.[0-9a-z]{1,8}\.[A-Za-z0-9_-]{22}(?![A-Za-z0-9_-])/g;
+
 const REDACTED_KEYS = new Set(["transcript", "summary", "body", "message"]);
 
 export function redactText(text: string): string {
@@ -24,7 +27,8 @@ export function redactText(text: string): string {
     .replace(EMAIL, "[email]")
     .replace(UK_PHONE, "[phone]")
     .replace(INTERNATIONAL_PHONE, "[phone]")
-    .replace(POSTCODE, "[postcode]");
+    .replace(POSTCODE, "[postcode]")
+    .replace(CALL_TOKEN, "/c/[token]");
 }
 
 /** Redacts one field: content fields (transcript, summary, body, message) are replaced whole. */

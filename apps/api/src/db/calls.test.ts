@@ -179,8 +179,8 @@ const functionCall = (to: string, name = "gas_emergency_alert"): FunctionCallEve
 
 const emergencyJobsFor = async (callId: string) =>
   (
-    await app.query<{ state: string; data: unknown; priority: number }>(
-      "SELECT state, data, priority FROM pgboss.job WHERE name = $1 AND singleton_key = $2",
+    await app.query<{ state: string; data: unknown }>(
+      "SELECT state, data FROM pgboss.job WHERE name = $1 AND singleton_key = $2",
       [NOTIFY_EMERGENCY_QUEUE, callId],
     )
   ).rows;
@@ -207,7 +207,7 @@ describe("recordMidCallEmergency", () => {
     expect(alerted).toMatchObject({ outcome: "alerted", tenantId, kind: "gas" });
     if (alerted.outcome !== "alerted") throw new Error("unreachable");
     expect(await emergencyJobsFor(alerted.callId)).toEqual([
-      { state: "created", data: { tenantId, callId: alerted.callId, kind: "gas" }, priority: 10 },
+      { state: "created", data: { tenantId, callId: alerted.callId, kind: "gas" } },
     ]);
     expect(await callRow(tenantId, fc.providerCallId)).toMatchObject({
       rows: 1,

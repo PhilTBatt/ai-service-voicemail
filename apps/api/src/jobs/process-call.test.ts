@@ -232,3 +232,31 @@ describe("runProcessCall", () => {
     expect(llm.requests).toHaveLength(0);
   });
 });
+
+describe("runProcessCall after a mid-call emergency", () => {
+  it("keeps the call an emergency even if the extraction says otherwise", async () => {
+    const { tenantId, callId } = await makeCall();
+    await admin.query(
+      "UPDATE calls SET urgency = 'emergency', flags = ARRAY['emergency:gas'] WHERE id = $1",
+      [callId],
+    );
+    const enqueueNotifications = vi.fn(() => Promise.resolve());
+    await runProcessCall(
+      {
+        pool: app,
+        llm: new FakeLlmProvider().willReturn({ ...GOOD, urgency: "urgent" }),
+        enqueueNotifications,
+      },
+      { tenantId, callId, providerCallId: "x" },
+    );
+    expect(await callRow(tenantId, callId)).toMatchObject({
+      urgency: "emergency",
+      flags: ["emergency:gas", "mentioned gas smell"],
+    });
+    expect(enqueueNotifications).toHaveBeenCalledWith(expect.anything(), {
+      tenantId,
+      callId,
+      urgency: "emergency",
+    });
+  });
+});

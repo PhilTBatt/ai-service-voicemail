@@ -175,6 +175,11 @@ export class TwilioTelephonyProvider implements TelephonyProvider {
   // The stored reference is the recording's resource URL; adding .mp3 asks for the audio.
   // Twilio recordings need the account's credentials, which is why the API streams them.
   async fetchRecording(recordingUrl: string): Promise<RecordingAudio | null> {
+    // The reference comes from Twilio's own callbacks and API, but the credentials go in
+    // the request, so never follow it anywhere else.
+    if (new URL(recordingUrl).origin !== "https://api.twilio.com") {
+      throw new Error("Refusing to send Twilio credentials to a non-Twilio recording URL");
+    }
     const credentials = Buffer.from(
       `${this.options.accountSid}:${this.options.authToken}`,
     ).toString("base64");
@@ -217,6 +222,7 @@ export class TwilioTelephonyProvider implements TelephonyProvider {
         ...(form && { "Content-Type": "application/x-www-form-urlencoded" }),
       },
       ...(form && { body: new URLSearchParams(form).toString() }),
+      signal: AbortSignal.timeout(15_000),
     });
     if (!response.ok) {
       throw new TwilioApiError(response.status, path, (await response.text()).slice(0, 300));

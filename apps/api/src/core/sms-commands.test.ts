@@ -82,3 +82,10 @@ describe("replies", () => {
     }
   });
 });
+
+describe("opt-out keywords", () => {
+  it("doesn't treat STOP or START as commands, since carriers reserve them", () => {
+    expect(parseSmsCommand("STOP", TODAY)).toEqual({ kind: "unknown" });
+    expect(parseSmsCommand("START", TODAY)).toEqual({ kind: "unknown" });
+  });
+});

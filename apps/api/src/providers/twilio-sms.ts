@@ -12,6 +12,8 @@ export interface TwilioSmsOptions {
   from: string;
   /** Injected by tests. */
   fetch?: typeof fetch;
+  /** Must finish well inside the job's 60-second expiry, or pg-boss re-queues a job that's still sending. */
+  timeoutMs?: number;
 }
 
 interface MessageJson {
@@ -36,6 +38,7 @@ export class TwilioSmsProvider implements SmsProvider {
         "Content-Type": "application/x-www-form-urlencoded",
       },
       body: new URLSearchParams({ To: to, From: from, Body: body }).toString(),
+      signal: AbortSignal.timeout(this.options.timeoutMs ?? 15_000),
     });
     if (!response.ok) {
       throw new TwilioApiError(response.status, path, (await response.text()).slice(0, 300));

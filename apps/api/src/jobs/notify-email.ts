@@ -2,8 +2,8 @@
 // transcript and the links, or a "new voicemail" email. Composes; deliver-notification.ts
 // applies the allowlist and records the send. The provider adapter follows decision 010.
 import type pg from "pg";
-import { z } from "zod";
 import { raiseAlert, type AlertFn } from "../alerts.ts";
+import { storedFieldsSchema } from "../core/extraction.ts";
 import { callEmail, voicemailEmail } from "../core/notifications.ts";
 import type { OutboundPolicy } from "../core/outbound-allowlist.ts";
 import { CALL_LINK_TTL_MS, callPageUrl, signCallLink } from "../core/signed-links.ts";
@@ -28,12 +28,6 @@ export interface NotifyEmailDeps {
 }
 
 export type NotifyEmailOutcome = DeliveryOutcome | "no-email";
-
-const storedFields = z.looseObject({
-  callerName: z.string().nullable().optional(),
-  callbackNumber: z.string().nullable().optional(),
-  postcode: z.string().nullable().optional(),
-});
 
 export async function runNotifyEmail(
   {
@@ -106,7 +100,7 @@ export async function runNotifyEmail(
         recordingUrl,
       })
     : (() => {
-        const parsed = storedFields.safeParse(call.extracted_fields);
+        const parsed = storedFieldsSchema.safeParse(call.extracted_fields);
         const fields = parsed.success ? parsed.data : {};
         return callEmail({
           businessName: tenant.business_name,

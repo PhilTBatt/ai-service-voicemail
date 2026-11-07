@@ -211,3 +211,14 @@ describe("runNotifyEmergency mid-call", () => {
     });
   });
 });
+
+describe("runNotifyEmergency when the extraction disagreed", () => {
+  it("still sends when the job came from the mid-call function, whatever urgency was stored", async () => {
+    const { tenantId, callId } = await makeCall({ urgency: "urgent" });
+    const d = deps();
+    expect(await runNotifyEmergency(d, { tenantId, callId, kind: "gas" })).toEqual({
+      tradesperson: "sent",
+      caller: "sent",
+    });
+  });
+});

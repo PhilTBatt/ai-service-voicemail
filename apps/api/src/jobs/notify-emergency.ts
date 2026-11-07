@@ -5,8 +5,8 @@
 // notifications channel. Queued mid-call by the flow's emergency function (with the kind),
 // and again after the call by process-call (the second run finds the texts already sent).
 import type pg from "pg";
-import { z } from "zod";
 import { raiseAlert, type AlertFn } from "../alerts.ts";
+import { storedFieldsSchema } from "../core/extraction.ts";
 import { emergencyCallerSms, emergencyTradespersonSms } from "../core/notifications.ts";
 import type { OutboundPolicy } from "../core/outbound-allowlist.ts";
 import { withTenant } from "../db/tenant.ts";
@@ -34,8 +34,6 @@ export type NotifyEmergencyOutcome =
       tradesperson: DeliveryOutcome | "no-mobile";
       caller: DeliveryOutcome | "no-number" | "not-gas";
     };
-
-const storedFields = z.looseObject({ callbackNumber: z.string().nullable().optional() });
 
 /** The agent spoke Appendix A's gas script: the only case where the caller gets a text. */
 export function gasScriptSpoken(transcript: string | null): boolean {
@@ -74,12 +72,14 @@ export async function runNotifyEmergency(
     return { call, tenant };
   });
 
-  if (loaded.call.urgency !== "emergency") {
+  // Queued mid-call, the kind is authoritative: the agent spoke the script. Queued after
+  // the call, the extraction's urgency decides.
+  if (kind === undefined && loaded.call.urgency !== "emergency") {
     logger.info("Emergency job for a call that isn't one; nothing sent", { tenantId, callId });
     return "not-emergency";
   }
 
-  const parsed = storedFields.safeParse(loaded.call.extracted_fields);
+  const parsed = storedFieldsSchema.safeParse(loaded.call.extracted_fields);
   const callbackNumber =
     (parsed.success ? parsed.data.callbackNumber : null) ?? loaded.call.caller_number;
   const deps = { pool, sms, outbound };

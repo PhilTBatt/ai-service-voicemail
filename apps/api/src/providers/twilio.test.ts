@@ -156,3 +156,12 @@ describe("TwilioTelephonyProvider recordings", () => {
     expect(await provider.getCall("CA_unknown")).toBeNull();
   });
 });
+
+describe("TwilioTelephonyProvider recording URLs", () => {
+  it("refuses to send the account credentials anywhere but Twilio", async () => {
+    const { provider } = makeHarness();
+    await expect(
+      provider.fetchRecording("https://evil.example/2010-04-01/Accounts/AC0/Recordings/RE1"),
+    ).rejects.toThrow(/non-Twilio/);
+  });
+});

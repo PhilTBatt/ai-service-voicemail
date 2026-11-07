@@ -2,6 +2,7 @@
 // is the only credential: no login yet (Step 10 adds the dashboard proper). The recording
 // is streamed through the API, so the provider's URL is never exposed.
 import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { Router } from "express";
 import type pg from "pg";
 import { verifyCallLink } from "../core/signed-links.ts";
@@ -143,7 +144,17 @@ export function callPageRouter({
       return;
     }
     res.type(audio.contentType);
-    Readable.fromWeb(audio.body as import("node:stream/web").ReadableStream<Uint8Array>).pipe(res);
+    try {
+      // pipeline() forwards a provider-side error here; pipe() would leave it unhandled and
+      // take the whole process down.
+      await pipeline(
+        Readable.fromWeb(audio.body as import("node:stream/web").ReadableStream<Uint8Array>),
+        res,
+      );
+    } catch (error) {
+      logger.warn("Recording stream ended early", { tenantId, callId: call.id, error });
+      res.destroy();
+    }
   });
 
   return router;

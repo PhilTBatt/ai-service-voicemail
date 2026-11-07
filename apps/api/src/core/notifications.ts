@@ -43,14 +43,23 @@ export function callSms(input: CallNotificationInput): { body: string; segments:
   ]
     .filter((part): part is string => Boolean(part))
     .join(", ");
-  const summary = input.summary.split("\n").slice(0, 2).join(" ").trim();
-  const lines = [
-    `${URGENCY_LABEL[input.urgency ?? "other"]}: ${who}`,
-    summary,
-    ...(input.callbackNumber ? [`Call back: tel:${input.callbackNumber}`] : []),
-    `Details: ${input.callUrl}`,
-  ];
-  const body = toGsm7(lines.join("\n"));
+  let summary = input.summary.split("\n").slice(0, 2).join(" ").trim();
+  const compose = () =>
+    toGsm7(
+      [
+        `${URGENCY_LABEL[input.urgency ?? "other"]}: ${who}`,
+        summary,
+        ...(input.callbackNumber ? [`Call back: tel:${input.callbackNumber}`] : []),
+        `Details: ${input.callUrl}`,
+      ].join("\n"),
+    );
+  let body = compose();
+  // Two segments at most: a long summary is cut at a word boundary until it fits.
+  while (smsEncoding(body).segments > 2 && summary.length > 20) {
+    const room = Math.max(20, summary.length - (body.length - 306) - 3);
+    summary = `${summary.slice(0, room).replace(/\s+\S*$/, "")}...`;
+    body = compose();
+  }
   return { body, segments: smsEncoding(body).segments };
 }
 

@@ -48,3 +48,13 @@ Rules:
   const user = `Transcript:\n\n${lines.join("\n")}`;
   return { system, user };
 }
+
+/**
+ * What the notification jobs read back from calls.extracted_fields: the contact details only,
+ * tolerant of anything else stored alongside them (guardrail hits, future fields).
+ */
+export const storedFieldsSchema = z.looseObject({
+  callerName: z.string().nullable().optional(),
+  callbackNumber: z.string().nullable().optional(),
+  postcode: z.string().nullable().optional(),
+});

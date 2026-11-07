@@ -42,3 +42,15 @@ describe("toGsm7", () => {
     expect(isGsm7(toGsm7("Ünïcödé — “quotes” 🚀"))).toBe(true);
   });
 });
+
+describe("GSM-7 edge cases", () => {
+  it("counts UCS-2 in 16-bit units, so an emoji outside the basic plane costs two", () => {
+    // 69 letters plus one emoji (two UTF-16 units) is 71 units: two segments.
+    expect(smsEncoding("a".repeat(69) + "\u{1F525}").segments).toBe(2);
+  });
+
+  it("treats the ESC prefix as unsendable and drops it", () => {
+    expect(isGsm7("\u001b")).toBe(false);
+    expect(toGsm7("a\u001bb")).toBe("ab");
+  });
+});

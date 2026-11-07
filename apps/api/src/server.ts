@@ -1,5 +1,5 @@
 import { createApp } from "./app.ts";
-import { ConfigError, loadConfig, type Config } from "./config.ts";
+import { ConfigError, loadConfig, retellUrls, type Config } from "./config.ts";
 import { recordCallEnded, recordMidCallEmergency } from "./db/calls.ts";
 import { createPool } from "./db/pool.ts";
 import { enqueueNotificationsWith } from "./jobs/enqueue-notifications.ts";
@@ -86,15 +86,6 @@ async function start(config: Config): Promise<void> {
   };
   process.once("SIGTERM", shutdown);
   process.once("SIGINT", shutdown);
-}
-
-/** Where Retell sends call events and mid-call function requests, once there's a public URL. */
-export function retellUrls(config: Pick<Config, "publicBaseUrl">) {
-  if (!config.publicBaseUrl) return {};
-  return {
-    webhookUrl: `${config.publicBaseUrl}/webhooks/voice/retell`,
-    functionUrl: `${config.publicBaseUrl}/webhooks/voice/retell/function`,
-  };
 }
 
 try {

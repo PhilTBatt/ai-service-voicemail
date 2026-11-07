@@ -58,8 +58,8 @@ export async function deliverNotification(
   }
   if (existing?.status === "blocked") return "blocked";
 
-  // One row per call and channel. 'pending' counts an attempt; the other statuses just
-  // record how that attempt ended.
+  // One row per call and channel. Creating the row counts as the first attempt; after that
+  // only a new 'pending' adds one, and the other statuses record how an attempt ended.
   const setStatus = (status: NotificationStatus, providerRef: string | null = null) =>
     withTenant(pool, tenantId, (client) =>
       client.query(

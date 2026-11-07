@@ -159,3 +159,19 @@ describe("GET /c/:token/recording", () => {
     );
   });
 });
+
+describe("GET /c/:token/recording when the provider drops the stream", () => {
+  it("ends the response without taking the API down", async () => {
+    const { callId, recordingUrl } = await makeCall("voicemail");
+    telephony.brokenRecordings.add(recordingUrl);
+    try {
+      const response = await get(`/c/${token(callId)}/recording`);
+      await response.arrayBuffer();
+    } catch {
+      // The connection being cut short is the expected outcome.
+    }
+    // The server is still answering.
+    const { callId: other } = await makeCall("agent");
+    expect((await get(`/c/${token(other)}`)).status).toBe(200);
+  });
+});

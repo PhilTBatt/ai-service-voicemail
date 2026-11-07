@@ -32,6 +32,8 @@ export class FakeTelephonyProvider implements TelephonyProvider {
   readonly deletedRecordings: string[] = [];
   /** Audio by recording URL; tests fill this in. */
   readonly recordingAudio = new Map<string, Uint8Array<ArrayBuffer>>();
+  /** Recording URLs whose stream breaks after the first chunk, for robustness tests. */
+  readonly brokenRecordings = new Set<string>();
   private readonly purchasesEnabled: boolean;
 
   constructor({ purchasesEnabled = true }: { purchasesEnabled?: boolean } = {}) {
@@ -89,6 +91,15 @@ export class FakeTelephonyProvider implements TelephonyProvider {
   }
 
   fetchRecording(recordingUrl: string): Promise<RecordingAudio | null> {
+    if (this.brokenRecordings.has(recordingUrl)) {
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array([1, 2, 3]));
+          controller.error(new Error("connection reset by the provider"));
+        },
+      });
+      return Promise.resolve({ contentType: "audio/mpeg", body });
+    }
     const bytes = this.recordingAudio.get(recordingUrl);
     if (!bytes) return Promise.resolve(null);
     return Promise.resolve({ contentType: "audio/mpeg", body: new Blob([bytes]).stream() });

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { signCallLink } from "./core/signed-links.ts";
 import { redactField, redactText, redactValue } from "./redact.ts";
 
 // Fictional data only. Phone numbers come from Ofcom's ranges reserved for drama:
@@ -171,5 +172,22 @@ describe("redactValue", () => {
       a: { from: "[phone]" },
       b: { from: "[phone]" },
     });
+  });
+});
+
+describe("call-page tokens", () => {
+  it("masks a signed call link wherever it appears, since the token is a credential", () => {
+    const token = signCallLink(
+      {
+        callId: "0b6f2b3c-9d1e-4a7f-8c2d-1e3f4a5b6c7d",
+        expiresAt: new Date("2026-12-01T00:00:00Z"),
+      },
+      "test-signing-secret-at-least-32-characters-long",
+    );
+    expect(redactText(`GET /c/${token} 500`)).toBe("GET /c/[token] 500");
+    expect(redactText(`https://callmate.example.com/c/${token}/recording`)).toBe(
+      "https://callmate.example.com/c/[token]/recording",
+    );
+    expect(redactValue({ path: `/c/${token}` })).toEqual({ path: "/c/[token]" });
   });
 });
