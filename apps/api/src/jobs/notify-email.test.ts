@@ -54,9 +54,9 @@ async function makeCall(
                  '{"callerName":"Sam","callbackNumber":"+447700900123","postcode":"XQ12 3JL"}', $3)
          RETURNING id`
       : `INSERT INTO calls (tenant_id, provider_call_id, caller_number, started_at, ended_at,
-                            billable_seconds, outcome, recording_ref, via_fallback)
-         VALUES ($1, $2, '+447700900123', '2026-11-07T09:00:00Z', '2026-11-07T09:01:00Z', 42,
-                 'voicemail', $3, true)
+                            billable_seconds, outcome, recording_ref, via_fallback, extracted_fields)
+         VALUES ($1, $2, '+447700900123', '2026-11-07T09:00:00Z', '2026-11-07T09:01:00Z', 0,
+                 'voicemail', $3, true, '{"recordingSeconds": 42}')
          RETURNING id`,
     [tenantId, `call_${randomUUID()}`, recordingRef],
   );

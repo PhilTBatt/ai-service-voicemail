@@ -282,7 +282,7 @@ describe("POST /webhooks/twilio/recording", () => {
       {
         tenant_id: tenantId,
         via_fallback: true,
-        billable_seconds: 35,
+        billable_seconds: 0,
         caller_number: "+447700900123",
       },
     ]);
@@ -428,5 +428,16 @@ describe("the demo line (POST /webhooks/twilio/voice)", () => {
     expect(await (await post("/webhooks/twilio/voice", call(number, caller))).text()).toContain(
       "<Dial",
     );
+  });
+});
+
+describe("Twilio routes given a non-form body", () => {
+  it("answers 403 rather than crashing", async () => {
+    const response = await fetch(`${baseUrl}/webhooks/twilio/voice`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ CallSid: "CA1" }),
+    });
+    expect(response.status).toBe(403);
   });
 });

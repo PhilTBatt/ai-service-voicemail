@@ -166,3 +166,33 @@ export async function findCompletedProviderCallIds(
   );
   return new Set(rows.map((r) => r.provider_call_id));
 }
+
+/**
+ * Makes a newly bought number the tenant's dedicated one, releasing their previous number
+ * in our records, in one transaction: a tenant never ends up with no active number.
+ */
+export async function reassignNumber(
+  admin: AdminPool,
+  tenantId: string,
+  number: string,
+  providerSid: string,
+): Promise<void> {
+  const client = await admin.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      "UPDATE phone_numbers SET status = 'released', released_at = now() WHERE tenant_id = $1 AND status = 'active'",
+      [tenantId],
+    );
+    await client.query(
+      "INSERT INTO phone_numbers (tenant_id, number, provider_sid) VALUES ($1, $2, $3)",
+      [tenantId, number, providerSid],
+    );
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}

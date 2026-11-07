@@ -1,5 +1,5 @@
 // Buying and assigning a number: the live-* script now, an admin action in Step 10.
-import { assignPhoneNumber, type AdminPool } from "../db/cross-tenant.ts";
+import { reassignNumber, type AdminPool } from "../db/cross-tenant.ts";
 import { logger } from "../logger.ts";
 import {
   PurchaseNotAllowedError,
@@ -46,10 +46,6 @@ export async function buyNumberForTenant(
   // From here the number exists at the provider; if recording it fails, the log has the SID.
   logger.info("Number bought", { tenantId, providerSid: bought.providerSid });
 
-  await admin.query(
-    "UPDATE phone_numbers SET status = 'released', released_at = now() WHERE tenant_id = $1 AND status = 'active'",
-    [tenantId],
-  );
-  await assignPhoneNumber(admin, tenantId, bought.number, bought.providerSid);
+  await reassignNumber(admin, tenantId, bought.number, bought.providerSid);
   return bought;
 }

@@ -46,7 +46,7 @@ describe("storeFallbackVoicemail", () => {
 
     const row = await withTenant(app, tenantId, async (client) => {
       const { rows } = await client.query(
-        "SELECT caller_number, via_fallback, outcome, recording_ref, billable_seconds FROM calls WHERE provider_call_id = $1",
+        "SELECT caller_number, via_fallback, outcome, recording_ref, billable_seconds, extracted_fields FROM calls WHERE provider_call_id = $1",
         [v.callSid],
       );
       return rows[0] as unknown;
@@ -56,7 +56,8 @@ describe("storeFallbackVoicemail", () => {
       via_fallback: true,
       outcome: "voicemail",
       recording_ref: v.recordingUrl,
-      billable_seconds: 42,
+      billable_seconds: 0, // never billed: the fallback is our failure, not the customer's
+      extracted_fields: { recordingSeconds: 42 },
     });
   });
 

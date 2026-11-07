@@ -92,7 +92,9 @@ export function twilioRouter({
     const signature = req.headers["x-twilio-signature"];
     const ok = telephony.verifyWebhook({
       url,
-      params: req.body as Record<string, string>,
+      // Express leaves req.body undefined for anything but a form body; a probe with JSON
+      // must get a 403, not a crash.
+      params: (req.body ?? {}) as Record<string, string>,
       signature: typeof signature === "string" ? signature : undefined,
     });
     if (!ok) {

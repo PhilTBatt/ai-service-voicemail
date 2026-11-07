@@ -209,3 +209,39 @@ describe("runSyncAgent", () => {
     },
   );
 });
+
+describe("runSyncAgent ordering", () => {
+  it("won't let a late retry of an older version overwrite a newer synced agent", async () => {
+    const { tenantId } = await makeTenant();
+    await saveAgentProfile(app, boss, tenantId, PROFILE);
+    await saveAgentProfile(app, boss, tenantId, { ...PROFILE, services: ["taps"] });
+    const voice = new FakeVoiceProvider();
+    expect(await runSyncAgent({ pool: app, voice }, { tenantId, profileVersion: 2 })).toBe(
+      "synced",
+    );
+    expect(await runSyncAgent({ pool: app, voice }, { tenantId, profileVersion: 1 })).toBe(
+      "superseded",
+    );
+    expect(voice.agents.size).toBe(1);
+    expect([...voice.agents.values()][0]?.profileVersion).toBe(2);
+    expect((await profileRow(tenantId, 1))?.synced_at).toBeNull();
+  });
+});
+
+describe("saveAgentProfile transaction", () => {
+  it("saves no version if the sync job can't be queued", async () => {
+    const { tenantId } = await makeTenant();
+    const brokenBoss = { send: () => Promise.reject(new Error("queue down")) } as unknown as PgBoss;
+    await expect(saveAgentProfile(app, brokenBoss, tenantId, PROFILE)).rejects.toThrow(
+      "queue down",
+    );
+    const count = await withTenant(
+      app,
+      tenantId,
+      async (client) =>
+        (await client.query("SELECT 1 FROM agent_profiles WHERE tenant_id = $1", [tenantId]))
+          .rowCount,
+    );
+    expect(count).toBe(0);
+  });
+});

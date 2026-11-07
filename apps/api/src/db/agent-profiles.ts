@@ -30,6 +30,9 @@ export async function saveAgentProfile(
 ): Promise<number> {
   const profile = agentProfileInputSchema.parse(input);
   const version = await withTenant(pool, tenantId, async (client) => {
+    // Two saves at once would compute the same next version; the lock serialises them for
+    // this tenant only, and releases itself with the transaction.
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [tenantId]);
     const { rows } = await client.query<{ version: number }>(
       `INSERT INTO agent_profiles
          (tenant_id, version, trade_template, services, service_areas, opening_hours,
@@ -50,8 +53,10 @@ export async function saveAgentProfile(
         JSON.stringify(profile.emergencyPolicy),
       ],
     );
-    return rows[0]!.version;
+    const saved = rows[0]!.version;
+    // Queued through the same transaction: no version is ever saved without its sync job.
+    await enqueueSyncAgent(boss, { tenantId, profileVersion: saved }, client);
+    return saved;
   });
-  await enqueueSyncAgent(boss, { tenantId, profileVersion: version });
   return version;
 }

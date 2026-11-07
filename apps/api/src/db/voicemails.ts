@@ -33,9 +33,11 @@ export async function storeFallbackVoicemail(
 
   const inserted = await withTenant(pool, tenantId, async (client) => {
     const result = await client.query<{ id: string }>(
+      // A fallback voicemail is our failure mode, so it's never billed (billable_seconds 0);
+      // the recording's length lives with the call for the texts and the call page.
       `INSERT INTO calls (tenant_id, provider_call_id, caller_number, started_at, ended_at,
-                          billable_seconds, outcome, recording_ref, via_fallback)
-       VALUES ($1, $2, $3, $4, $5, $6, 'voicemail', $7, true)
+                          billable_seconds, outcome, recording_ref, via_fallback, extracted_fields)
+       VALUES ($1, $2, $3, $4, $5, 0, 'voicemail', $6, true, $7)
        ON CONFLICT (provider_call_id) DO NOTHING
        RETURNING id`,
       [
@@ -44,8 +46,8 @@ export async function storeFallbackVoicemail(
         voicemail.from,
         voicemail.startedAt,
         voicemail.endedAt,
-        voicemail.durationSeconds,
         voicemail.recordingUrl,
+        JSON.stringify({ recordingSeconds: voicemail.durationSeconds }),
       ],
     );
     const callId = result.rows[0]?.id;

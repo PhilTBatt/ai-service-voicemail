@@ -54,7 +54,11 @@ export async function recordCallEnded(
         event.endedAt,
         billable,
         event.endReason,
-        event.transcript.map((turn) => `${turn.role}: ${turn.text}`).join("\n"),
+        // One line per turn. A newline inside a turn would make its tail look like the other
+        // speaker's line when parsed back, so it's folded into a space.
+        event.transcript
+          .map((turn) => `${turn.role}: ${turn.text.replaceAll(/\s*\n\s*/g, " ")}`)
+          .join("\n"),
         event.recordingRef,
       ],
     );

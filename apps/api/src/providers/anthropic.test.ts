@@ -100,3 +100,19 @@ describe.runIf(process.env.ANTHROPIC_LIVE_TESTS === "1" && process.env.ANTHROPIC
     }, 30_000);
   },
 );
+
+describe("AnthropicLlmProvider limits", () => {
+  it("sends a generous output cap with low effort, and reports a cut-off reply as invalid output", async () => {
+    const api = fakeApi({ stop_reason: "max_tokens" });
+    const result = await provider(api).extract({ ...PROMPT, schema: callExtractionSchema });
+    expect(result).toEqual({
+      ok: false,
+      reason: "invalid-output",
+      usage: { inputTokens: 321, outputTokens: 45 },
+    });
+    expect(api.requests[0]).toMatchObject({
+      max_tokens: 4096,
+      output_config: { effort: "low" },
+    });
+  });
+});

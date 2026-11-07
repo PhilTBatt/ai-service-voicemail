@@ -114,5 +114,22 @@ async function ensureQueue(
   name: string,
   options: Parameters<PgBoss["createQueue"]>[1],
 ) {
-  if (!(await boss.getQueue(name))) await boss.createQueue(name, options);
+  if (await boss.getQueue(name)) {
+    // Retry and expiry settings live in the database, so a change here must reach queues
+    // that already exist. The policy can't be changed after creation.
+    const { retryLimit, retryDelay, retryBackoff, expireInSeconds, retentionSeconds, deadLetter } =
+      options ?? {};
+    const updates = {
+      ...(retryLimit !== undefined && { retryLimit }),
+      ...(retryDelay !== undefined && { retryDelay }),
+      ...(retryBackoff !== undefined && { retryBackoff }),
+      ...(expireInSeconds !== undefined && { expireInSeconds }),
+      ...(retentionSeconds !== undefined && { retentionSeconds }),
+      ...(deadLetter !== undefined && { deadLetter }),
+    };
+    // pg-boss refuses an empty update (the dead-letter queue has only defaults).
+    if (Object.keys(updates).length > 0) await boss.updateQueue(name, updates);
+  } else {
+    await boss.createQueue(name, options);
+  }
 }

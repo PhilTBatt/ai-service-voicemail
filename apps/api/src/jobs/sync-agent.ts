@@ -16,10 +16,21 @@ export interface SyncAgentJobData {
   profileVersion: number;
 }
 
-/** Queues a sync. Returns null when one for this tenant and version is already queued or running. */
-export function enqueueSyncAgent(boss: PgBoss, data: SyncAgentJobData): Promise<string | null> {
+/**
+ * Queues a sync. Returns null when one for this tenant and version is already queued or
+ * running. Given a client, the job is written through that transaction, so it commits or
+ * rolls back with the profile row.
+ */
+export function enqueueSyncAgent(
+  boss: PgBoss,
+  data: SyncAgentJobData,
+  client?: pg.ClientBase,
+): Promise<string | null> {
   return boss.send(SYNC_AGENT_QUEUE, data, {
     singletonKey: `${data.tenantId}:${data.profileVersion}`,
+    ...(client && {
+      db: { executeSql: (text: string, values?: unknown[]) => client.query(text, values) },
+    }),
   });
 }
 
@@ -44,7 +55,7 @@ interface ProfileRow {
 export async function runSyncAgent(
   { pool, voice, alert = raiseAlert }: SyncAgentDeps,
   { tenantId, profileVersion }: SyncAgentJobData,
-): Promise<"synced" | "already-synced"> {
+): Promise<"synced" | "already-synced" | "superseded"> {
   // Read everything in one tenant transaction, then talk to the platform with no
   // transaction open: an HTTP call can take seconds and shouldn't hold a connection.
   const loaded = await withTenant(pool, tenantId, async (client) => {
@@ -79,12 +90,29 @@ export async function runSyncAgent(
       )
     ).rows[0];
 
-    return { tenant, profile, existingProviderAgentId: previous?.provider_agent_id ?? null };
+    // A newer version already synced (this job is a late retry): touching the platform agent
+    // now would put an older prompt live and undo the tenant's latest edit.
+    const newer = await client.query(
+      `SELECT 1 FROM agent_profiles
+       WHERE tenant_id = $1 AND version > $2 AND synced_at IS NOT NULL LIMIT 1`,
+      [tenantId, profileVersion],
+    );
+
+    return {
+      tenant,
+      profile,
+      existingProviderAgentId: previous?.provider_agent_id ?? null,
+      superseded: (newer.rowCount ?? 0) > 0,
+    };
   });
 
   if (loaded.profile.synced_at) {
     logger.info("Agent already synced", { tenantId, profileVersion });
     return "already-synced";
+  }
+  if (loaded.superseded) {
+    logger.info("Agent sync superseded by a newer version", { tenantId, profileVersion });
+    return "superseded";
   }
 
   try {

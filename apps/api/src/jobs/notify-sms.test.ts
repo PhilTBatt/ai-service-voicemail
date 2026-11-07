@@ -196,9 +196,10 @@ describe("runNotifySms for a fallback voicemail", () => {
     });
     const { rows } = await admin.query<{ id: string }>(
       `INSERT INTO calls (tenant_id, provider_call_id, caller_number, started_at, ended_at,
-                          billable_seconds, outcome, recording_ref, via_fallback)
-       VALUES ($1, $2, '+447700900123', now() - interval '2 minutes', now(), 42, 'voicemail',
-               'https://api.twilio.com/2010-04-01/Accounts/AC0/Recordings/RE1', true)
+                          billable_seconds, outcome, recording_ref, via_fallback, extracted_fields)
+       VALUES ($1, $2, '+447700900123', now() - interval '2 minutes', now(), 0, 'voicemail',
+               'https://api.twilio.com/2010-04-01/Accounts/AC0/Recordings/RE1', true,
+               '{"recordingSeconds": 42}')
        RETURNING id`,
       [tenantId, `CA${randomUUID().replace(/-/g, "")}`],
     );

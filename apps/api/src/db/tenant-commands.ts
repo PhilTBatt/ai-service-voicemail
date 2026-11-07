@@ -2,7 +2,7 @@
 // runs inside the tenant's transaction; status changes are written to audit_log.
 import type pg from "pg";
 import type { TenantStatus } from "@callmate/shared";
-import { UK_TIME_ZONE } from "../core/availability.ts";
+import { startOfUkDay } from "../core/availability.ts";
 import {
   HELP_REPLY,
   HOLIDAY_INVALID_REPLY,
@@ -136,13 +136,10 @@ export async function applySmsCommand(
         return { reply: HOLIDAY_INVALID_REPLY };
 
       case "status": {
-        const startOfToday = Temporal.Instant.fromEpochMilliseconds(now.getTime())
-          .toZonedDateTimeISO(UK_TIME_ZONE)
-          .startOfDay();
         const callsToday = (
           await client.query<{ n: string }>(
             "SELECT count(*) AS n FROM calls WHERE tenant_id = $1 AND started_at >= $2",
-            [tenantId, new Date(startOfToday.epochMilliseconds)],
+            [tenantId, startOfUkDay(now)],
           )
         ).rows[0]!.n;
         return {

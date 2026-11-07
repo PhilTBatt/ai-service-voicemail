@@ -165,3 +165,26 @@ describe("TwilioTelephonyProvider recording URLs", () => {
     ).rejects.toThrow(/non-Twilio/);
   });
 });
+
+describe("TwilioTelephonyProvider recording pages", () => {
+  it("follows next_page_uri until the pages reach back past the window", async () => {
+    const { provider, stub } = makeHarness();
+    stub.recordingsPageSize = 2;
+    const at = (minutesAgo: number) =>
+      new Date(Date.parse("2026-11-06T20:00:00Z") - minutesAgo * 60_000).toUTCString();
+    for (const [i, minutesAgo] of [5, 10, 20, 2000].entries()) {
+      stub.recordings.push({
+        sid: `RE${i}`,
+        call_sid: `CA${i}`,
+        uri: `/2010-04-01/Accounts/AC0/Recordings/RE${i}.json`,
+        duration: "30",
+        date_created: at(minutesAgo),
+      });
+    }
+    const since = new Date(Date.parse("2026-11-06T20:00:00Z") - 60 * 60_000);
+    const listed = await provider.listRecentRecordings({ since });
+    expect(listed.map((r) => r.recordingSid)).toEqual(["RE0", "RE1", "RE2"]);
+    // Two pages were needed; the third (older than the window) was never fetched.
+    expect(stub.requests.filter((r) => r.path.endsWith("/Recordings.json"))).toHaveLength(2);
+  });
+});

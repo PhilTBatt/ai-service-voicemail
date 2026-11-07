@@ -2,6 +2,7 @@
 // parses the reply against the zod schema, so the pipeline never sees free text.
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
+import { logger } from "../logger.ts";
 import type { LlmProvider, LlmRequest, LlmResult } from "./llm.ts";
 
 export interface AnthropicOptions {
@@ -33,16 +34,24 @@ export class AnthropicLlmProvider implements LlmProvider {
     // before returning usage), so tokens are counted whatever comes back.
     const response = await this.client.messages.create({
       model: this.model,
-      max_tokens: 1024, // a few hundred tokens of JSON; the cap guards runaway output
+      // The answer is a few hundred tokens of JSON, but the model's own thinking counts
+      // against this cap too, so it's generous; `effort: "low"` keeps that thinking short for
+      // what is a simple extraction.
+      max_tokens: 4096,
       system,
       messages: [{ role: "user", content: user }],
-      output_config: { format: zodOutputFormat(schema) },
+      output_config: { format: zodOutputFormat(schema), effort: "low" },
     });
     const usage = {
       inputTokens: response.usage.input_tokens,
       outputTokens: response.usage.output_tokens,
     };
     if (response.stop_reason === "refusal") return { ok: false, reason: "refused", usage };
+    if (response.stop_reason === "max_tokens") {
+      // Nothing usable comes back when the cap is hit; say so, rather than failing on empty JSON.
+      logger.warn("LLM output cut off at max_tokens", { model: this.model, ...usage });
+      return { ok: false, reason: "invalid-output", usage };
+    }
 
     const text = response.content.find((block) => block.type === "text")?.text;
     let json: unknown;

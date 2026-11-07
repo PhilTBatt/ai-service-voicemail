@@ -15,6 +15,8 @@ export class TwilioApiStub {
   readonly recordings: Record<string, unknown>[] = [];
   readonly calls = new Map<string, Record<string, unknown>>();
   readonly deletedRecordingSids = new Set<string>();
+  /** Recordings per page from GET /Recordings.json, with Twilio-style next_page_uri. */
+  recordingsPageSize = 100;
   /** Recording audio by SID, for the .mp3 media endpoint. */
   readonly recordingAudio = new Map<string, Uint8Array<ArrayBuffer>>();
   private nextSid = 1;
@@ -33,15 +35,28 @@ export class TwilioApiStub {
       query: Object.fromEntries(url.searchParams),
       form,
     });
-    return Promise.resolve(this.handle(method, url.pathname, form));
+    return Promise.resolve(this.handle(method, url.pathname, form, url.searchParams));
   };
 
-  private handle(method: string, path: string, form: Record<string, string>): Response {
+  private handle(
+    method: string,
+    path: string,
+    form: Record<string, string>,
+    query: URLSearchParams,
+  ): Response {
     const json = (status: number, data: unknown) => Response.json(data, { status });
     const tail = path.replace(/^\/2010-04-01\/Accounts\/[^/]+/, "");
 
     if (method === "GET" && tail === "/Recordings.json") {
-      return json(200, { recordings: this.recordings });
+      const offset = Number(query.get("PageToken") ?? "0");
+      const next = offset + this.recordingsPageSize;
+      return json(200, {
+        recordings: this.recordings.slice(offset, next),
+        next_page_uri:
+          next < this.recordings.length
+            ? `/2010-04-01/Accounts/AC0/Recordings.json?PageToken=${next}&PageSize=${this.recordingsPageSize}`
+            : null,
+      });
     }
     const mediaMatch = /^\/Recordings\/([^/]+)\.mp3$/.exec(tail);
     if (method === "GET" && mediaMatch) {

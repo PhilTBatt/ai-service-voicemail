@@ -87,17 +87,17 @@ export async function runNotifySms(
   );
   const callUrl = callPageUrl(publicBaseUrl, token);
 
+  const parsed = storedFieldsSchema.safeParse(call.extracted_fields);
+  const fields = parsed.success ? parsed.data : {};
   let text: { body: string; segments: number };
   if (call.via_fallback) {
-    // A voicemail: the recording's length is what was stored as billable seconds.
+    // A voicemail: the recording's length is stored with the call (voicemails aren't billed).
     text = voicemailSms({
       callbackNumber: call.caller_number,
-      durationSeconds: call.billable_seconds,
+      durationSeconds: fields.recordingSeconds ?? 0,
       callUrl,
     });
   } else {
-    const parsed = storedFieldsSchema.safeParse(call.extracted_fields);
-    const fields = parsed.success ? parsed.data : {};
     text = callSms({
       urgency: call.urgency,
       callerName: fields.callerName ?? null,

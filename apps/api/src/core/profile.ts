@@ -13,7 +13,11 @@ const hhmm = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "expected HH:MM");
 /** Open and close times per day. A null or missing day is closed. */
 export const openingHoursSchema = z.partialRecord(
   z.enum(WEEKDAYS),
-  z.object({ open: hhmm, close: hhmm }).nullable(),
+  z
+    .object({ open: hhmm, close: hhmm })
+    // isOpenAt() treats close as the same day, so an overnight slot would read as always closed.
+    .refine((slot) => slot.close > slot.open, { message: "close must be after open" })
+    .nullable(),
 );
 export type OpeningHours = z.infer<typeof openingHoursSchema>;
 

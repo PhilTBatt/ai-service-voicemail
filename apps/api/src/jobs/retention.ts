@@ -57,7 +57,9 @@ export async function runRetention({
     try {
       if (expired.viaFallback) {
         const sid = /RE[0-9a-f]{32}/.exec(expired.recordingRef)?.[0];
-        if (sid) await telephony.deleteRecording(sid);
+        // Clearing the row without deleting at Twilio would leave the audio there for good.
+        if (!sid) throw new Error("fallback recording reference has no Twilio recording SID");
+        await telephony.deleteRecording(sid);
       } else {
         await voice.deleteCallData(expired.providerCallId);
       }

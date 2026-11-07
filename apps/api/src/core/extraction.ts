@@ -57,4 +57,6 @@ export const storedFieldsSchema = z.looseObject({
   callerName: z.string().nullable().optional(),
   callbackNumber: z.string().nullable().optional(),
   postcode: z.string().nullable().optional(),
+  /** Fallback voicemails only: the recording's length. */
+  recordingSeconds: z.number().int().nonnegative().optional(),
 });

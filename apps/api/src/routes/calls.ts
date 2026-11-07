@@ -102,7 +102,12 @@ export function callPageRouter({
       callId: call.id,
       startedAt: call.started_at.toISOString(),
       endedAt: call.ended_at?.toISOString() ?? null,
-      durationSeconds: call.billable_seconds,
+      // Voicemails aren't billed; their length is the recording's.
+      durationSeconds: call.via_fallback
+        ? typeof fields.recordingSeconds === "number"
+          ? fields.recordingSeconds
+          : 0
+        : call.billable_seconds,
       callerNumber: call.caller_number,
       urgency: call.urgency,
       summary: call.summary,

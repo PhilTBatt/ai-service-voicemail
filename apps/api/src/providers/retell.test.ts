@@ -473,3 +473,27 @@ describe("RetellVoiceProvider listEndedCalls", () => {
     expect(stub.requests.filter((r) => r.path.startsWith("/v2/get-call/"))).toHaveLength(4);
   });
 });
+
+describe("RetellVoiceProvider edge cases", () => {
+  const provider = () => new RetellVoiceProvider({ apiKey: TEST_API_KEY, now: () => NOW });
+
+  it("floors the call length, so a 4.9-second call is 4 seconds and isn't billed", () => {
+    const { rawBody, headers } = signed(retellPayload(retellShapedEvent(), { duration_ms: 4900 }));
+    expect(provider().verifyAndParseWebhook(rawBody, headers)).toMatchObject({
+      durationSeconds: 4,
+    });
+  });
+
+  it("rejects a correctly signed body that isn't JSON instead of throwing a SyntaxError", () => {
+    const rawBody = Buffer.from("not json at all");
+    const headers = {
+      "x-retell-signature": signRetellWebhook(rawBody, TEST_API_KEY, NOW.getTime()),
+    };
+    expect(() => provider().verifyAndParseWebhook(rawBody, headers)).toThrow(
+      WebhookVerificationError,
+    );
+    expect(() => provider().verifyAndParseFunctionCall(rawBody, headers)).toThrow(
+      WebhookVerificationError,
+    );
+  });
+});

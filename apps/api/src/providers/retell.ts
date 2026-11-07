@@ -112,8 +112,7 @@ export class RetellVoiceProvider implements VoiceProvider {
 
   verifyAndParseWebhook(rawBody: Buffer, headers: WebhookHeaders): ParsedWebhook {
     this.verifySignature(rawBody, headers["x-retell-signature"]);
-
-    const parsed = webhookSchema.safeParse(JSON.parse(rawBody.toString("utf8")));
+    const parsed = webhookSchema.safeParse(parseJson(rawBody, "Webhook"));
     if (!parsed.success) throw new WebhookVerificationError("Malformed Retell webhook body");
     const { event, call } = parsed.data;
     if (event !== "call_ended") return { type: "ignored", reason: `event ${event}` };
@@ -124,13 +123,7 @@ export class RetellVoiceProvider implements VoiceProvider {
   verifyAndParseFunctionCall(rawBody: Buffer, headers: WebhookHeaders): FunctionCallEvent {
     // Custom function requests carry the same X-Retell-Signature as webhooks.
     this.verifySignature(rawBody, headers["x-retell-signature"]);
-    let body: unknown;
-    try {
-      body = JSON.parse(rawBody.toString("utf8"));
-    } catch {
-      throw new WebhookVerificationError("Function call body is not JSON");
-    }
-    const parsed = functionCallSchema.safeParse(body);
+    const parsed = functionCallSchema.safeParse(parseJson(rawBody, "Function call"));
     if (!parsed.success) throw new WebhookVerificationError("Malformed Retell function call body");
     const { name, call } = parsed.data;
     return {
@@ -498,12 +491,22 @@ function toCallEndedEvent(call: RetellCall, dialledNumber: string): CallEndedEve
     callerNumber: call.from_number ?? null,
     startedAt,
     endedAt,
-    durationSeconds: Math.round(durationMs / 1000),
+    // Floor, not round: a 4,900 ms call is 4 seconds and must not be billed as 5.
+    durationSeconds: Math.floor(durationMs / 1000),
     endReason: call.disconnection_reason ?? "unknown",
     transcript,
     recordingRef: call.recording_url ?? null,
     costs,
   };
+}
+
+/** A verified body that still isn't JSON is treated like a bad signature, not a crash. */
+function parseJson(rawBody: Buffer, what: string): unknown {
+  try {
+    return JSON.parse(rawBody.toString("utf8"));
+  } catch {
+    throw new WebhookVerificationError(`${what} body is not JSON`);
+  }
 }
 
 /** Signs a body the way Retell does. Exported for tests and fixtures only. */

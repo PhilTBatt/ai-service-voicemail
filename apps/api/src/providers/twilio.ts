@@ -129,19 +129,27 @@ export class TwilioTelephonyProvider implements TelephonyProvider {
     // day before and trim to the exact instant here.
     const dayBefore = new Date(since.getTime() - 24 * 3600_000).toISOString().slice(0, 10);
     const query = new URLSearchParams({ "DateCreated>": dayBefore, PageSize: "100" });
-    const result = await this.request<{ recordings: RecordingJson[] }>(
-      "GET",
-      `/Recordings.json?${query}`,
-    );
-    return result.recordings
-      .map((r) => ({
+    const recordings: RecordingSummary[] = [];
+    // Newest first, a page at a time: stop once a page reaches back past `since`.
+    let path: string | null = `/Recordings.json?${query}`;
+    while (path) {
+      const result: { recordings: RecordingJson[]; next_page_uri: string | null } =
+        await this.request("GET", path);
+      const page = result.recordings.map((r) => ({
         recordingSid: r.sid,
         callSid: r.call_sid,
         url: `https://api.twilio.com${r.uri.replace(/\.json$/, "")}`,
         durationSeconds: Number(r.duration) || 0,
         createdAt: new Date(r.date_created),
-      }))
-      .filter((r) => r.createdAt >= since);
+      }));
+      recordings.push(...page.filter((r) => r.createdAt >= since));
+      const oldest = page.at(-1);
+      path =
+        result.next_page_uri && oldest && oldest.createdAt >= since
+          ? result.next_page_uri.replace(/^\/2010-04-01\/Accounts\/[^/]+/, "")
+          : null;
+    }
+    return recordings;
   }
 
   async getCall(callSid: string): Promise<CallDetails | null> {

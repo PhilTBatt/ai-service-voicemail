@@ -90,18 +90,18 @@ export async function runNotifyEmail(
   const callUrl = callPageUrl(publicBaseUrl, token);
   const recordingUrl = call.recording_ref === null ? null : `${callUrl}/recording`;
 
+  const parsed = storedFieldsSchema.safeParse(call.extracted_fields);
+  const fields = parsed.success ? parsed.data : {};
   const message = call.via_fallback
     ? voicemailEmail({
         businessName: tenant.business_name,
         startedAt: call.started_at,
         callbackNumber: call.caller_number,
-        durationSeconds: call.billable_seconds,
+        durationSeconds: fields.recordingSeconds ?? 0,
         callUrl,
         recordingUrl,
       })
     : (() => {
-        const parsed = storedFieldsSchema.safeParse(call.extracted_fields);
-        const fields = parsed.success ? parsed.data : {};
         return callEmail({
           businessName: tenant.business_name,
           startedAt: call.started_at,

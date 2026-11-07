@@ -64,9 +64,11 @@ Smaller calls, explained when they were made:
 
 ## Watch list
 
+- One full test run stalled for 20 minutes right after a run that had failed inside `beforeAll` (connections from the broken run appeared to hold locks). It did not recur. If it does, restart the test database: `npm run db:down` then `npm run db:up`.
+- Extraction now sends `max_tokens: 4096` with `output_config.effort: "low"` (the model's thinking counts against the cap). Re-run the live extraction test to confirm quality is unchanged.
+- Overnight opening hours (close before open) are rejected by the profile schema until `isOpenAt` supports them.
 - Unverified against Retell until the live contract test runs: the function-node edge shape, and that custom-function requests carry `X-Retell-Signature` in the same `v=,d=` form as webhooks.
 - Unverified at Twilio: whether a UK recipient replying STOP to our sender is opted out carrier-side (error 21610). The SMS commands no longer use STOP/START; if a tradesperson replies STOP anyway, their texts will start failing until they reply START.
-- Retell API calls have no timeout yet; the Twilio ones now time out at 15 s.
 - STATUS by SMS counts every call, spam included (Phil, 2026-11-07: fine for now). Revisit once the dashboard can mark calls as dealt with, e.g. "Calls today: 6 (1 needs a reply)".
 - TypeScript 7: switch once typescript-eslint supports it (decision 001).
 - `npm audit` reports a moderate `minimatch` issue inside ESLint (dev-only; the suggested fix downgrades ESLint). It should clear when ESLint updates the dependency.
@@ -80,6 +82,7 @@ Smaller calls, explained when they were made:
 
 ## Session log (newest first)
 
+- **2026-11-08:** Review fixes for Steps 1 to 5 (subagent review): call length floored so a 4.9 s call isn't billed; a late sync retry can't overwrite a newer synced agent; profile saves lock per tenant and queue the sync inside the transaction; multi-line transcript turns folded onto one line; Anthropic adapter handles `max_tokens` and uses a bigger cap with low effort; Twilio routes return 403 for non-form bodies; voicemails never billed (recording length stored with the call); number reassignment is one transaction in the cross-tenant module; admin role can no longer update or delete audit_log and terms_acceptances (migration); queue settings now update existing queues; 10 s statement timeout; retention won't clear a reference it couldn't delete; Twilio recordings paged; overnight hours rejected. Also: README rewritten, evals/README.md added, JUDGE_SAMPLE_RATE documented.
 - **2026-11-08:** Call reconciliation: `reconcile-calls` (every 15 min, offset from the voicemail run) lists ended phone calls at Retell since 24 h ago, skips the ones already complete (one admin query), and stores the rest through `recordCallEnded`, which also completes provisional mid-call rows. `listEndedCalls` added to the voice seam (Retell: POST /v3/list-calls then GET /v2/get-call each). Closes the watch-list item about open provisional rows and missed webhooks.
 - **2026-11-08:** Step 9 code: per-caller daily cap for demo tenants in routing (counted in the inbound context, UK day), `demoLimitReached` TwiML, demo calls excluded from usage_periods, DEMO.md for Ant. Test database is now wiped at the start of every run (a random test number had collided with the "nobody owns" fixtures); random test numbers stay below 990.
 - **2026-11-07:** Step 7: Retell batch tests as the platform-side eval (test cases kept in sync by name prefix, batch polled, runs checked verbatim; transcript snapshot shape isn't documented, so parsing is best-effort with a text-search fallback); evals GitHub workflow; `JUDGE_SAMPLE_RATE` sampling in process-call (flag `judge:failed`, alert, reason stored in the row only); Retell API timeout 10 s.
