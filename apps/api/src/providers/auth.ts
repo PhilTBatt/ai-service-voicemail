@@ -7,6 +7,11 @@
 export interface Identity {
   /** The provider's stable ID for the person. Stored as users.auth_subject. */
   subject: string;
+  /**
+   * The person's primary email, which the provider has verified (magic link, code or Google).
+   * A first login matches it against an invitation, so an adapter must never pass an
+   * unverified address here.
+   */
   email: string;
 }
 

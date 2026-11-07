@@ -6,7 +6,12 @@
 // route reads `principalOf(res)` and never touches the token.
 import type { NextFunction, Request, RequestHandler, Response } from "express";
 import type pg from "pg";
-import { findAccountBySubject, type Account, type Role } from "../db/accounts.ts";
+import {
+  claimAccountByEmail,
+  findAccountBySubject,
+  type Account,
+  type Role,
+} from "../db/accounts.ts";
 import { logger } from "../logger.ts";
 import type { AuthProvider } from "../providers/auth.ts";
 
@@ -25,7 +30,8 @@ export function principalOf(res: Response): Principal {
 /**
  * Turns the Authorization header into a principal. 401 when there's no usable token (the
  * dashboard should send the person to log in); 403 when the token is fine but nobody has
- * invited that person yet (they're logged in with the provider, but have no account here).
+ * invited that person (they're logged in with the provider, but have no account here). A
+ * first login claims the invitation that matches the provider's verified email.
  */
 export function authenticate(pool: pg.Pool, auth: AuthProvider): RequestHandler {
   return async (req, res, next) => {
@@ -40,7 +46,9 @@ export function authenticate(pool: pg.Pool, auth: AuthProvider): RequestHandler 
       res.status(401).json({ error: "Login required" });
       return;
     }
-    const account = await findAccountBySubject(pool, identity.subject);
+    const account =
+      (await findAccountBySubject(pool, identity.subject)) ??
+      (await claimAccountByEmail(pool, identity.subject, identity.email));
     if (account === null) {
       // The subject is opaque, so it's safe to log; the email isn't, and the logger would
       // redact it anyway.

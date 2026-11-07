@@ -63,6 +63,20 @@ Text the notification number from the demo tenant's registered mobile: `OFF`, `O
 
 Logs never contain phone numbers, emails, transcripts or summaries: look things up by the IDs they carry.
 
-## 6. Spending
+## 6. Dashboard accounts
+
+Nobody can sign up to the dashboard. Every account is an invitation, made from the repo root:
+
+```powershell
+npm run invite-user -- --email <address> --role admin
+npm run invite-user -- --email <address> --role reseller
+npm run invite-user -- --email <address> --role owner --tenant <tenant id>
+```
+
+The person then logs in with that address (magic link, code or Google) and the login becomes
+the account. A different address, or an address nobody invited, gets "No account for this
+login". Step 11's onboarding will send the owner invitations itself.
+
+## 7. Spending
 
 Anything named `live-*` touches a paid service and asks for `--confirm`. Day to day the only money that moves is per call (Retell and Twilio per minute, Anthropic per extraction, Twilio per text segment). Evals (`npm run evals`) cost a few pence per run under their cap.

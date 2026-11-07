@@ -20,12 +20,7 @@ interface AccountRow {
   tenant_id: string | null;
 }
 
-/** The account behind a login provider's subject ID, or null when nobody has that subject. */
-export async function findAccountBySubject(
-  pool: pg.Pool,
-  subject: string,
-): Promise<Account | null> {
-  const { rows } = await pool.query<AccountRow>("SELECT * FROM account_for_subject($1)", [subject]);
+function toAccount(rows: AccountRow[]): Account | null {
   const first = rows[0];
   if (!first) return null;
   return {
@@ -34,4 +29,30 @@ export async function findAccountBySubject(
     role: first.role,
     tenantIds: rows.flatMap((row) => (row.tenant_id === null ? [] : [row.tenant_id])),
   };
+}
+
+/**
+ * First login: an invited account has an email and a role but no subject yet. If the
+ * provider's verified email matches an unclaimed invitation, the subject is written to it and
+ * the account returned. Null when there's nothing to claim.
+ */
+export async function claimAccountByEmail(
+  pool: pg.Pool,
+  subject: string,
+  email: string,
+): Promise<Account | null> {
+  const { rows } = await pool.query<AccountRow>("SELECT * FROM claim_account($1, $2)", [
+    subject,
+    email,
+  ]);
+  return toAccount(rows);
+}
+
+/** The account behind a login provider's subject ID, or null when nobody has that subject. */
+export async function findAccountBySubject(
+  pool: pg.Pool,
+  subject: string,
+): Promise<Account | null> {
+  const { rows } = await pool.query<AccountRow>("SELECT * FROM account_for_subject($1)", [subject]);
+  return toAccount(rows);
 }

@@ -137,8 +137,11 @@ export async function listTenantsWithCallCounts(admin: AdminPool): Promise<Tenan
 // created once). Reading an account at login time goes through db/accounts.ts.
 
 export interface NewUser {
-  /** The login provider's stable ID for the person (decision 012). */
-  authSubject: string;
+  /**
+   * The login provider's stable ID for the person (decision 012). Absent for an invitation:
+   * the first login with the email fills it in.
+   */
+  authSubject?: string;
   email: string;
   role: "owner" | "admin" | "reseller";
 }
@@ -146,9 +149,26 @@ export interface NewUser {
 export async function createUser(admin: AdminPool, user: NewUser): Promise<string> {
   const { rows } = await admin.query<{ id: string }>(
     "INSERT INTO users (auth_subject, email, role) VALUES ($1, $2, $3) RETURNING id",
-    [user.authSubject, user.email, user.role],
+    [user.authSubject ?? null, user.email, user.role],
   );
   return rows[0]!.id;
+}
+
+export type InviteResult =
+  { outcome: "invited"; userId: string } | { outcome: "exists"; role: string };
+
+/** Creates an account for someone who hasn't logged in yet, unless the address has one. */
+export async function inviteUser(
+  admin: AdminPool,
+  user: Omit<NewUser, "authSubject">,
+): Promise<InviteResult> {
+  const existing = (
+    await admin.query<{ role: string }>("SELECT role FROM users WHERE lower(email) = lower($1)", [
+      user.email,
+    ])
+  ).rows[0];
+  if (existing) return { outcome: "exists", role: existing.role };
+  return { outcome: "invited", userId: await createUser(admin, user) };
 }
 
 /** Makes a user a member of a tenant. Owners see only the tenants they're members of. */

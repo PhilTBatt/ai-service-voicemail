@@ -5,7 +5,13 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { PgBoss } from "pg-boss";
 import { createApp } from "../app.ts";
 import type { AgentProfileInput } from "../db/agent-profiles.ts";
-import { addMembership, createAdminPool, createTenant, createUser } from "../db/cross-tenant.ts";
+import {
+  addMembership,
+  createAdminPool,
+  createTenant,
+  createUser,
+  inviteUser,
+} from "../db/cross-tenant.ts";
 import { createPool } from "../db/pool.ts";
 import { FakeAuthProvider } from "../providers/auth.fake.ts";
 import { FakeTelephonyProvider } from "../providers/telephony.fake.ts";
@@ -439,6 +445,60 @@ describe("switch", () => {
     expect(
       (await send("PUT", `/tenants/${tenantA}/switch`, { on: "yes" }, tokens.ownerA)).status,
     ).toBe(400);
+  });
+});
+
+describe("invitations", () => {
+  it("lets an invited person in on their first login and remembers them after", async () => {
+    const email = `Invited-${randomUUID()}@Example.com`;
+    const invited = await inviteUser(admin, { email, role: "reseller" });
+    expect(invited.outcome).toBe("invited");
+    // The provider reports the address in its own casing; the match ignores case.
+    const token = auth.tokenFor({ subject: `sub_${randomUUID()}`, email: email.toLowerCase() });
+    const first = await json<{ role: string; userId: string }>(get("/me", token));
+    expect(first.role).toBe("reseller");
+    const again = await json<{ userId: string }>(get("/me", token));
+    expect(again.userId).toBe(first.userId);
+    // Claimed: the row now carries the subject.
+    const row = (
+      await admin.query<{ auth_subject: string | null }>(
+        "SELECT auth_subject FROM users WHERE id = $1",
+        [first.userId],
+      )
+    ).rows[0]!;
+    expect(row.auth_subject).toMatch(/^sub_/);
+  });
+
+  it("gives a claimed account to nobody else, and nothing to the uninvited", async () => {
+    const email = `once-${randomUUID()}@example.com`;
+    await inviteUser(admin, { email, role: "owner" });
+    expect(
+      (await get("/me", auth.tokenFor({ subject: `sub_${randomUUID()}`, email }))).status,
+    ).toBe(200);
+    // A second login that presents the same email with a different subject gets nothing.
+    expect(
+      (await get("/me", auth.tokenFor({ subject: `sub_${randomUUID()}`, email }))).status,
+    ).toBe(403);
+    expect(
+      (
+        await get(
+          "/me",
+          auth.tokenFor({
+            subject: `sub_${randomUUID()}`,
+            email: `never-${randomUUID()}@example.com`,
+          }),
+        )
+      ).status,
+    ).toBe(403);
+  });
+
+  it("refuses to invite an address twice", async () => {
+    const email = `twice-${randomUUID()}@example.com`;
+    expect((await inviteUser(admin, { email, role: "owner" })).outcome).toBe("invited");
+    expect(await inviteUser(admin, { email: email.toUpperCase(), role: "admin" })).toEqual({
+      outcome: "exists",
+      role: "owner",
+    });
   });
 });
 
