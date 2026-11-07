@@ -36,23 +36,24 @@ Then open http://localhost:3000/healthz.
 
 ## Scripts
 
-| Script                         | What it does                                                                                                |
-| ------------------------------ | ----------------------------------------------------------------------------------------------------------- |
-| `npm run dev`                  | Runs the API, restarting on file changes                                                                    |
-| `npm run worker`               | Runs the job worker                                                                                         |
-| `npm run check`                | Lint, format check, typecheck and tests (needs `npm run db:up`)                                             |
-| `npm test`                     | Tests only, against the test database                                                                       |
-| `npm run format`               | Fixes formatting                                                                                            |
-| `npm run db:up` / `db:down`    | Starts or stops the dev (port 5434) and test (port 5433) databases; `docker compose down -v` wipes dev data |
-| `npm run db:migrate`           | Applies new migrations to the dev database (as the owner role)                                              |
-| `npm run db:status`            | Shows which migrations have run                                                                             |
-| `npm run db:new -- <name>`     | Creates an empty migration file                                                                             |
-| `npm run db:seed`              | Seeds the demo tenants (fictional data; refuses to run in production)                                       |
-| `npm run demo:profile`         | Saves the demo tenant's agent profile and queues its sync to Retell                                         |
-| `npm run twiml:fallback`       | Prints the two TwiML Bins for the static fallback voicemail                                                 |
-| `npm run evals`                | Runs the caller personas against the current prompt with the real model, under a cost cap                   |
-| `npm run live-buy-test-number` | Searches for, and with `--confirm` buys, a UK number. Spends money: guarded twice                           |
-| `npm run live-evals-retell`    | Runs the personas as Retell batch tests against a synced agent. Spends Retell credit                        |
+| Script                          | What it does                                                                                                       |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `npm run dev`                   | Runs the API, restarting on file changes                                                                           |
+| `npm run worker`                | Runs the job worker                                                                                                |
+| `npm run check`                 | Lint, format check, typecheck and tests (needs `npm run db:up`)                                                    |
+| `npm test`                      | Tests only, against the test database                                                                              |
+| `npm run format`                | Fixes formatting                                                                                                   |
+| `npm run db:up` / `db:down`     | Starts or stops the dev (port 5434) and test (port 5433) databases; `docker compose down -v` wipes dev data        |
+| `npm run db:migrate`            | Applies new migrations to the dev database (as the owner role)                                                     |
+| `npm run db:status`             | Shows which migrations have run                                                                                    |
+| `npm run db:new -- <name>`      | Creates an empty migration file                                                                                    |
+| `npm run db:seed`               | Seeds the demo tenants (fictional data; refuses to run in production)                                              |
+| `npm run demo:profile`          | Saves the demo tenant's agent profile and queues its sync to Retell                                                |
+| `npm run twiml:fallback`        | Prints the two TwiML Bins for the static fallback voicemail                                                        |
+| `npm run evals`                 | Runs the caller personas against the current prompt with the real model, under a cost cap                          |
+| `npm run live-buy-test-number`  | Searches for, and with `--confirm` buys, a UK number. Spends money: guarded twice                                  |
+| `npm run live-evals-retell`     | Runs the personas as Retell batch tests against a synced agent. Spends Retell credit                               |
+| `npm run live-configure-number` | Repoints the demo number at the current public URL and voicemail bin, or adopts a console-bought one (`--confirm`) |
 
 Anything named `live-*` touches a paid service and must be run deliberately.
 
@@ -69,7 +70,7 @@ apps/api/          Express API and the worker
 apps/web/          React dashboard (not built yet)
 packages/shared/   Types and schemas used by both
 evals/personas/    caller personas as YAML
-docs/              BUILD_PLAN.md, PROGRESS.md (start here), DEMO.md, decisions/
+docs/              BUILD_PLAN.md, PROGRESS.md (start here), RUNBOOK.md, DEMO.md, decisions/
 ```
 
 ## Working rules

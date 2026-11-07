@@ -1,7 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, describe, expect, it } from "vitest";
 import { isGsm7 } from "../core/sms.ts";
-import { createAdminPool, createTenant, findTenantIdByMobile } from "./cross-tenant.ts";
+import {
+  activeNumberFor,
+  assignPhoneNumber,
+  createAdminPool,
+  createTenant,
+  findTenantIdByMobile,
+} from "./cross-tenant.ts";
 import { createPool } from "./pool.ts";
 import { TEST_ADMIN_DATABASE_URL, TEST_DATABASE_URL } from "../testing/databases.ts";
 import { applySmsCommand } from "./tenant-commands.ts";
@@ -165,5 +171,22 @@ describe("findTenantIdByMobile", () => {
       notificationMobile: mobile,
     });
     expect(await findTenantIdByMobile(app, mobile)).toBeNull();
+  });
+});
+
+describe("activeNumberFor", () => {
+  it("returns the tenant's active number, or null before they have one", async () => {
+    const { tenantId } = await makeTenant("live");
+    expect(await activeNumberFor(admin, tenantId)).toBeNull();
+    const number = "+441632960991"; // the reserved 990-999 range: no other test takes it
+    await admin.query(
+      "UPDATE phone_numbers SET status = 'released', released_at = now() WHERE number = $1 AND status = 'active'",
+      [number],
+    );
+    await assignPhoneNumber(admin, tenantId, number, `PN${randomUUID()}`);
+    expect(await activeNumberFor(admin, tenantId)).toEqual({
+      number,
+      providerSid: expect.stringMatching(/^PN/) as unknown,
+    });
   });
 });

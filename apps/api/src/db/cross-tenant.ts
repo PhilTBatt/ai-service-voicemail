@@ -196,3 +196,16 @@ export async function reassignNumber(
     client.release();
   }
 }
+
+/** The tenant's active number and its provider SID, or null if they have none. */
+export async function activeNumberFor(
+  admin: AdminPool,
+  tenantId: string,
+): Promise<{ number: string; providerSid: string } | null> {
+  const { rows } = await admin.query<{ number: string; providerSid: string }>(
+    `SELECT number, provider_sid AS "providerSid" FROM phone_numbers
+     WHERE tenant_id = $1 AND status = 'active'`,
+    [tenantId],
+  );
+  return rows[0] ?? null;
+}

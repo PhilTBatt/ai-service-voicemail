@@ -188,3 +188,30 @@ describe("TwilioTelephonyProvider recording pages", () => {
     expect(stub.requests.filter((r) => r.path.endsWith("/Recordings.json"))).toHaveLength(2);
   });
 });
+
+describe("TwilioTelephonyProvider number settings", () => {
+  it("sends the SMS webhook alongside the voice ones when configuring a number", async () => {
+    const { provider, stub } = makeHarness();
+    const [first] = await provider.searchNumbers({ limit: 1 });
+    const bought = await provider.purchaseNumber(
+      first!.number,
+      {
+        voiceUrl: "https://example.com/webhooks/twilio/voice",
+        voiceFallbackUrl: "https://example.com/fallback",
+        smsUrl: "https://example.com/webhooks/twilio/sms",
+      },
+      { live: true },
+    );
+    await provider.configureNumber(bought.providerSid, {
+      voiceUrl: "https://example.com/v2",
+      voiceFallbackUrl: "https://example.com/fallback",
+      smsUrl: "https://example.com/webhooks/twilio/sms",
+    });
+    const configure = stub.requests.at(-1)!;
+    expect(configure.form).toMatchObject({
+      VoiceUrl: "https://example.com/v2",
+      SmsUrl: "https://example.com/webhooks/twilio/sms",
+      SmsMethod: "POST",
+    });
+  });
+});

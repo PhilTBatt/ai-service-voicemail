@@ -245,6 +245,7 @@ function numberForm(config: NumberConfiguration): Record<string, string> {
     VoiceMethod: "POST",
     VoiceFallbackUrl: config.voiceFallbackUrl,
     VoiceFallbackMethod: "POST",
+    ...(config.smsUrl !== undefined && { SmsUrl: config.smsUrl, SmsMethod: "POST" }),
     ...(config.friendlyName !== undefined && { FriendlyName: config.friendlyName }),
   };
 }

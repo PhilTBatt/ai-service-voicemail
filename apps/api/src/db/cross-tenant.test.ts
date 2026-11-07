@@ -9,6 +9,7 @@ import {
   listTenants,
 } from "./cross-tenant.ts";
 import { createPool } from "./pool.ts";
+import { seedDevelopmentData } from "./seed.ts";
 
 const app = createPool(TEST_DATABASE_URL);
 const admin = createAdminPool(TEST_ADMIN_DATABASE_URL);
@@ -23,6 +24,9 @@ let tenantB: string;
 let numberA: string;
 
 beforeAll(async () => {
+  // Every run starts from an empty database, so the seed tenants this file checks must be put
+  // there first (the seed is idempotent: fixed IDs).
+  await seedDevelopmentData(admin);
   tenantA = await createTenant(admin, { businessName: "Lookup Plumbing", trade: "plumber" });
   tenantB = await createTenant(admin, { businessName: "Lookup Electrics", trade: "electrician" });
   // Drama numbers are reused across test runs, so free this one up first.

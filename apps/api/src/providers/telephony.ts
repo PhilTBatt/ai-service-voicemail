@@ -21,6 +21,8 @@ export interface NumberSearch {
 export interface NumberConfiguration {
   voiceUrl: string;
   voiceFallbackUrl: string;
+  /** Where inbound texts go (SMS commands). Only a mobile number can receive them. */
+  smsUrl?: string;
   friendlyName?: string;
 }
 

@@ -39,6 +39,7 @@ export async function buyNumberForTenant(
     {
       voiceUrl: `${publicBaseUrl}/webhooks/twilio/voice`,
       voiceFallbackUrl: fallbackVoicemailUrl,
+      smsUrl: `${publicBaseUrl}/webhooks/twilio/sms`,
       friendlyName: `CallMate ${tenantId}`,
     },
     { live: true },

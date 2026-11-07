@@ -67,6 +67,7 @@ describe("buyNumberForTenant", () => {
     expect(telephony.purchased.get(bought.providerSid)?.config).toEqual({
       voiceUrl: "https://callmate.example.com/webhooks/twilio/voice",
       voiceFallbackUrl: "https://handler.twilio.com/twiml/EHfake",
+      smsUrl: "https://callmate.example.com/webhooks/twilio/sms",
       friendlyName: `CallMate ${tenantId}`,
     });
     expect(await numbersOf(tenantId)).toEqual([
