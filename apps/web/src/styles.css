@@ -1,0 +1,276 @@
+/* AnswerMate dashboard. Plain CSS: a few rules, readable on a phone first. */
+
+:root {
+  --ink: #1d2433;
+  --muted: #5d6677;
+  --line: #dde2ea;
+  --surface: #ffffff;
+  --background: #f4f6f9;
+  --accent: #1f5fbf;
+  --emergency: #b42318;
+  --urgent: #b54708;
+  --routine: #36577d;
+  --quiet: #667085;
+  font-family:
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    Roboto,
+    sans-serif;
+  color: var(--ink);
+  background: var(--background);
+  line-height: 1.45;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+a {
+  color: var(--accent);
+}
+
+h1 {
+  font-size: 1.6rem;
+  margin: 0.5rem 0;
+}
+
+h2 {
+  font-size: 1.15rem;
+  margin: 1.25rem 0 0.5rem;
+}
+
+button {
+  font: inherit;
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--accent);
+  color: #ffffff;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+button.link {
+  background: none;
+  border: none;
+  color: var(--accent);
+  padding: 0.5rem 0;
+  text-decoration: underline;
+}
+
+.brand {
+  font-weight: 700;
+  font-size: 1.2rem;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.top-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+
+.page {
+  max-width: 52rem;
+  margin: 0 auto;
+  padding: 1rem;
+}
+
+.sign-in {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  padding: 2rem 1rem;
+}
+
+.footer {
+  text-align: center;
+  padding: 2rem 1rem;
+  font-size: 0.85rem;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  margin: 0.75rem 0;
+}
+
+.card.error {
+  border-color: var(--emergency);
+}
+
+.list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.row-title {
+  font-size: 1.05rem;
+  font-weight: 600;
+  margin: 0.25rem 0;
+}
+
+.counts {
+  text-align: right;
+  margin: 0;
+}
+
+.summary {
+  margin: 0.25rem 0;
+}
+
+.call-link {
+  display: block;
+  color: inherit;
+  text-decoration: none;
+}
+
+.badge {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  background: #eef1f6;
+  color: var(--quiet);
+  margin-right: 0.35rem;
+}
+
+.urgency-emergency {
+  background: #fee4e2;
+  color: var(--emergency);
+}
+
+.urgency-urgent {
+  background: #fef0c7;
+  color: var(--urgent);
+}
+
+.urgency-routine {
+  background: #e4ecf7;
+  color: var(--routine);
+}
+
+.status-live {
+  background: #dcfae6;
+  color: #067647;
+}
+
+.status-paused,
+.status-cancelling {
+  background: #fef0c7;
+  color: var(--urgent);
+}
+
+.flag {
+  background: #fee4e2;
+  color: var(--emergency);
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: flex-end;
+}
+
+.filters label {
+  display: flex;
+  flex-direction: column;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.filters select,
+.filters input {
+  font: inherit;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.switch {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.switch p {
+  margin: 0;
+}
+
+.details {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.25rem 1rem;
+  margin: 0;
+}
+
+.details dt {
+  color: var(--muted);
+}
+
+.details dd {
+  margin: 0;
+}
+
+.transcript {
+  list-style: none;
+  padding: 0;
+}
+
+.turn {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.5rem 0.75rem;
+  margin: 0.4rem 0;
+  max-width: 85%;
+}
+
+.turn-caller {
+  margin-left: auto;
+  background: #e4ecf7;
+}
+
+.speaker {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+audio {
+  width: 100%;
+}

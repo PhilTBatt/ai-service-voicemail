@@ -5,6 +5,15 @@
 // Tenant data is read inside withTenant(), so row-level security backs up the middleware:
 // even a bug in requireTenantAccess() couldn't hand one tenant's calls to another. The
 // cross-tenant list (admin and reseller) uses the admin pool, as the admin screens are meant to.
+import {
+  URGENCIES,
+  type CallListView,
+  type MeView,
+  type SwitchView,
+  type TenantListItem,
+  type TenantListView,
+  type TenantView,
+} from "@callmate/shared";
 import { Router, json } from "express";
 import type { PgBoss } from "pg-boss";
 import type pg from "pg";
@@ -52,8 +61,6 @@ export interface DashboardOptions extends RecordingSources {
 
 export const CALL_LIST_DEFAULT_LIMIT = 50;
 export const CALL_LIST_MAX_LIMIT = 200;
-
-const URGENCIES = ["emergency", "urgent", "routine", "spam", "other"] as const;
 
 /** Filters for the call list. Dates are instants; the dashboard turns London days into them. */
 const callListQuery = z.object({
@@ -114,7 +121,7 @@ export function dashboardRouter({
 
   router.get("/me", (_req, res) => {
     const { userId, email, role, tenantIds } = principalOf(res);
-    res.json({ userId, email, role, tenantIds });
+    res.json({ userId, email, role, tenantIds } satisfies MeView);
   });
 
   // The tenant list. Admin and reseller see every tenant; an owner sees the ones they belong
@@ -126,7 +133,7 @@ export function dashboardRouter({
       principal.role === "owner"
         ? all.filter((tenant) => principal.tenantIds.includes(tenant.id))
         : all;
-    res.json({ tenants: visible.map(presentTenantSummary) });
+    res.json({ tenants: visible.map(presentTenantSummary) } satisfies TenantListView);
   });
 
   router.use("/admin", adminRouter({ pool, admin, ...(now && { now }) }));
@@ -163,7 +170,7 @@ export function dashboardRouter({
       notificationEmail: row.notification_email,
       serviceRegion: row.service_region,
       createdAt: row.created_at.toISOString(),
-    });
+    } satisfies TenantView);
   });
 
   // The agent profile: what the tenant edits, plus how the sync of the latest version is
@@ -220,7 +227,7 @@ export function dashboardRouter({
       });
       return;
     }
-    res.json({ outcome: result.outcome, status: result.status });
+    res.json({ outcome: result.outcome, status: result.status } satisfies SwitchView);
   });
 
   // Where texts and emails go. Null clears a channel; the delivery jobs then skip it.
@@ -294,7 +301,7 @@ export function dashboardRouter({
     res.json({
       calls: page.map(presentCallSummary),
       nextBefore: rows.length > limit && last ? last.started_at.toISOString() : null,
-    });
+    } satisfies CallListView);
   });
 
   /** Loads one call inside its tenant, or answers 404 and returns null. */
@@ -357,7 +364,7 @@ function presentProfile(row: ProfileRow) {
   };
 }
 
-function presentTenantSummary(tenant: TenantWithCallCounts) {
+function presentTenantSummary(tenant: TenantWithCallCounts): TenantListItem {
   return {
     id: tenant.id,
     businessName: tenant.businessName,

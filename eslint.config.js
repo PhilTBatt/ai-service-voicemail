@@ -5,7 +5,7 @@ import tseslint from "typescript-eslint";
 export default defineConfig(
   { ignores: ["**/node_modules/", "**/dist/", "**/coverage/", "spike/"] },
   {
-    files: ["**/*.{js,ts}"],
+    files: ["**/*.{js,ts,tsx}"],
     extends: [js.configs.recommended, tseslint.configs.recommendedTypeChecked],
     rules: {
       // Express error handlers must declare all four parameters; `_next` marks the unused one.

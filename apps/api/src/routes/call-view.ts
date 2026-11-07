@@ -2,6 +2,7 @@
 // the signed call page (/c/:token) and the dashboard API, so both show the same thing.
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import type { CallSummaryView, CallView } from "@callmate/shared";
 import type { Response } from "express";
 import { parseTranscript } from "../jobs/process-call.ts";
 import { logger } from "../logger.ts";
@@ -38,7 +39,7 @@ export interface RecordingSources {
 }
 
 /** The line a call takes up in a list: no transcript, no recording. */
-export function presentCallSummary(call: CallRow) {
+export function presentCallSummary(call: CallRow): CallSummaryView {
   const fields = call.extracted_fields;
   const str = (key: string) => (typeof fields[key] === "string" ? fields[key] : null);
   return {
@@ -65,7 +66,11 @@ export function presentCallSummary(call: CallRow) {
 }
 
 /** The whole call, with the transcript and where to stream the recording from. */
-export function presentCall(call: CallRow, recordingUrl: string, sources: RecordingSources) {
+export function presentCall(
+  call: CallRow,
+  recordingUrl: string,
+  sources: RecordingSources,
+): CallView {
   return {
     ...presentCallSummary(call),
     transcript: call.transcript === null ? null : parseTranscript(call.transcript),

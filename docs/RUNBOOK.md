@@ -22,11 +22,12 @@ If the tunnel domain or a bin ever changes: `npm run live-configure-number -- --
 
 ## 2. Every session
 
-Two terminals from the repo root, plus the tunnel:
+Two terminals from the repo root, plus the tunnel, and a third for the dashboard:
 
 ```powershell
 npm run dev       # the API, restarts on file changes
 npm run worker    # the jobs; restart it by hand after code changes
+npm run dev:web   # the dashboard at http://localhost:5173, reloads on file changes
 ```
 
 The API logs "API listening" and the worker logs "Worker listening" with the list of queues it serves. Warnings at startup say what's disabled and why (no Twilio, no SMS sender, no email adapter yet).
@@ -76,6 +77,12 @@ npm run invite-user -- --email <address> --role owner --tenant <tenant id>
 The person then logs in with that address (magic link, code or Google) and the login becomes
 the account. A different address, or an address nobody invited, gets "No account for this
 login". Step 11's onboarding will send the owner invitations itself.
+
+To use the dashboard locally, start `npm run dev` and `npm run dev:web`, open
+http://localhost:5173 and sign in. The API logs "Dashboard API on" at startup when
+`CLERK_SECRET_KEY` and `ADMIN_DATABASE_URL` are set; otherwise it says what's missing. The
+dashboard must stay on port 5173 (`DASHBOARD_ORIGIN`): Clerk's login tokens name the site they
+were made for, and the API refuses tokens from any other.
 
 ## 7. Spending
 

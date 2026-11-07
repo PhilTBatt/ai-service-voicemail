@@ -88,35 +88,35 @@ export async function requestCancellation(
 /** Everything we hold for one tenant, for the data export. RLS guarantees it's only theirs. */
 export async function exportTenant(pool: pg.Pool, tenantId: string) {
   return withTenant(pool, tenantId, async (client) => {
-    const [tenant, profiles, calls, notifications, audit] = await Promise.all([
-      client.query(
-        `SELECT id, business_name, trade, status, contact_name, notification_mobile, notification_email,
-                service_region, created_at, updated_at
-         FROM tenants WHERE id = $1`,
-        [tenantId],
-      ),
-      client.query(
-        `SELECT version, trade_template, services, service_areas, opening_hours, holiday_mode,
-                holiday_until, faqs, emergency_policy, synced_at, sync_error, created_at
-         FROM agent_profiles WHERE tenant_id = $1 ORDER BY version`,
-        [tenantId],
-      ),
-      client.query(
-        `SELECT id, caller_number, started_at, ended_at, billable_seconds, outcome, urgency, summary,
-                extracted_fields, transcript, via_fallback, flags, created_at
-         FROM calls WHERE tenant_id = $1 ORDER BY started_at`,
-        [tenantId],
-      ),
-      client.query(
-        `SELECT call_id, channel, status, attempts, failure_code, created_at, updated_at
-         FROM notifications WHERE tenant_id = $1 ORDER BY created_at`,
-        [tenantId],
-      ),
-      client.query(
-        "SELECT action, details, created_at FROM audit_log WHERE tenant_id = $1 ORDER BY created_at",
-        [tenantId],
-      ),
-    ]);
+    // One after another: a connection runs one query at a time, and handing it several at once
+    // is deprecated in pg (removed in pg 9). They share the transaction, so they see one snapshot.
+    const tenant = await client.query(
+      `SELECT id, business_name, trade, status, contact_name, notification_mobile, notification_email,
+              service_region, created_at, updated_at
+       FROM tenants WHERE id = $1`,
+      [tenantId],
+    );
+    const profiles = await client.query(
+      `SELECT version, trade_template, services, service_areas, opening_hours, holiday_mode,
+              holiday_until, faqs, emergency_policy, synced_at, sync_error, created_at
+       FROM agent_profiles WHERE tenant_id = $1 ORDER BY version`,
+      [tenantId],
+    );
+    const calls = await client.query(
+      `SELECT id, caller_number, started_at, ended_at, billable_seconds, outcome, urgency, summary,
+              extracted_fields, transcript, via_fallback, flags, created_at
+       FROM calls WHERE tenant_id = $1 ORDER BY started_at`,
+      [tenantId],
+    );
+    const notifications = await client.query(
+      `SELECT call_id, channel, status, attempts, failure_code, created_at, updated_at
+       FROM notifications WHERE tenant_id = $1 ORDER BY created_at`,
+      [tenantId],
+    );
+    const audit = await client.query(
+      "SELECT action, details, created_at FROM audit_log WHERE tenant_id = $1 ORDER BY created_at",
+      [tenantId],
+    );
     return {
       exportedAt: new Date().toISOString(),
       tenant: (tenant.rows[0] as Record<string, unknown> | undefined) ?? null,

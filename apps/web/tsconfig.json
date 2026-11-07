@@ -1,0 +1,14 @@
+{
+  // The dashboard is bundled by Vite for the browser, so it resolves modules the way a bundler
+  // does and knows the DOM; the strict checks come from the shared base.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    // node: for vite.config.ts only.
+    "types": ["vite/client", "node"]
+  },
+  "include": ["src", "vite.config.ts"]
+}
