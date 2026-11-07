@@ -43,7 +43,12 @@ export function routeInboundCall(context: InboundCallContext, now: Date): RouteD
   switch (tenant.status) {
     case "live":
     case "demo":
-      if (tenant.status === "demo" && context.callerCallsToday >= DEMO_DAILY_CALLS_PER_CALLER) {
+      // The registered mobile is the owner testing their own line: never capped.
+      if (
+        tenant.status === "demo" &&
+        context.callerNumber !== tenant.notificationMobile &&
+        context.callerCallsToday >= DEMO_DAILY_CALLS_PER_CALLER
+      ) {
         return { kind: "demo-limit" };
       }
       if (!tenant.providerAgentId) return { kind: "voicemail", reason: "agent not synced yet" };

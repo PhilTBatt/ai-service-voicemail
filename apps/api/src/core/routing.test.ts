@@ -128,3 +128,12 @@ describe("the caller's number as a per-call variable", () => {
     expect(withheld).toMatchObject({ variables: { caller_number: "unknown" } });
   });
 });
+
+describe("the demo cap and the owner's own phone", () => {
+  it("never caps calls from the tenant's registered mobile", () => {
+    const owner = context("demo", { callerNumber: "+447700900001", callerCallsToday: 40 });
+    expect(routeInboundCall(owner, NOW).kind).toBe("agent");
+    const prospect = context("demo", { callerNumber: "+447700900555", callerCallsToday: 3 });
+    expect(routeInboundCall(prospect, NOW).kind).toBe("demo-limit");
+  });
+});
