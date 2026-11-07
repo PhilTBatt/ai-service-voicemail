@@ -50,6 +50,9 @@ export interface TenantView {
   number: string | null;
   /** For the divert instructions; null when the business didn't say (invited, not signed up). */
   mobileNetwork: MobileNetwork | null;
+  /** When it asked to cancel, and when its number may then be released; null if it hasn't. */
+  cancellationRequestedAt: string | null;
+  releaseDueAt: string | null;
 }
 
 /** A call as a list shows it: no transcript, no recording. */
@@ -200,4 +203,24 @@ export interface AvailableNumbersView {
 export interface ProvisionedNumberView {
   number: string;
   providerSid: string;
+}
+
+/** GET /api/admin/cancellations: businesses that are leaving, and whose numbers can go. */
+export interface CancellationsView {
+  tenants: {
+    tenantId: string;
+    businessName: string;
+    cancellationRequestedAt: string;
+    releaseDueAt: string;
+    /** Their AnswerMate number, or null if they never had one. */
+    number: string | null;
+    /** The 30 days are up: the number can be released. */
+    due: boolean;
+  }[];
+}
+
+/** POST /api/admin/tenants/:id/release-number */
+export interface ReleasedNumberView {
+  released: string | null;
+  status: "cancelled";
 }

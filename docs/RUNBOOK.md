@@ -110,6 +110,14 @@ second number this way: the old one would carry on costing money at Twilio. If a
 but can't be recorded, the API raises a `number-bought-not-recorded` alert with its SID: record
 it by hand or release it in the Twilio console.
 
-## 9. Spending
+## 9. When a business leaves
+
+The tradesperson cancels on their Account tab (or you do, from theirs). From then on callers to
+their number hear that the service has ended, and they get a text and an email with the codes
+to turn their diverts off and get their voicemail back. The business appears under "Leaving
+businesses" on the Admin page. After 30 days the "Release number" button appears: it gives the
+number back to Twilio for good and marks the business cancelled.
+
+## 10. Spending
 
 Anything named `live-*` touches a paid service and asks for `--confirm`. Day to day the only money that moves is per call (Retell and Twilio per minute, Anthropic per extraction, Twilio per text segment). Evals (`npm run evals`) cost a few pence per run under their cap.

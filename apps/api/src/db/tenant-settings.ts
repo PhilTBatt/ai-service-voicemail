@@ -7,6 +7,7 @@ import {
   type NotificationSettings,
   type TenantStatus,
 } from "@callmate/shared";
+import type { EnqueueOffboarding } from "../jobs/offboarding.ts";
 import { withTenant } from "./tenant.ts";
 
 // The rules live in packages/shared/src/settings.ts, so the dashboard checks them too.
@@ -51,14 +52,15 @@ export type CancellationResult =
   | { outcome: "not-allowed"; status: TenantStatus };
 
 /**
- * Starts leaving. From now on callers hear the "service has ended" message (core/routing.ts).
- * Step 13 adds the rest of the timeline: the divert-removal texts, the number's release after
- * 30 days, and the deletion.
+ * Starts leaving. From now on callers hear the "service has ended" message (core/routing.ts),
+ * the tradesperson is texted and emailed how to remove their divert, and after 30 days an admin
+ * can release the number (BUILD_PLAN Step 13).
  */
 export async function requestCancellation(
   pool: pg.Pool,
   tenantId: string,
   actorUserId: string,
+  options: { now: Date; enqueueOffboarding?: EnqueueOffboarding },
 ): Promise<CancellationResult> {
   return withTenant(pool, tenantId, async (client) => {
     const row = (
@@ -71,7 +73,13 @@ export async function requestCancellation(
     if (row.status !== "live" && row.status !== "paused") {
       return { outcome: "not-allowed", status: row.status };
     }
-    await client.query("UPDATE tenants SET status = 'cancelling' WHERE id = $1", [tenantId]);
+    // The 30 days of "service has ended" count from now (core/offboarding.ts).
+    await client.query(
+      "UPDATE tenants SET status = 'cancelling', cancellation_requested_at = $2 WHERE id = $1",
+      [tenantId, options.now],
+    );
+    // The text and email about removing the divert, committed with the cancellation.
+    await options.enqueueOffboarding?.({ tenantId, action: "cancellation-notices" }, client);
     await client.query(
       "INSERT INTO audit_log (tenant_id, actor_user_id, action, details) VALUES ($1, $2, 'tenant.cancel-requested', $3)",
       [tenantId, actorUserId, { via: "dashboard", from: row.status }],

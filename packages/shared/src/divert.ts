@@ -76,6 +76,14 @@ const RESTORE_VOICEMAIL: Partial<Record<MobileNetwork, string>> = {
   ee: "**61*+447953222222*11*30#",
 };
 
+/** Cancels the no-answer, busy and unreachable diverts, in that order (Appendix C). */
+export const DIVERT_TURN_OFF_CODES = ["##61#", "##67#", "##62#"] as const;
+
+/** The code that brings a network's voicemail back (Appendix C), or null when we don't know it. */
+export function voicemailRestoreCode(network: MobileNetwork | null): string | null {
+  return network ? (RESTORE_VOICEMAIL[network] ?? null) : null;
+}
+
 /**
  * The instructions for `network` (null when we don't know it) and the business's AnswerMate
  * number, which must be in +44 form: the codes need the international format.
@@ -116,7 +124,7 @@ export function divertInstructions(
       'If you\'ve ever set "divert all calls", cancel it first with ##21#: it overrides these.',
       "These replace your network's voicemail: callers you miss reach AnswerMate instead.",
     ],
-    restoreVoicemail: network ? (RESTORE_VOICEMAIL[network] ?? null) : null,
+    restoreVoicemail: voicemailRestoreCode(network),
   };
 }
 

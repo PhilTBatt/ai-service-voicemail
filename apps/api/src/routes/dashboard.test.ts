@@ -232,6 +232,14 @@ describe("authorisation matrix", () => {
       body: {},
       method: "POST",
     },
+    { name: "GET /admin/cancellations", path: "/admin/cancellations" },
+    // No confirmation in the body: refused (400) even for the admin, so nothing is released.
+    {
+      name: "POST /admin/tenants/:id/release-number",
+      path: `/admin/tenants/${tenantA}/release-number`,
+      body: {},
+      method: "POST",
+    },
   ];
   // What tenant A's data looks like to each person. "allowed" means the door opened: the
   // request may still 400, 404 or 409 on its merits (no audio at the fake, invalid body).
@@ -250,6 +258,8 @@ describe("authorisation matrix", () => {
       "POST /admin/tenants/:id/onboarding/advance": 403,
       "PUT /admin/tenants/:id/pilot": 403,
       "POST /admin/tenants/:id/onboarding/divert-instructions": 403,
+      "GET /admin/cancellations": 403,
+      "POST /admin/tenants/:id/release-number": 403,
       "POST /signup-links": 403,
     },
     ownerB: { "GET /me": "allowed", "GET /tenants": "allowed", default: 403 },
@@ -686,6 +696,98 @@ describe("notification settings", () => {
 });
 
 describe("cancellation", () => {
+  it("records when, and queues the text and email about removing the divert", async () => {
+    const tenant = await createTenant(admin, { businessName: "Leaving Locks", trade: "locksmith" });
+    await admin.query("UPDATE tenants SET status = 'live' WHERE id = $1", [tenant]);
+    const owner = await personFor(tenant);
+    expect((await send("POST", `/tenants/${tenant}/cancel`, {}, owner)).status).toBe(200);
+
+    const row = await admin.query<{ cancellation_requested_at: Date }>(
+      "SELECT cancellation_requested_at FROM tenants WHERE id = $1",
+      [tenant],
+    );
+    // The dashboard's clock is pinned to 7 November 2026, 10:00 UTC in these tests.
+    expect(row.rows[0]!.cancellation_requested_at.toISOString()).toBe("2026-11-07T10:00:00.000Z");
+    const job = await app.query<{ data: unknown }>(
+      "SELECT data FROM pgboss.job WHERE name = 'offboarding' AND singleton_key = $1",
+      [`${tenant}:cancellation-notices`],
+    );
+    expect(job.rows.map((r) => r.data)).toEqual([
+      { tenantId: tenant, action: "cancellation-notices" },
+    ]);
+    const detail = await json<TenantView>(get(`/tenants/${tenant}`, owner));
+    expect(detail).toMatchObject({
+      status: "cancelling",
+      cancellationRequestedAt: "2026-11-07T10:00:00.000Z",
+      releaseDueAt: "2026-12-07T10:00:00.000Z",
+    });
+  });
+
+  it("releases a leaving business's number only once its 30 days are up, then it's cancelled", async () => {
+    const tenant = await createTenant(admin, {
+      businessName: "Gone Building",
+      trade: "general_builder",
+    });
+    const number = `+441632960${String(Math.floor(Math.random() * 990)).padStart(3, "0")}`;
+    await admin.query(
+      "UPDATE phone_numbers SET status = 'released', released_at = now() WHERE number = $1 AND status = 'active'",
+      [number],
+    );
+    const providerSid = `PN${randomUUID().replace(/-/g, "")}`;
+    await assignPhoneNumber(admin, tenant, number, providerSid);
+    // Cancelled 18 days before the pinned clock: callers still hear "service has ended".
+    await admin.query(
+      "UPDATE tenants SET status = 'cancelling', cancellation_requested_at = '2026-10-20T10:00:00Z' WHERE id = $1",
+      [tenant],
+    );
+    type Cancellations = {
+      tenants: { tenantId: string; due: boolean; releaseDueAt: string; number: string | null }[];
+    };
+    const listed = async () =>
+      (await json<Cancellations>(get("/admin/cancellations", tokens.admin))).tenants.find(
+        (row) => row.tenantId === tenant,
+      );
+    expect(await listed()).toMatchObject({
+      due: false,
+      // 11:00 UK summer time on 20 October, so 11:00 UK winter time (11:00 UTC) on 19 November.
+      releaseDueAt: "2026-11-19T11:00:00.000Z",
+      number,
+    });
+    const release = (body: unknown) =>
+      send("POST", `/admin/tenants/${tenant}/release-number`, body, tokens.admin);
+    const early = await release({ confirm: true });
+    expect(early.status).toBe(409);
+    expect(((await early.json()) as { error: string }).error).toMatch(/until 2026-11-19/);
+
+    // Now 31 days on.
+    await admin.query(
+      "UPDATE tenants SET cancellation_requested_at = '2026-10-07T10:00:00Z' WHERE id = $1",
+      [tenant],
+    );
+    expect(await listed()).toMatchObject({ due: true });
+    expect((await release({})).status).toBe(400);
+    const released = await release({ confirm: true });
+    expect(released.status).toBe(200);
+    expect(await released.json()).toEqual({ released: number, status: "cancelled" });
+
+    expect(telephony.released).toContain(providerSid);
+    const after = await admin.query<{ status: string }>(
+      "SELECT status FROM phone_numbers WHERE provider_sid = $1",
+      [providerSid],
+    );
+    expect(after.rows[0]!.status).toBe("released");
+    expect((await json<TenantView>(get(`/tenants/${tenant}`, tokens.admin))).status).toBe(
+      "cancelled",
+    );
+    const audit = await admin.query<{ actor_user_id: string | null }>(
+      "SELECT actor_user_id FROM audit_log WHERE tenant_id = $1 AND action = 'number.released'",
+      [tenant],
+    );
+    expect(audit.rows).toHaveLength(1);
+    expect(audit.rows[0]!.actor_user_id).not.toBeNull();
+    expect(await listed()).toBeUndefined();
+  });
+
   it("moves a live tenant to cancelling once, and records who asked", async () => {
     const tenant = await createTenant(admin, { businessName: "Leaving Locks", trade: "locksmith" });
     await admin.query("UPDATE tenants SET status = 'live' WHERE id = $1", [tenant]);

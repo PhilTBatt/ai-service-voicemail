@@ -25,7 +25,9 @@ import { Router, json } from "express";
 import type { PgBoss } from "pg-boss";
 import type pg from "pg";
 import { z } from "zod";
+import { releaseDueAt } from "../core/offboarding.ts";
 import { agentProfileInputSchema, saveAgentProfile } from "../db/agent-profiles.ts";
+import { enqueueOffboardingWith } from "../jobs/offboarding.ts";
 import { enqueueOnboardingWith } from "../jobs/onboarding.ts";
 import { adminRouter, type NumberProvisioning } from "./admin.ts";
 import {
@@ -95,6 +97,7 @@ interface TenantRow {
   created_at: Date;
   number: string | null;
   mobile_network: MobileNetwork | null;
+  cancellation_requested_at: Date | null;
 }
 
 interface ProfileRow {
@@ -200,6 +203,7 @@ export function dashboardRouter({
           await client.query<TenantRow>(
             `SELECT id, business_name, trade, status, contact_name, notification_mobile,
                     notification_email, service_region, created_at, mobile_network,
+                    cancellation_requested_at,
                     (SELECT number FROM phone_numbers
                      WHERE tenant_id = tenants.id AND status = 'active') AS number
              FROM tenants WHERE id = $1`,
@@ -223,6 +227,10 @@ export function dashboardRouter({
       createdAt: row.created_at.toISOString(),
       number: row.number,
       mobileNetwork: row.mobile_network,
+      cancellationRequestedAt: row.cancellation_requested_at?.toISOString() ?? null,
+      releaseDueAt: row.cancellation_requested_at
+        ? releaseDueAt(row.cancellation_requested_at).toISOString()
+        : null,
     } satisfies TenantView);
   });
 
@@ -309,10 +317,13 @@ export function dashboardRouter({
     res.json(saved satisfies NotificationSettings);
   });
 
-  // Asking to leave: callers hear "service has ended" from now on. The rest is Step 13.
+  // Asking to leave: callers hear "service has ended" from now on, and the notices are queued.
   tenant.post("/cancel", async (_req, res) => {
     const tenantId = tenantIdOf(res);
-    const result = await requestCancellation(pool, tenantId, principalOf(res).userId);
+    const result = await requestCancellation(pool, tenantId, principalOf(res).userId, {
+      now: now?.() ?? new Date(),
+      enqueueOffboarding: enqueueOffboardingWith(boss),
+    });
     if (result.outcome === "not-allowed") {
       res.status(409).json({
         error: `The account is ${result.status}, so there's nothing to cancel from here`,

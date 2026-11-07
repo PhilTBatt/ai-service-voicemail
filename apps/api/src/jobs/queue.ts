@@ -27,6 +27,8 @@ export const NOTIFY_EMERGENCY_QUEUE = "notify-emergency";
 export const DEAD_LETTER_QUEUE = "dead-letter";
 /** Onboarding texts and going live after the test call (BUILD_PLAN Step 11). */
 export const ONBOARDING_QUEUE = "onboarding";
+/** Messages when a business leaves, and deleting its data (BUILD_PLAN Step 13). */
+export const OFFBOARDING_QUEUE = "offboarding";
 
 /**
  * Starts pg-boss as the app role. Its schema was installed by a migration (decision 008),
@@ -94,6 +96,14 @@ export async function startQueue(connectionString: string): Promise<PgBoss> {
     retryDelay: 30,
     retryBackoff: true,
     expireInSeconds: 60,
+    deadLetter: DEAD_LETTER_QUEUE,
+  });
+  await ensureQueue(boss, OFFBOARDING_QUEUE, {
+    policy: "exclusive", // one of each action per business queued or running
+    retryLimit: 5,
+    retryDelay: 60,
+    retryBackoff: true,
+    expireInSeconds: 600, // deleting a busy business's data at the providers takes a while
     deadLetter: DEAD_LETTER_QUEUE,
   });
   await ensureQueue(boss, RETENTION_QUEUE, {

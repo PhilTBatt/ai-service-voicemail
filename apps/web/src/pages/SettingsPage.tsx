@@ -13,7 +13,7 @@ import { asError, useApi, useLoad } from "../api.ts";
 import { formatPhone, toUkMobileE164 } from "../format.ts";
 import { NumberSection } from "../number-section.tsx";
 import { TenantHeader } from "../tenant-header.tsx";
-import { ukDate } from "../time.ts";
+import { formatUkDateTime, ukDate } from "../time.ts";
 import { ErrorNote } from "../ui.tsx";
 
 export function SettingsPage({ me }: { me: MeView }) {
@@ -180,9 +180,21 @@ function Cancel({ tenant, onCancelled }: { tenant: TenantView; onCancelled: () =
     return (
       <section className="card">
         <h2>Cancelled</h2>
+        {tenant.status === "cancelling" && tenant.releaseDueAt ? (
+          <p>
+            AnswerMate has been cancelled for this business
+            {tenant.cancellationRequestedAt
+              ? ` (on ${formatUkDateTime(tenant.cancellationRequestedAt)})`
+              : ""}
+            . Callers to its number hear that the service has ended until{" "}
+            {formatUkDateTime(tenant.releaseDueAt)}, then the number is released.
+          </p>
+        ) : (
+          <p>AnswerMate has been cancelled for this business, and its number released.</p>
+        )}
         <p>
-          AnswerMate has been cancelled for this business. Callers to its number hear that the
-          service has ended. Remember to remove the call divert from your own phone.
+          We've texted and emailed how to turn off your diverts and get your voicemail back. The
+          codes are on the Phone setup tab too.
         </p>
       </section>
     );
@@ -206,8 +218,9 @@ function Cancel({ tenant, onCancelled }: { tenant: TenantView; onCancelled: () =
       <h2>Cancel AnswerMate</h2>
       <p>
         From the moment you cancel, callers to your AnswerMate number hear that the service has
-        ended, and the assistant stops taking messages. Remember to remove the call divert from your
-        own phone. To switch off for a while instead, use the switch on the Calls tab.
+        ended, and the assistant stops taking messages. We'll text and email you how to turn off
+        your diverts and get your voicemail back. To switch off for a while instead, use the switch
+        on the Calls tab.
       </p>
       <label className="stacked">
         Type {CONFIRM_WORD} to confirm

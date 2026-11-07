@@ -3,11 +3,13 @@
 // an owner or the reseller. Cross-tenant reads go through the admin pool, as decision 006 says.
 import type {
   AvailableNumbersView,
+  CancellationsView,
   CostsView,
   HealthView,
   KillSwitchView,
   OnboardingView,
   ProvisionedNumberView,
+  ReleasedNumberView,
   ReviewQueueView,
   UsageView,
 } from "@callmate/shared";
@@ -17,6 +19,7 @@ import type pg from "pg";
 import { z } from "zod";
 import { buyNumberForTenant, searchNumbers } from "../admin/test-number.ts";
 import type { AlertFn } from "../alerts.ts";
+import { releaseDueAt } from "../core/offboarding.ts";
 import { CURRENT_PRICES, describePrices, poundsToPence } from "../core/prices.ts";
 import { startOfUkDate, usagePeriodFor } from "../core/usage.ts";
 import {
@@ -25,7 +28,9 @@ import {
   estimateCosts,
   healthSnapshot,
   listCurrentUsage,
+  listCancellingTenants,
   listFlaggedCalls,
+  recordNumberReleased,
   setKillSwitch,
   type AdminPool,
 } from "../db/cross-tenant.ts";
@@ -62,6 +67,8 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const switchBody = z.object({ on: z.boolean() });
 const advanceBody = z.object({ to: z.enum(ONBOARDING_STATES) });
 const pilotBody = z.object({ pilot: z.boolean() });
+/** Releasing a number can't be undone: the page sends this only after a confirmation dialog. */
+const releaseBody = z.object({ confirm: z.literal(true) });
 const isTenantId = (value: unknown): value is string => z.uuid().safeParse(value).success;
 const reviewQuery = z.object({
   limit: z.coerce.number().int().min(1).max(200).default(50),
@@ -233,6 +240,61 @@ export function adminRouter({
       }
       throw error;
     }
+  });
+
+  // Businesses that are leaving (BUILD_PLAN Step 13): callers hear "service has ended" for 30
+  // days, then the number can be released.
+  router.get("/cancellations", async (_req, res) => {
+    const current = now();
+    const tenants = (await listCancellingTenants(admin)).map((tenant) => {
+      const due = releaseDueAt(tenant.cancellationRequestedAt);
+      return {
+        tenantId: tenant.tenantId,
+        businessName: tenant.businessName,
+        cancellationRequestedAt: tenant.cancellationRequestedAt.toISOString(),
+        releaseDueAt: due.toISOString(),
+        number: tenant.number,
+        due: due <= current,
+      };
+    });
+    res.json({ tenants } satisfies CancellationsView);
+  });
+
+  // Releases a leaving business's number once its 30 days are up: a live action that can't be
+  // undone (the number goes back to Twilio), behind the admin role and a confirmation. Releasing
+  // is safe to repeat, so a failure part-way can simply be tried again.
+  router.post("/tenants/:tenantId/release-number", async (req, res) => {
+    const body = releaseBody.safeParse(req.body);
+    if (!body.success) {
+      res
+        .status(400)
+        .json({ error: "Invalid body", issues: z.flattenError(body.error).fieldErrors });
+      return;
+    }
+    const { tenantId } = req.params;
+    const tenant = isTenantId(tenantId)
+      ? (await listCancellingTenants(admin)).find((row) => row.tenantId === tenantId)
+      : undefined;
+    if (!tenant) {
+      res.status(409).json({ error: "Only a business that's cancelling has a number to release" });
+      return;
+    }
+    const due = releaseDueAt(tenant.cancellationRequestedAt);
+    if (due > now()) {
+      res.status(409).json({
+        error: `Callers hear "service has ended" until ${due.toISOString()}; release it after that`,
+      });
+      return;
+    }
+    if (tenant.providerSid) {
+      if (!numbers) {
+        res.status(503).json({ error: "Twilio isn't set up on this server" });
+        return;
+      }
+      await numbers.telephony.releaseNumber(tenant.providerSid);
+    }
+    await recordNumberReleased(admin, tenantId, principalOf(res).userId);
+    res.json({ released: tenant.number, status: "cancelled" } satisfies ReleasedNumberView);
   });
 
   // One business's onboarding checklist (BUILD_PLAN Step 11).

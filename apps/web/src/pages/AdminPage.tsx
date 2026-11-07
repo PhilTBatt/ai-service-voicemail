@@ -1,17 +1,19 @@
 // Phil's view of the whole service: is it healthy, which calls need a look, how much each
 // business is using, and what that costs us. The API answers these only for the admin role; this page is just a view.
 import type {
+  CancellationsView,
   CostRowView,
   CostsView,
   HealthView,
   KillSwitchView,
+  ReleasedNumberView,
   ReviewQueueView,
   UsageView,
 } from "@callmate/shared";
 import { useState } from "react";
 import { Link } from "react-router";
 import { asError, useApi, useLoad } from "../api.ts";
-import { formatDuration, formatPence } from "../format.ts";
+import { formatDuration, formatPence, formatPhone } from "../format.ts";
 import { formatUkDateTime } from "../time.ts";
 import { ErrorNote, StatusBadge, UrgencyBadge } from "../ui.tsx";
 
@@ -20,6 +22,7 @@ export function AdminPage() {
     <>
       <h1>Admin</h1>
       <Health />
+      <Leaving />
       <ReviewQueue />
       <Usage />
       <Costs />
@@ -263,6 +266,78 @@ function Costs() {
           <li key={line}>{line}</li>
         ))}
       </ul>
+    </section>
+  );
+}
+
+/**
+ * Businesses that have cancelled (BUILD_PLAN Step 13). For 30 days their callers hear "service
+ * has ended"; after that their number can be released, which is a live action and final.
+ */
+function Leaving() {
+  const { api } = useApi();
+  const leaving = useLoad(() => api<CancellationsView>("/admin/cancellations"), "cancellations");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+
+  if (leaving.status === "loading") return <p className="muted">Loading cancellations…</p>;
+  if (leaving.status === "error") return <ErrorNote error={leaving.error} retry={leaving.reload} />;
+  if (leaving.data.tenants.length === 0) return null;
+
+  const release = async (tenantId: string, businessName: string, number: string | null) => {
+    const what = number ? `Release ${formatPhone(number)}` : "Close";
+    const question = `${what} for ${businessName}? The number goes back to Twilio for good, and callers to it stop hearing the "service has ended" message.`;
+    if (!window.confirm(question)) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api<ReleasedNumberView>(`/admin/tenants/${tenantId}/release-number`, {
+        method: "POST",
+        body: { confirm: true },
+      });
+      leaving.reload();
+    } catch (caught) {
+      setError(asError(caught));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section>
+      <h2>Leaving businesses</h2>
+      <p className="muted">
+        Callers hear that the service has ended for 30 days after a cancellation. Then the number
+        can be released.
+      </p>
+      <ul className="list">
+        {leaving.data.tenants.map((tenant) => (
+          <li key={tenant.tenantId} className="card row">
+            <div>
+              <p className="row-title">
+                <Link to={`/tenants/${tenant.tenantId}`}>{tenant.businessName}</Link>
+              </p>
+              <p className="muted">
+                Cancelled {formatUkDateTime(tenant.cancellationRequestedAt)}
+                {tenant.number ? ` · ${formatPhone(tenant.number)}` : " · no number"}
+              </p>
+            </div>
+            {tenant.due ? (
+              <button
+                type="button"
+                className="danger"
+                disabled={busy}
+                onClick={() => void release(tenant.tenantId, tenant.businessName, tenant.number)}
+              >
+                {tenant.number ? "Release number" : "Close"}
+              </button>
+            ) : (
+              <span className="muted">From {formatUkDateTime(tenant.releaseDueAt)}</span>
+            )}
+          </li>
+        ))}
+      </ul>
+      {error && <ErrorNote error={error} />}
     </section>
   );
 }

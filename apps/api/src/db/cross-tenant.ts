@@ -394,6 +394,69 @@ export async function estimateCosts(
   };
 }
 
+// ─── Leaving (BUILD_PLAN Step 13) ──────────────────────────────────────────────────────
+
+export interface CancellingTenant {
+  tenantId: string;
+  businessName: string;
+  cancellationRequestedAt: Date;
+  number: string | null;
+  providerSid: string | null;
+}
+
+/** Businesses that have asked to cancel and still hold their number's place: oldest first. */
+export async function listCancellingTenants(admin: AdminPool): Promise<CancellingTenant[]> {
+  const { rows } = await admin.query<CancellingTenant>(
+    `SELECT t.id AS "tenantId", t.business_name AS "businessName",
+            coalesce(t.cancellation_requested_at, t.updated_at) AS "cancellationRequestedAt",
+            n.number, n.provider_sid AS "providerSid"
+     FROM tenants t
+     LEFT JOIN phone_numbers n ON n.tenant_id = t.id AND n.status = 'active'
+     WHERE t.status = 'cancelling'
+     ORDER BY 3`,
+  );
+  return rows;
+}
+
+/**
+ * Records that the provider has taken a cancelled business's number back, and that the business
+ * has now left: status 'cancelled'. Audited. Call after the provider's release has succeeded.
+ */
+export async function recordNumberReleased(
+  admin: AdminPool,
+  tenantId: string,
+  actorUserId: string,
+): Promise<void> {
+  const client = await admin.connect();
+  try {
+    await client.query("BEGIN");
+    const released = await client.query<{ number: string; provider_sid: string }>(
+      `UPDATE phone_numbers SET status = 'released', released_at = now()
+       WHERE tenant_id = $1 AND status = 'active' RETURNING number, provider_sid`,
+      [tenantId],
+    );
+    await client.query("UPDATE tenants SET status = 'cancelled' WHERE id = $1", [tenantId]);
+    await client.query(
+      "INSERT INTO audit_log (tenant_id, actor_user_id, action, details) VALUES ($1, $2, 'number.released', $3)",
+      [
+        tenantId,
+        actorUserId,
+        {
+          via: "dashboard",
+          number: released.rows[0]?.number ?? null,
+          providerSid: released.rows[0]?.provider_sid ?? null,
+        },
+      ],
+    );
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 // ─── People who log in (BUILD_PLAN Step 10) ────────────────────────────────────────────
 // Creating accounts is an admin act (Step 11's onboarding invites owners; Phil and Ant are
 // created once). Reading an account at login time goes through db/accounts.ts.

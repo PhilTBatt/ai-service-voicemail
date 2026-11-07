@@ -14,6 +14,7 @@ import {
   RECONCILE_CALLS_CRON,
   RECONCILE_CALLS_QUEUE,
   NOTIFY_SMS_QUEUE,
+  OFFBOARDING_QUEUE,
   ONBOARDING_QUEUE,
   PROCESS_CALL_QUEUE,
   RECONCILE_VOICEMAILS_CRON,
@@ -29,6 +30,7 @@ import {
   runOnboardingJob,
   type OnboardingJobData,
 } from "./jobs/onboarding.ts";
+import { runOffboardingJob, type OffboardingJobData } from "./jobs/offboarding.ts";
 import { reconcileVoicemails } from "./jobs/reconcile-voicemails.ts";
 import { runRetention } from "./jobs/retention.ts";
 import { runSyncAgent, type SyncAgentJobData } from "./jobs/sync-agent.ts";
@@ -104,7 +106,12 @@ try {
         await runOnboardingJob({ ...deps, dashboardOrigin: config.dashboardOrigin }, job.data);
       }
     });
-    queues.push(NOTIFY_EMERGENCY_QUEUE, NOTIFY_SMS_QUEUE, ONBOARDING_QUEUE);
+    // When a business leaves: the text, and the email where email is set up.
+    const leavingEmail = config.email ? new PostmarkEmailProvider(config.email) : undefined;
+    await boss.work<OffboardingJobData>(OFFBOARDING_QUEUE, async (jobs) => {
+      for (const job of jobs) await runOffboardingJob({ ...deps, email: leavingEmail }, job.data);
+    });
+    queues.push(NOTIFY_EMERGENCY_QUEUE, NOTIFY_SMS_QUEUE, ONBOARDING_QUEUE, OFFBOARDING_QUEUE);
   } else {
     logger.warn(
       "SMS notifications disabled: needs TWILIO_SMS_FROM, SIGNING_SECRET and PUBLIC_BASE_URL (jobs wait in the queue)",
