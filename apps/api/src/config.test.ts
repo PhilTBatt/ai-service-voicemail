@@ -306,3 +306,14 @@ describe("loadConfig: RETELL_WEBHOOK_KEY", () => {
     expect(loadConfig(valid).retellWebhookKey).toBeUndefined();
   });
 });
+
+describe("loadConfig: POSTMARK_WEBHOOK_SECRET", () => {
+  it("must be at least 16 characters when set", () => {
+    expect(
+      loadConfig({ ...valid, POSTMARK_WEBHOOK_SECRET: "x".repeat(16) }).postmarkWebhookSecret,
+    ).toBe("x".repeat(16));
+    expect(configErrorFor({ ...valid, POSTMARK_WEBHOOK_SECRET: "short" }).problems[0]).toMatch(
+      /^POSTMARK_WEBHOOK_SECRET is invalid/,
+    );
+  });
+});

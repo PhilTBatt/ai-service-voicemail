@@ -46,6 +46,9 @@ async function start(config: Config): Promise<void> {
     pool,
     voiceProviders,
     telephony,
+    postmark: config.postmarkWebhookSecret
+      ? { webhookSecret: config.postmarkWebhookSecret }
+      : undefined,
     callPages: config.signingSecret
       ? { signingSecret: config.signingSecret, telephony: telephony?.provider, voice: retell }
       : undefined,

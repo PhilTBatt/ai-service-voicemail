@@ -56,6 +56,9 @@ const envSchema = z
     POSTMARK_SERVER_TOKEN: z.string().min(1).optional(),
     EMAIL_FROM: z.email().optional(),
     EMAIL_REPLY_TO: z.email().optional(),
+    // The password in the Basic-auth webhook URL registered at Postmark (username "postmark"):
+    // https://postmark:<secret>@<public host>/webhooks/postmark. Postmark doesn't sign webhooks.
+    POSTMARK_WEBHOOK_SECRET: z.string().min(16).optional(),
     // Signs the call links in texts and emails (core/signed-links.ts). 32+ random characters.
     SIGNING_SECRET: z.string().min(32, "expected at least 32 characters").optional(),
     // Cross-tenant work (retention, seeding). The API never uses it; the worker does.
@@ -114,6 +117,7 @@ const envSchema = z
             ...(env.EMAIL_REPLY_TO !== undefined && { replyTo: env.EMAIL_REPLY_TO }),
           }
         : undefined,
+    postmarkWebhookSecret: env.POSTMARK_WEBHOOK_SECRET,
     outbound: { nodeEnv: env.NODE_ENV, allowlist: parseAllowlist(env.OUTBOUND_ALLOWLIST) },
     sms:
       env.TWILIO_ACCOUNT_SID !== undefined &&

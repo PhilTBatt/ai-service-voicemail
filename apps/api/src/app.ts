@@ -7,11 +7,14 @@ import { logger } from "./logger.ts";
 import type { TelephonyProvider } from "./providers/telephony.ts";
 import type { CallEndedEvent, FunctionCallEvent, VoiceProvider } from "./providers/voice.ts";
 import { callPageRouter } from "./routes/calls.ts";
+import { postmarkRouter } from "./routes/postmark.ts";
 import { twilioRouter } from "./routes/twilio.ts";
 import { voiceWebhookRouter } from "./routes/webhooks.ts";
 
 export interface AppOptions {
   pool: pg.Pool;
+  /** Postmark's bounce and complaint webhook. Absent until POSTMARK_WEBHOOK_SECRET is configured. */
+  postmark?: { webhookSecret: string; alert?: AlertFn } | undefined;
   /** The signed call pages (/c/:token). Absent until SIGNING_SECRET is configured. */
   callPages?:
     | {
@@ -47,6 +50,7 @@ export function createApp({
   onFunctionCall,
   telephony,
   callPages,
+  postmark,
 }: AppOptions) {
   const app = express();
   app.disable("x-powered-by");
@@ -84,6 +88,7 @@ export function createApp({
     );
   }
 
+  if (postmark) app.use("/webhooks/postmark", postmarkRouter({ pool, ...postmark }));
   if (callPages) app.use("/c", callPageRouter({ pool, ...callPages }));
 
   // Last: Express's own handler prints the stack with console.error, unredacted, and shows
