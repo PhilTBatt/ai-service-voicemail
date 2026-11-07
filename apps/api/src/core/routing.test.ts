@@ -1,6 +1,10 @@
 import { TENANT_STATUSES, type TenantStatus } from "@callmate/shared";
 import { describe, expect, it } from "vitest";
-import { routeInboundCall, type InboundCallContext } from "./routing.ts";
+import {
+  DEMO_DAILY_CALLS_PER_CALLER,
+  routeInboundCall,
+  type InboundCallContext,
+} from "./routing.ts";
 
 const NOW = new Date("2026-07-15T10:00:00Z"); // Wednesday 11:00 BST
 const AVAILABILITY = {
@@ -23,6 +27,7 @@ function context(
     },
     callerBlocked: false,
     killSwitchOn: false,
+    callerCallsToday: 0,
     ...overrides,
   };
 }
@@ -86,5 +91,30 @@ describe("routeInboundCall", () => {
     expect(routeInboundCall(context("live", { tenant: null }), NOW)).toMatchObject({
       kind: "voicemail",
     });
+  });
+});
+
+describe("the demo line's daily cap", () => {
+  it("lets a caller through until they've used today's calls, then plays the limit message", () => {
+    expect(
+      routeInboundCall(context("demo", { callerCallsToday: DEMO_DAILY_CALLS_PER_CALLER - 1 }), NOW)
+        .kind,
+    ).toBe("agent");
+    expect(
+      routeInboundCall(context("demo", { callerCallsToday: DEMO_DAILY_CALLS_PER_CALLER }), NOW),
+    ).toEqual({ kind: "demo-limit" });
+  });
+
+  it("never caps a paying tenant's callers", () => {
+    expect(routeInboundCall(context("live", { callerCallsToday: 50 }), NOW).kind).toBe("agent");
+  });
+
+  it("still blocks and kill-switches before the cap", () => {
+    expect(
+      routeInboundCall(context("demo", { callerCallsToday: 9, callerBlocked: true }), NOW).kind,
+    ).toBe("reject");
+    expect(
+      routeInboundCall(context("demo", { callerCallsToday: 9, killSwitchOn: true }), NOW).kind,
+    ).toBe("voicemail");
   });
 });

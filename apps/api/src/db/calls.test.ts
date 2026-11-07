@@ -275,3 +275,27 @@ describe("recordMidCallEmergency", () => {
     ).toEqual({ outcome: "unknown-number" });
   });
 });
+
+describe("recordCallEnded for a demo tenant", () => {
+  it("records the call and its costs but never adds to a usage period", async () => {
+    const tenantId = await createTenant(admin, {
+      businessName: "Demo Plumbing",
+      trade: "plumber",
+      status: "demo",
+    });
+    const number = "+441632960990"; // the reserved 990-999 range: no other test takes it
+    await admin.query(
+      "UPDATE phone_numbers SET status = 'released', released_at = now() WHERE number = $1 AND status = 'active'",
+      [number],
+    );
+    await assignPhoneNumber(admin, tenantId, number, `PN${randomUUID()}`);
+
+    const result = await recordCallEnded(app, boss, event(number, { durationSeconds: 120 }));
+    expect(result).toMatchObject({ outcome: "stored", tenantId });
+    const stored = await withTenant(app, tenantId, async (client) => ({
+      usage: (await client.query("SELECT 1 FROM usage_periods")).rowCount,
+      costs: (await client.query("SELECT 1 FROM call_costs")).rowCount,
+    }));
+    expect(stored).toEqual({ usage: 0, costs: 1 });
+  });
+});

@@ -16,13 +16,19 @@ export interface InboundCallContext {
   } | null;
   callerBlocked: boolean;
   killSwitchOn: boolean;
+  /** Calls from this caller to this tenant so far today (UK time). Only counted for demo tenants. */
+  callerCallsToday: number;
 }
+
+/** Demo tenants: each phone gets this many calls a day (BUILD_PLAN Step 9). */
+export const DEMO_DAILY_CALLS_PER_CALLER = 3;
 
 export type RouteDecision =
   | { kind: "agent"; providerAgentId: string; variables: Record<string, string> }
   | { kind: "voicemail"; reason: string }
   | { kind: "ended"; mobile: string | null }
-  | { kind: "reject"; reason: string };
+  | { kind: "reject"; reason: string }
+  | { kind: "demo-limit" };
 
 export function routeInboundCall(context: InboundCallContext, now: Date): RouteDecision {
   // The kill switch beats everything: one move sends every number to plain voicemail.
@@ -34,6 +40,9 @@ export function routeInboundCall(context: InboundCallContext, now: Date): RouteD
   switch (tenant.status) {
     case "live":
     case "demo":
+      if (tenant.status === "demo" && context.callerCallsToday >= DEMO_DAILY_CALLS_PER_CALLER) {
+        return { kind: "demo-limit" };
+      }
       if (!tenant.providerAgentId) return { kind: "voicemail", reason: "agent not synced yet" };
       return {
         kind: "agent",

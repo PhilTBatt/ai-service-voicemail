@@ -8,6 +8,7 @@ import { parseSmsCommand, ukToday } from "../core/sms-commands.ts";
 import { routeInboundCall } from "../core/routing.ts";
 import {
   agentDial,
+  demoLimitReached,
   fallbackVoicemail,
   hangup,
   noSmsReply,
@@ -117,7 +118,7 @@ export function twilioRouter({
     const { CallSid: callSid, To: to } = parsed.data;
     const from = e164OrNull(parsed.data.From);
 
-    const context = await loadInboundCallContext(pool, { to, from });
+    const context = await loadInboundCallContext(pool, { to, from }, now());
     const decision = routeInboundCall(context, now());
     const tenantId = context.tenant?.id ?? null;
 
@@ -146,6 +147,9 @@ export function twilioRouter({
         break;
       case "reject":
         twiml = rejectCall();
+        break;
+      case "demo-limit":
+        twiml = demoLimitReached();
         break;
     }
 

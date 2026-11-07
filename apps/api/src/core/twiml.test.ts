@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   agentDial,
+  demoLimitReached,
   fallbackVoicemail,
   fallbackVoicemailBins,
   hangup,
@@ -67,6 +68,13 @@ describe("TwiML", () => {
 
   it("copes with a cancelled tenant that has no mobile on file", () => {
     expect(serviceEnded(null)).toMatchSnapshot();
+  });
+
+  it("tells a demo caller who has used today's calls to try tomorrow", () => {
+    const xml = demoLimitReached();
+    expect(xml).toMatchSnapshot();
+    expect(xml).toContain("three calls a day");
+    expect(xml).toContain("<Hangup/>");
   });
 
   it("rejects and hangs up", () => {

@@ -49,3 +49,7 @@ export const SERVICE_ENDED_LINE = "This service has ended. Please call";
 
 /** After a fallback voicemail has been recorded. */
 export const VOICEMAIL_THANKS = "Thanks. Goodbye.";
+
+/** Demo tenants allow three calls a day from each phone (BUILD_PLAN Step 9). */
+export const DEMO_LIMIT_LINE =
+  "Thanks for trying the demo line. It allows three calls a day from each phone, and you've used yours for today. Please try again tomorrow. Goodbye.";

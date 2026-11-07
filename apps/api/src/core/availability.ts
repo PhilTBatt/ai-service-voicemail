@@ -36,6 +36,11 @@ export function isOnHolidayAt(
   return Temporal.PlainDate.compare(today, Temporal.PlainDate.from(holidayUntil)) <= 0;
 }
 
+/** Midnight at the start of the UK day that `at` falls in, as an instant. */
+export function startOfUkDay(at: Date, timeZone = UK_TIME_ZONE): Date {
+  return new Date(localTime(at, timeZone).startOfDay().epochMilliseconds);
+}
+
 export interface AvailabilityInput {
   openingHours: OpeningHours;
   holidayMode: boolean;

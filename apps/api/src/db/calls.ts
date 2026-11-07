@@ -27,6 +27,9 @@ export async function recordCallEnded(
 
   return withTenant(pool, tenantId, async (client) => {
     const billable = billableSeconds(event.durationSeconds);
+    const tenant = (
+      await client.query<{ status: string }>("SELECT status FROM tenants WHERE id = $1", [tenantId])
+    ).rows[0];
     const { rows } = await client.query<{ id: string }>(
       `INSERT INTO calls (tenant_id, provider_call_id, caller_number, started_at, ended_at,
                           billable_seconds, outcome, transcript, recording_ref)
@@ -59,7 +62,9 @@ export async function recordCallEnded(
     if (callId === undefined) return { outcome: "duplicate", tenantId };
 
     // Billable seconds accumulate per period; overage is worked out once per period (Step 12).
-    if (billable > 0) {
+    // Demo calls are never billed (Step 9); their costs still land in call_costs, on the demo
+    // tenant's own line.
+    if (billable > 0 && tenant?.status !== "demo") {
       const { periodStart, periodEnd } = usagePeriodFor(event.startedAt);
       await client.query(
         `INSERT INTO usage_periods (tenant_id, period_start, period_end, billable_seconds)

@@ -385,3 +385,48 @@ describe("POST /webhooks/twilio/sms", () => {
     expect(response.status).toBe(403);
   });
 });
+
+describe("the demo line (POST /webhooks/twilio/voice)", () => {
+  it("caps each caller at three calls a day, counting in UK time", async () => {
+    const { tenantId, number } = await makeTenant("demo");
+    const caller = "+447700900321";
+    // Three calls earlier today (NOW is 11:00 BST on 15 July), and one yesterday that doesn't count.
+    for (const startedAt of [
+      "2026-07-15T06:30:00Z",
+      "2026-07-15T08:00:00Z",
+      "2026-07-15T09:30:00Z",
+      "2026-07-14T22:59:00Z",
+    ]) {
+      await admin.query(
+        `INSERT INTO calls (tenant_id, provider_call_id, caller_number, started_at, ended_at)
+         VALUES ($1, $2, $3, $4, $4)`,
+        [tenantId, `call_${randomUUID()}`, caller, startedAt],
+      );
+    }
+    const limited = await (await post("/webhooks/twilio/voice", call(number, caller))).text();
+    expect(limited).toContain("three calls a day");
+    expect(limited).toContain("<Hangup/>");
+    expect(limited).not.toContain("<Dial");
+
+    // A different phone is unaffected.
+    const other = await (
+      await post("/webhooks/twilio/voice", call(number, "+447700900322"))
+    ).text();
+    expect(other).toContain("<Dial");
+  });
+
+  it("doesn't count a caller with two calls today as over the limit", async () => {
+    const { tenantId, number } = await makeTenant("demo");
+    const caller = "+447700900323";
+    for (const startedAt of ["2026-07-15T06:30:00Z", "2026-07-15T08:00:00Z"]) {
+      await admin.query(
+        `INSERT INTO calls (tenant_id, provider_call_id, caller_number, started_at, ended_at)
+         VALUES ($1, $2, $3, $4, $4)`,
+        [tenantId, `call_${randomUUID()}`, caller, startedAt],
+      );
+    }
+    expect(await (await post("/webhooks/twilio/voice", call(number, caller))).text()).toContain(
+      "<Dial",
+    );
+  });
+});

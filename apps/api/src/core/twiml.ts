@@ -2,7 +2,12 @@
 // escaped properly. The snapshot tests pin the exact XML.
 import twilio from "twilio";
 import { nationalNumber } from "./notifications.ts";
-import { FALLBACK_VOICEMAIL_GREETING, SERVICE_ENDED_LINE, VOICEMAIL_THANKS } from "./scripts.ts";
+import {
+  DEMO_LIMIT_LINE,
+  FALLBACK_VOICEMAIL_GREETING,
+  SERVICE_ENDED_LINE,
+  VOICEMAIL_THANKS,
+} from "./scripts.ts";
 
 const VoiceResponse = twilio.twiml.VoiceResponse;
 const MessagingResponse = twilio.twiml.MessagingResponse;
@@ -85,6 +90,14 @@ export function serviceEnded(mobile: string | null): string {
     say.sayAs({ "interpret-as": "telephone" }, nationalNumber(mobile));
     say.addText(". Goodbye.");
   }
+  response.hangup();
+  return response.toString();
+}
+
+/** A demo caller who has used today's three calls. */
+export function demoLimitReached(): string {
+  const response = new VoiceResponse();
+  response.say(SAY, DEMO_LIMIT_LINE);
   response.hangup();
   return response.toString();
 }

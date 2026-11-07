@@ -1,5 +1,6 @@
 import type pg from "pg";
 import type { TenantStatus } from "@callmate/shared";
+import { startOfUkDay } from "../core/availability.ts";
 import { openingHoursSchema } from "../core/profile.ts";
 import type { InboundCallContext } from "../core/routing.ts";
 import { findTenantIdByNumber } from "./cross-tenant.ts";
@@ -13,6 +14,7 @@ import { withTenant } from "./tenant.ts";
 export async function loadInboundCallContext(
   pool: pg.Pool,
   { to, from }: { to: string; from: string | null },
+  now: Date = new Date(),
 ): Promise<InboundCallContext> {
   const { rows: settings } = await pool.query<{ kill_switch_on: boolean }>(
     "SELECT kill_switch_on FROM system_settings",
@@ -20,7 +22,9 @@ export async function loadInboundCallContext(
   const killSwitchOn = settings[0]?.kill_switch_on ?? false;
 
   const tenantId = await findTenantIdByNumber(pool, to);
-  if (tenantId === null) return { tenant: null, callerBlocked: false, killSwitchOn };
+  if (tenantId === null) {
+    return { tenant: null, callerBlocked: false, killSwitchOn, callerCallsToday: 0 };
+  }
 
   return withTenant(pool, tenantId, async (client) => {
     const tenant = (
@@ -29,7 +33,7 @@ export async function loadInboundCallContext(
         [tenantId],
       )
     ).rows[0];
-    if (!tenant) return { tenant: null, callerBlocked: false, killSwitchOn };
+    if (!tenant) return { tenant: null, callerBlocked: false, killSwitchOn, callerCallsToday: 0 };
 
     // The latest synced profile is the one the live agent was built from.
     const profile = (
@@ -56,6 +60,20 @@ export async function loadInboundCallContext(
         ])
       ).rowCount === 1;
 
+    // Demo tenants cap each caller at a few calls a day (BUILD_PLAN Step 9); nobody else is counted.
+    const callerCallsToday =
+      tenant.status === "demo" && from !== null
+        ? Number(
+            (
+              await client.query<{ n: string }>(
+                `SELECT count(*) AS n FROM calls
+                 WHERE tenant_id = $1 AND caller_number = $2 AND started_at >= $3`,
+                [tenantId, from, startOfUkDay(now)],
+              )
+            ).rows[0]!.n,
+          )
+        : 0;
+
     return {
       tenant: {
         id: tenantId,
@@ -70,6 +88,7 @@ export async function loadInboundCallContext(
       },
       callerBlocked: blocked,
       killSwitchOn,
+      callerCallsToday,
     };
   });
 }
