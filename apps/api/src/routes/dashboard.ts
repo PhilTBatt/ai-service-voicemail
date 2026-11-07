@@ -396,6 +396,7 @@ function presentTenantSummary(tenant: TenantWithCallCounts): TenantListItem {
     businessName: tenant.businessName,
     trade: tenant.trade,
     status: tenant.status,
+    onboardingState: tenant.onboardingState,
     createdAt: tenant.createdAt.toISOString(),
     calls: { last30Days: tenant.callsLast30Days, total: tenant.callsTotal },
   };

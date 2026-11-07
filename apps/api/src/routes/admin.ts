@@ -6,10 +6,12 @@ import type {
   CostsView,
   HealthView,
   KillSwitchView,
+  OnboardingView,
   ProvisionedNumberView,
   ReviewQueueView,
   UsageView,
 } from "@callmate/shared";
+import { ONBOARDING_STATES } from "@callmate/shared";
 import { Router } from "express";
 import type pg from "pg";
 import { z } from "zod";
@@ -27,6 +29,7 @@ import {
   setKillSwitch,
   type AdminPool,
 } from "../db/cross-tenant.ts";
+import { advanceOnboarding, onboardingStatus, setPilot } from "../db/onboarding.ts";
 import { countDeadLettered } from "../jobs/queue.ts";
 import { PurchaseNotAllowedError, type TelephonyProvider } from "../providers/telephony.ts";
 import { presentCallSummary } from "./call-view.ts";
@@ -53,6 +56,9 @@ export interface AdminOptions {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const switchBody = z.object({ on: z.boolean() });
+const advanceBody = z.object({ to: z.enum(ONBOARDING_STATES) });
+const pilotBody = z.object({ pilot: z.boolean() });
+const isTenantId = (value: unknown): value is string => z.uuid().safeParse(value).success;
 const reviewQuery = z.object({
   limit: z.coerce.number().int().min(1).max(200).default(50),
 });
@@ -217,6 +223,62 @@ export function adminRouter({ pool, admin, numbers, now = () => new Date() }: Ad
       }
       throw error;
     }
+  });
+
+  // One business's onboarding checklist (BUILD_PLAN Step 11).
+  router.get("/tenants/:tenantId/onboarding", async (req, res) => {
+    const { tenantId } = req.params;
+    const view = isTenantId(tenantId) ? await onboardingStatus(pool, tenantId) : null;
+    if (!view) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    res.json(view satisfies OnboardingView);
+  });
+
+  // Moves a business on one step, if the rules allow it now. Answers with the new checklist,
+  // or 409 and the reason in words.
+  router.post("/tenants/:tenantId/onboarding/advance", async (req, res) => {
+    const body = advanceBody.safeParse(req.body);
+    if (!body.success) {
+      res
+        .status(400)
+        .json({ error: "Invalid body", issues: z.flattenError(body.error).fieldErrors });
+      return;
+    }
+    const { tenantId } = req.params;
+    const result = isTenantId(tenantId)
+      ? await advanceOnboarding(pool, tenantId, body.data.to, principalOf(res).userId)
+      : ({ outcome: "not-found" } as const);
+    if (result.outcome === "not-found") {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    if (result.outcome === "refused") {
+      res.status(409).json({ error: result.reason });
+      return;
+    }
+    res.json((await onboardingStatus(pool, tenantId)) satisfies OnboardingView | null);
+  });
+
+  // A free pilot can pass "payment set up" before billing exists (Step 12).
+  router.put("/tenants/:tenantId/pilot", async (req, res) => {
+    const body = pilotBody.safeParse(req.body);
+    if (!body.success) {
+      res
+        .status(400)
+        .json({ error: "Invalid body", issues: z.flattenError(body.error).fieldErrors });
+      return;
+    }
+    const { tenantId } = req.params;
+    const found =
+      isTenantId(tenantId) &&
+      (await setPilot(pool, tenantId, body.data.pilot, principalOf(res).userId));
+    if (!found) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    res.json((await onboardingStatus(pool, tenantId)) satisfies OnboardingView | null);
   });
 
   return router;

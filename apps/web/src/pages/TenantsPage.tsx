@@ -1,6 +1,6 @@
 // Every business this person can see. Admins see all of them, owners their own, and the
 // reseller sees the list with call counts but can't open a business (the API refuses).
-import type { MeView, TenantListView } from "@callmate/shared";
+import { ONBOARDING_LABELS, type MeView, type TenantListView } from "@callmate/shared";
 import { Link } from "react-router";
 import { useApi, useLoad } from "../api.ts";
 import { humanise } from "../format.ts";
@@ -32,6 +32,9 @@ export function TenantsPage({ me }: { me: MeView }) {
                 <h2 className="row-title">{name}</h2>
                 <p className="muted">
                   {humanise(tenant.trade)} · <StatusBadge status={tenant.status} />
+                  {tenant.onboardingState !== "live" && tenant.status === "onboarding" && (
+                    <> · {ONBOARDING_LABELS[tenant.onboardingState]}</>
+                  )}
                 </p>
               </div>
               <p className="counts">

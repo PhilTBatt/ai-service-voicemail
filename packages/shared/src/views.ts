@@ -2,6 +2,7 @@
 // (apps/web). Both sides are type-checked against these shapes, so a change on one side that
 // the other doesn't expect fails `npm run typecheck` instead of breaking a page at runtime.
 // Times are ISO 8601 instants in UTC; the dashboard shows them in UK time.
+import type { OnboardingState } from "./onboarding.ts";
 import type { AgentProfileInput } from "./profile.ts";
 
 export type Role = "owner" | "admin" | "reseller";
@@ -23,6 +24,8 @@ export interface TenantListItem {
   businessName: string;
   trade: string;
   status: string;
+  /** Where the business is on the way to going live. The reseller may see this. */
+  onboardingState: OnboardingState;
   createdAt: string;
   calls: { last30Days: number; total: number };
 }

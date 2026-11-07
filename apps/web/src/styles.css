@@ -455,3 +455,36 @@ table.usage tfoot th {
   padding: 0.4rem 0;
   border-bottom: 1px solid var(--line);
 }
+
+.steps {
+  padding-left: 1.25rem;
+  margin: 0.5rem 0;
+}
+
+.steps li {
+  color: var(--muted);
+  padding: 0.15rem 0;
+}
+
+.steps li.done {
+  color: var(--ink);
+}
+
+.steps li.current {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.checks {
+  list-style: none;
+  padding: 0;
+}
+
+.checks li {
+  color: var(--emergency);
+  padding: 0.15rem 0;
+}
+
+.checks li.ok {
+  color: #067647;
+}

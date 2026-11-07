@@ -70,3 +70,16 @@ test("someone nobody invited is told so, and sees nothing", async ({ page }) => 
   ).toBeVisible();
   await expect(page.getByText("Fern Lane Plumbing")).toHaveCount(0);
 });
+
+test("the admin opens a business's onboarding checklist and sees what's missing", async ({
+  page,
+}) => {
+  await signIn(page, "admin@example.com");
+  await page.getByRole("link", { name: "Other Sparks" }).click();
+  await page.getByRole("link", { name: "Onboarding" }).click();
+  await expect(page.getByRole("heading", { name: "Onboarding" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Move on to: Terms accepted" })).toBeDisabled();
+  await expect(
+    page.getByText("Not yet: The terms, DPA and privacy notice haven't all been accepted."),
+  ).toBeVisible();
+});

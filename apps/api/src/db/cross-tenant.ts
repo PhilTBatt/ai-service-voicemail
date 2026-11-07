@@ -116,6 +116,7 @@ export async function listTenants(admin: AdminPool): Promise<TenantSummary[]> {
 /** A tenant as the dashboard lists it (Step 10): the summary plus how busy its line is. */
 export interface TenantWithCallCounts extends TenantSummary {
   trade: string;
+  onboardingState: import("@callmate/shared").OnboardingState;
   createdAt: Date;
   callsLast30Days: number;
   callsTotal: number;
@@ -124,7 +125,8 @@ export interface TenantWithCallCounts extends TenantSummary {
 /** Every tenant with its call counts. Counts are safe for the reseller; nothing else here is content. */
 export async function listTenantsWithCallCounts(admin: AdminPool): Promise<TenantWithCallCounts[]> {
   const { rows } = await admin.query<TenantWithCallCounts>(
-    `SELECT t.id, t.business_name AS "businessName", t.trade, t.status, t.created_at AS "createdAt",
+    `SELECT t.id, t.business_name AS "businessName", t.trade, t.status,
+            t.onboarding_state AS "onboardingState", t.created_at AS "createdAt",
             COUNT(c.id) FILTER (WHERE c.started_at >= now() - interval '30 days')::int AS "callsLast30Days",
             COUNT(c.id)::int AS "callsTotal"
      FROM tenants t LEFT JOIN calls c ON c.tenant_id = t.id

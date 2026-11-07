@@ -2,12 +2,18 @@ import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { AvailableNumbersView, ProvisionedNumberView, TenantView } from "@callmate/shared";
+import type {
+  AvailableNumbersView,
+  OnboardingView,
+  ProvisionedNumberView,
+  TenantView,
+} from "@callmate/shared";
 import type { PgBoss } from "pg-boss";
 import { createApp } from "../app.ts";
 import type { AgentProfileInput } from "../db/agent-profiles.ts";
 import {
   addMembership,
+  assignPhoneNumber,
   createAdminPool,
   createTenant,
   createUser,
@@ -208,6 +214,15 @@ describe("authorisation matrix", () => {
       body: {},
       method: "POST",
     },
+    { name: "GET /admin/tenants/:id/onboarding", path: `/admin/tenants/${tenantA}/onboarding` },
+    // Empty bodies again: refused (400) even for the admin, so the matrix moves nothing on.
+    {
+      name: "POST /admin/tenants/:id/onboarding/advance",
+      path: `/admin/tenants/${tenantA}/onboarding/advance`,
+      body: {},
+      method: "POST",
+    },
+    { name: "PUT /admin/tenants/:id/pilot", path: `/admin/tenants/${tenantA}/pilot`, body: {} },
   ];
   // What tenant A's data looks like to each person. "allowed" means the door opened: the
   // request may still 400, 404 or 409 on its merits (no audio at the fake, invalid body).
@@ -222,6 +237,9 @@ describe("authorisation matrix", () => {
       "GET /admin/costs": 403,
       "GET /admin/numbers/available": 403,
       "POST /admin/tenants/:id/number": 403,
+      "GET /admin/tenants/:id/onboarding": 403,
+      "POST /admin/tenants/:id/onboarding/advance": 403,
+      "PUT /admin/tenants/:id/pilot": 403,
     },
     ownerB: { "GET /me": "allowed", "GET /tenants": "allowed", default: 403 },
     admin: { default: "allowed" },
@@ -271,6 +289,7 @@ describe("authorisation matrix", () => {
       businessName: "Dash Plumbing",
       trade: "plumber",
       status: "onboarding",
+      onboardingState: "created",
       createdAt: expect.any(String) as string,
       calls: { last30Days: expect.any(Number) as number, total: 1 },
     });
@@ -890,6 +909,142 @@ describe("admin screens", () => {
     } finally {
       await new Promise((resolve) => server.close(() => resolve(undefined)));
     }
+  });
+
+  it("walks a business through onboarding to live, one step at a time, each when it's ready", async () => {
+    const tenant = await createTenant(admin, {
+      businessName: "Onboard Heating",
+      trade: "heating_engineer",
+    });
+    const advance = (to: string) =>
+      send("POST", `/admin/tenants/${tenant}/onboarding/advance`, { to }, tokens.admin);
+    const status = () =>
+      json<OnboardingView>(get(`/admin/tenants/${tenant}/onboarding`, tokens.admin));
+    const refusal = async (to: string) => {
+      const response = await advance(to);
+      expect(response.status, to).toBe(409);
+      return ((await response.json()) as { error: string }).error;
+    };
+
+    expect(await status()).toMatchObject({
+      state: "created",
+      next: { state: "terms_accepted", allowed: false },
+    });
+    expect(await refusal("live")).toMatch(/one step at a time/);
+
+    // Terms: all three documents, each with its version.
+    expect(await refusal("terms_accepted")).toMatch(/haven't all been accepted/);
+    const signer = await createUser(admin, {
+      email: `signer-${randomUUID()}@example.com`,
+      role: "owner",
+    });
+    for (const document of ["terms", "dpa", "privacy_notice"]) {
+      await admin.query(
+        "INSERT INTO terms_acceptances (tenant_id, document_type, document_version, accepted_by) VALUES ($1, $2, 'placeholder-1', $3)",
+        [tenant, document, signer],
+      );
+    }
+    expect((await advance("terms_accepted")).status).toBe(200);
+
+    // Payment: billing is Step 12, so only a pilot gets past.
+    expect(await refusal("payment_ready")).toMatch(/isn't a pilot/);
+    const piloted = await send(
+      "PUT",
+      `/admin/tenants/${tenant}/pilot`,
+      { pilot: true },
+      tokens.admin,
+    );
+    expect(((await piloted.json()) as OnboardingView).isPilot).toBe(true);
+    expect((await advance("payment_ready")).status).toBe(200);
+
+    // A number (Ofcom's drama range, freed first because runs reuse numbers).
+    expect(await refusal("number_provisioned")).toMatch(/no AnswerMate number/);
+    const number = `+441632960${String(Math.floor(Math.random() * 990)).padStart(3, "0")}`;
+    await admin.query(
+      "UPDATE phone_numbers SET status = 'released', released_at = now() WHERE number = $1 AND status = 'active'",
+      [number],
+    );
+    await assignPhoneNumber(admin, tenant, number, `PN${randomUUID()}`);
+    expect((await advance("number_provisioned")).status).toBe(200);
+
+    // Details: a profile, the tradesperson's name, and a mobile for texts.
+    expect(await refusal("profile_complete")).toMatch(/are all needed/);
+    await admin.query(
+      "INSERT INTO agent_profiles (tenant_id, version, trade_template) VALUES ($1, 1, 'heating_engineer')",
+      [tenant],
+    );
+    await admin.query(
+      "UPDATE tenants SET contact_name = 'Sam', notification_mobile = '+447700900321' WHERE id = $1",
+      [tenant],
+    );
+    expect((await advance("profile_complete")).status).toBe(200);
+
+    // The assistant has picked the details up.
+    expect(await refusal("agent_synced")).toMatch(/hasn't picked up/);
+    await admin.query("UPDATE agent_profiles SET synced_at = now() WHERE tenant_id = $1", [tenant]);
+    expect((await advance("agent_synced")).status).toBe(200);
+
+    // Divert instructions: an admin's say-so, for now.
+    expect((await advance("divert_instructions_sent")).status).toBe(200);
+
+    // The test call.
+    expect(await refusal("test_call_received")).toMatch(/No call has reached/);
+    await admin.query(
+      "INSERT INTO calls (tenant_id, provider_call_id, started_at) VALUES ($1, $2, now())",
+      [tenant, `call_${randomUUID()}`],
+    );
+    expect((await advance("test_call_received")).status).toBe(200);
+
+    // Live: the business is switched on, and there's nowhere further to go.
+    const live = await advance("live");
+    expect(live.status).toBe(200);
+    expect(await live.json()).toMatchObject({ state: "live", next: null });
+    expect((await json<TenantView>(get(`/tenants/${tenant}`, tokens.admin))).status).toBe("live");
+
+    const audit = await admin.query<{ action: string; actor_user_id: string | null }>(
+      "SELECT action, actor_user_id FROM audit_log WHERE tenant_id = $1 ORDER BY created_at",
+      [tenant],
+    );
+    expect(audit.rows.filter((row) => row.action === "onboarding.advanced")).toHaveLength(8);
+    expect(audit.rows.map((row) => row.action)).toContain("pilot.on");
+    expect(audit.rows.every((row) => row.actor_user_id !== null)).toBe(true);
+  });
+
+  it("won't take a demo business live, even with every step done", async () => {
+    const demo = await createTenant(admin, {
+      businessName: "Demo Locks",
+      trade: "locksmith",
+      status: "demo",
+    });
+    const signer = await createUser(admin, {
+      email: `demo-${randomUUID()}@example.com`,
+      role: "owner",
+    });
+    for (const document of ["terms", "dpa", "privacy_notice"]) {
+      await admin.query(
+        "INSERT INTO terms_acceptances (tenant_id, document_type, document_version, accepted_by) VALUES ($1, $2, 'placeholder-1', $3)",
+        [demo, document, signer],
+      );
+    }
+    await admin.query(
+      "INSERT INTO calls (tenant_id, provider_call_id, started_at) VALUES ($1, $2, now())",
+      [demo, `call_${randomUUID()}`],
+    );
+    await admin.query(
+      "UPDATE tenants SET onboarding_state = 'test_call_received', is_pilot = true WHERE id = $1",
+      [demo],
+    );
+    const response = await send(
+      "POST",
+      `/admin/tenants/${demo}/onboarding/advance`,
+      { to: "live" },
+      tokens.admin,
+    );
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      error: "Only a business that's onboarding can go live; this one is demo",
+    });
+    expect((await get(`/admin/tenants/${randomUUID()}/onboarding`, tokens.admin)).status).toBe(404);
   });
 
   it("estimates this month's costs per business, saying what it assumed", async () => {
