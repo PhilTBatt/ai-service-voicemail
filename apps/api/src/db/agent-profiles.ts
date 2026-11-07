@@ -1,22 +1,12 @@
 import type { PgBoss } from "pg-boss";
 import type pg from "pg";
-import { z } from "zod";
-import { tenantProfileSchema } from "../core/profile.ts";
+import { agentProfileInputSchema, type AgentProfileInput } from "@callmate/shared";
 import { enqueueSyncAgent } from "../jobs/sync-agent.ts";
 import { withTenant } from "./tenant.ts";
 
-/** What a tenant (or admin) edits. Everything else on the profile comes from the tenant row. */
-export const agentProfileInputSchema = tenantProfileSchema.pick({
-  trade: true,
-  services: true,
-  serviceAreas: true,
-  openingHours: true,
-  holidayMode: true,
-  holidayUntil: true,
-  faqs: true,
-  emergencyPolicy: true,
-});
-export type AgentProfileInput = z.infer<typeof agentProfileInputSchema>;
+// What a tenant (or admin) edits, and its rules, live in packages/shared/src/profile.ts so the
+// dashboard checks a profile exactly as the API does.
+export { agentProfileInputSchema, type AgentProfileInput };
 
 /**
  * Saves a new profile version and queues its sync. Every save is a new version, so the

@@ -274,3 +274,116 @@ button.link {
 audio {
   width: 100%;
 }
+
+.tabs {
+  display: flex;
+  gap: 1.25rem;
+  border-bottom: 1px solid var(--line);
+  margin: 0.75rem 0 1rem;
+}
+
+.tabs a {
+  padding: 0.5rem 0;
+  color: var(--muted);
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+}
+
+.tabs a.active {
+  color: var(--ink);
+  font-weight: 600;
+  border-bottom-color: var(--accent);
+}
+
+button.secondary {
+  background: var(--surface);
+  color: var(--accent);
+}
+
+.profile textarea,
+.profile input:not([type="checkbox"]),
+.profile select {
+  font: inherit;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  width: 100%;
+  max-width: 32rem;
+}
+
+.profile input[type="time"] {
+  width: auto;
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 0.9rem;
+  margin: 0 0 0.5rem;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.stacked {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin: 0.5rem 0;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.hours-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.hours-row .check {
+  min-width: 9rem;
+}
+
+.times {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.faq {
+  border-top: 1px solid var(--line);
+  padding: 0.5rem 0;
+}
+
+.field-errors {
+  color: var(--emergency);
+  margin: 0.5rem 0 0;
+  padding-left: 1.1rem;
+}
+
+p.field-errors {
+  padding-left: 0;
+}
+
+.notice {
+  border-color: var(--accent);
+}
+
+.notice.ok {
+  border-color: #067647;
+}
+
+.save-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem;
+  margin: 1rem 0 2rem;
+}

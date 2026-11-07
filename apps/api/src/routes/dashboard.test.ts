@@ -420,6 +420,21 @@ describe("profile", () => {
     ).toBe("live");
   });
 
+  it("refuses an FAQ answer with a price in it, so the agent can never read one out", async () => {
+    const response = await send(
+      "PUT",
+      `/tenants/${tenantA}/profile`,
+      {
+        ...PROFILE,
+        faqs: [{ question: "What's the call-out fee?", answer: "It's £60 to come out." }],
+      },
+      tokens.ownerA,
+    );
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { issues: Record<string, string[]> };
+    expect(body.issues.faqs).toEqual(["can't include prices: the assistant never quotes them"]);
+  });
+
   it("rejects an invalid profile field by field", async () => {
     const response = await send(
       "PUT",

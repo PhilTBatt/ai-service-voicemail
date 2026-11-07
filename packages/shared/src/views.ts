@@ -2,6 +2,7 @@
 // (apps/web). Both sides are type-checked against these shapes, so a change on one side that
 // the other doesn't expect fails `npm run typecheck` instead of breaking a page at runtime.
 // Times are ISO 8601 instants in UTC; the dashboard shows them in UK time.
+import type { AgentProfileInput } from "./profile.ts";
 
 export type Role = "owner" | "admin" | "reseller";
 
@@ -78,4 +79,26 @@ export interface CallView extends CallSummaryView {
 export interface SwitchView {
   outcome: "paused" | "resumed" | "unchanged";
   status: string;
+}
+
+/** How the latest saved profile is getting on at the voice platform. */
+export interface SyncView {
+  /** pending: saved, waiting for the worker; live: the agent uses it; error: the sync failed. */
+  state: "pending" | "live" | "error";
+  syncedAt: string | null;
+  /** The voice platform's error, for an admin. A tenant sees a plain message instead. */
+  error: string | null;
+}
+
+/** GET /api/tenants/:id/profile. All null before the first save. */
+export interface ProfileView {
+  profile: AgentProfileInput | null;
+  version: number | null;
+  sync: SyncView | null;
+}
+
+/** PUT /api/tenants/:id/profile */
+export interface SaveProfileView {
+  version: number;
+  sync: SyncView;
 }

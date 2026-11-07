@@ -8,7 +8,10 @@
 import {
   URGENCIES,
   type CallListView,
+  type AgentProfileInput,
   type MeView,
+  type ProfileView,
+  type SaveProfileView,
   type SwitchView,
   type TenantListItem,
   type TenantListView,
@@ -191,7 +194,11 @@ export function dashboardRouter({
           )
         ).rows[0],
     );
-    res.json(row ? presentProfile(row) : { profile: null, version: null, sync: null });
+    res.json(
+      row
+        ? presentProfile(row)
+        : ({ profile: null, version: null, sync: null } satisfies ProfileView),
+    );
   });
 
   tenant.put("/profile", async (req, res) => {
@@ -206,7 +213,10 @@ export function dashboardRouter({
     const version = await saveAgentProfile(pool, boss, tenantId, body.data, {
       userId: principalOf(res).userId,
     });
-    res.json({ version, sync: { state: "pending", syncedAt: null, error: null } });
+    res.json({
+      version,
+      sync: { state: "pending", syncedAt: null, error: null },
+    } satisfies SaveProfileView);
   });
 
   // The on/off switch. Off sends every caller to the fallback voicemail; the same as texting OFF.
@@ -343,8 +353,9 @@ export function dashboardRouter({
   return router;
 }
 
-function presentProfile(row: ProfileRow) {
+function presentProfile(row: ProfileRow): ProfileView {
   return {
+    // Checked against the schema when saved; the editor checks again before saving back.
     profile: {
       trade: row.trade_template,
       services: row.services,
@@ -354,7 +365,7 @@ function presentProfile(row: ProfileRow) {
       holidayUntil: row.holiday_until,
       faqs: row.faqs,
       emergencyPolicy: row.emergency_policy,
-    },
+    } as AgentProfileInput,
     version: row.version,
     sync: {
       state: row.synced_at ? "live" : row.sync_error ? "error" : "pending",

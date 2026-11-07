@@ -6,6 +6,7 @@ import { Show, SignIn, UserButton } from "@clerk/react";
 import { Link, Navigate, Route, Routes } from "react-router";
 import { ApiError, useApi, useLoad } from "./api.ts";
 import { CallPage } from "./pages/CallPage.tsx";
+import { ProfilePage } from "./pages/ProfilePage.tsx";
 import { TenantPage } from "./pages/TenantPage.tsx";
 import { TenantsPage } from "./pages/TenantsPage.tsx";
 import { ErrorNote } from "./ui.tsx";
@@ -45,6 +46,7 @@ function SignedIn() {
           <Routes>
             <Route path="/" element={<Home me={me.data} />} />
             <Route path="/tenants/:tenantId" element={<TenantPage me={me.data} />} />
+            <Route path="/tenants/:tenantId/profile" element={<ProfilePage me={me.data} />} />
             <Route path="/tenants/:tenantId/calls/:callId" element={<CallPage />} />
             <Route path="*" element={<p>There's no page here.</p>} />
           </Routes>

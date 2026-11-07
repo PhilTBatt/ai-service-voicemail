@@ -12,9 +12,10 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router";
 import { asError, useApi, useLoad } from "../api.ts";
 import { callsQuery, NO_FILTERS, type CallFilters } from "../calls-query.ts";
-import { formatDuration, formatPhone, humanise, urgencyLabel } from "../format.ts";
+import { formatDuration, formatPhone, urgencyLabel } from "../format.ts";
+import { TenantHeader } from "../tenant-header.tsx";
 import { formatUkDateTime } from "../time.ts";
-import { ErrorNote, StatusBadge, UrgencyBadge } from "../ui.tsx";
+import { ErrorNote, UrgencyBadge } from "../ui.tsx";
 
 export function TenantPage({ me }: { me: MeView }) {
   const { tenantId = "" } = useParams();
@@ -26,15 +27,7 @@ export function TenantPage({ me }: { me: MeView }) {
 
   return (
     <>
-      {me.role !== "owner" && (
-        <p>
-          <Link to="/">← All businesses</Link>
-        </p>
-      )}
-      <h1>{tenant.data.businessName}</h1>
-      <p className="muted">
-        {humanise(tenant.data.trade)} · <StatusBadge status={tenant.data.status} />
-      </p>
+      <TenantHeader me={me} tenant={tenant.data} />
       <AnsweringSwitch tenant={tenant.data} onChanged={tenant.reload} />
       <Calls tenantId={tenantId} />
     </>

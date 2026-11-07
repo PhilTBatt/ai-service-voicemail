@@ -12,16 +12,8 @@ export const TENANT_STATUSES = [
 
 export type TenantStatus = (typeof TENANT_STATUSES)[number];
 
-// The trades CallMate has templates for (BUILD_PLAN Step 3).
-export const TRADES = [
-  "plumber",
-  "electrician",
-  "heating_engineer",
-  "roofer",
-  "locksmith",
-  "general_builder",
-] as const;
-
-export type Trade = (typeof TRADES)[number];
+export * from "./trades.ts";
 
 export * from "./views.ts";
+export * from "./profile.ts";
+export * from "./guardrail-patterns.ts";
