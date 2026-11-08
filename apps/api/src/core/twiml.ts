@@ -98,7 +98,7 @@ export function serviceEnded(mobile: string | null): string {
   return response.toString();
 }
 
-/** A demo caller who has used today's three calls. */
+/** A demo caller who has used today's calls (routing.ts DEMO_DAILY_CALLS_PER_CALLER). */
 export function demoLimitReached(): string {
   const response = new VoiceResponse();
   response.say(SAY, DEMO_LIMIT_LINE);

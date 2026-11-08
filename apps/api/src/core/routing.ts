@@ -23,8 +23,13 @@ export interface InboundCallContext {
   callerCallsToday: number;
 }
 
-/** Demo tenants: each phone gets this many calls a day (BUILD_PLAN Step 9). */
-export const DEMO_DAILY_CALLS_PER_CALLER = 3;
+/**
+ * Demo tenants: each phone gets this many calls a day. BUILD_PLAN Step 9 said 3; Phil raised
+ * it to 10 (2026-11-08) so Ant and prospects can try several scenarios. It still stops one
+ * caller running up the bill once the number is handed out. The spoken message
+ * (scripts.ts DEMO_LIMIT_LINE) says the number in words: twiml.test.ts keeps them in step.
+ */
+export const DEMO_DAILY_CALLS_PER_CALLER = 10;
 
 export type RouteDecision =
   | { kind: "agent"; providerAgentId: string; variables: Record<string, string> }

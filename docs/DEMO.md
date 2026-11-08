@@ -40,7 +40,7 @@ Show the prospect the text when it arrives. That's the moment it clicks: "this i
 ## The limits, so nothing surprises you
 
 - Demo calls are **cut off at 3 minutes**, without a warning. The real service allows 8.
-- Each phone can make **3 demo calls a day**. After that it hears a short "demo limit reached" message. Use a different phone, or try again tomorrow. Your own mobile, the one the texts go to, is never capped. Callers who withhold their number count as one phone: 3 a day between them. A call counts once it's finished and stored, a minute or two later, so a fourth call made straight after the third can still get through.
+- Each phone can make **10 demo calls a day**. After that it hears a short "demo limit reached" message. Use a different phone, or try again tomorrow. Your own mobile, the one the texts go to, is never capped. Callers who withhold their number count as one phone: 10 a day between them. A call counts once it's finished and stored, a minute or two later, so a call made straight after the tenth can still get through.
 - Calls are recorded and transcribed, and the AI says so at the start. Don't let anyone give real personal details they'd rather not have on a recording. Made-up names and numbers are fine.
 - Recordings are deleted after 30 days.
 

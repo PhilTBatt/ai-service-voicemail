@@ -16,7 +16,7 @@ exports[`TwiML > rejects and hangs up 2`] = `"<?xml version="1.0" encoding="UTF-
 
 exports[`TwiML > replies to a text, or deliberately says nothing 1`] = `"<?xml version="1.0" encoding="UTF-8"?><Response><Message>AnswerMate is ON &amp; answering &lt;calls&gt;.</Message></Response>"`;
 
-exports[`TwiML > tells a demo caller who has used today's calls to try tomorrow 1`] = `"<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="Polly.Amy" language="en-GB">Thanks for trying the demo line. It allows three calls a day from each phone, and you've used yours for today. Please try again tomorrow. Goodbye.</Say><Hangup/></Response>"`;
+exports[`TwiML > tells a demo caller who has used today's calls to try tomorrow 1`] = `"<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="Polly.Amy" language="en-GB">Thanks for trying the demo line. It allows ten calls a day from each phone, and you've used yours for today. Please try again tomorrow. Goodbye.</Say><Hangup/></Response>"`;
 
 exports[`TwiML > tells callers of a cancelled tenant to ring the business mobile, digit by digit 1`] = `"<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="Polly.Amy" language="en-GB">This service has ended. Please call <say-as interpret-as="telephone">07700 900001</say-as>. Goodbye.</Say><Hangup/></Response>"`;
 

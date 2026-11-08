@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { DEMO_DAILY_CALLS_PER_CALLER } from "./routing.ts";
+import { DEMO_LIMIT_LINE } from "./scripts.ts";
 import {
   agentDial,
   demoLimitReached,
@@ -74,8 +76,15 @@ describe("TwiML", () => {
   it("tells a demo caller who has used today's calls to try tomorrow", () => {
     const xml = demoLimitReached();
     expect(xml).toMatchSnapshot();
-    expect(xml).toContain("three calls a day");
+    expect(xml).toContain("ten calls a day");
     expect(xml).toContain("<Hangup/>");
+  });
+
+  it("says the same number of calls a day as the limit the routing applies", () => {
+    // The message spells the number out; this fails if the limit changes and the words don't.
+    const words: Record<number, string> = { 3: "three", 5: "five", 10: "ten", 20: "twenty" };
+    expect(words[DEMO_DAILY_CALLS_PER_CALLER], "add the new limit's word here").toBeDefined();
+    expect(DEMO_LIMIT_LINE).toContain(`${words[DEMO_DAILY_CALLS_PER_CALLER]} calls a day`);
   });
 
   it("rejects and hangs up", () => {
