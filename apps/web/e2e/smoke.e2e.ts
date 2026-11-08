@@ -34,6 +34,25 @@ test("the admin marks a flagged call reviewed, and it leaves the queue", async (
   await expect(page.getByText("Nothing to review.")).toBeVisible();
 });
 
+test("a tradesperson accepts the documents they haven't, and the reminder goes", async ({
+  page,
+}) => {
+  // The seeded business was invited, not signed up, so it has accepted nothing yet.
+  await signIn(page, "owner@example.com");
+  await expect(page.getByText("Please read and accept the current")).toBeVisible();
+  await page.getByRole("link", { name: "Read and accept" }).click();
+  await expect(page.getByRole("heading", { name: "Documents" })).toBeVisible();
+  await expect(page.getByText("Not accepted yet.")).toHaveCount(3);
+
+  const accept = page.getByRole("button", { name: "Accept", exact: true });
+  await expect(accept).toBeDisabled(); // not until the box is ticked
+  await page.getByLabel(/I've read these documents and accept them/).check();
+  await accept.click();
+
+  await expect(page.getByText("Please read and accept the current")).toHaveCount(0);
+  await expect(page.getByText(/^Accepted on /)).toHaveCount(3);
+});
+
 test("a tradesperson goes straight to their calls and opens one", async ({ page }) => {
   await signIn(page, "owner@example.com");
   await expect(page.getByRole("heading", { name: "Fern Lane Plumbing" })).toBeVisible();

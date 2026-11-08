@@ -90,6 +90,17 @@ were made for, and the API refuses tokens from any other.
 
 ## 7. Taking a business from signup to live
 
+### When a legal document changes
+
+The solicitor's documents replacing the placeholders, or any later change:
+
+1. Put the full text where it can be read, and set its `url` in `packages/shared/src/signup.ts`.
+2. Give it a **new** `version` there (never reuse one), and set `approved: true` for the solicitor's text. A version with "placeholder" in it never counts as approved.
+3. Deploy. Every business is then asked on its dashboard to read and accept it (Account tab, "Documents"), and only its owner can. Until it does, a business still onboarding can't go live; its page tells an admin which documents are outstanding.
+4. A live business keeps its service in the meantime (open question 6 in `docs/PROGRESS.md`).
+
+### Step by step
+
 1. Create a signup link (business list) and send it. Their business appears at "Terms accepted".
 2. On its Onboarding tab, tick "Pilot" while billing doesn't exist, and move it on.
 3. Buy its number (Account tab, below), then move on.

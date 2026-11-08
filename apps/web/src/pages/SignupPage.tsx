@@ -260,6 +260,14 @@ function SignupForm({ code, link }: { code: string; link: SignupLinkView }) {
               </label>
               <p className="hint">
                 Version {document.version}. {document.summary}
+                {document.url && (
+                  <>
+                    {" "}
+                    <a href={document.url} target="_blank" rel="noreferrer">
+                      Read the {document.title}
+                    </a>
+                  </>
+                )}
               </p>
             </div>
           );

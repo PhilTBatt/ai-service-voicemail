@@ -5,13 +5,14 @@ import {
   CSV_EXPORT_LABELS,
   notificationSettingsSchema,
   type CancellationView,
+  type DocumentsView,
   type MeView,
   type NotificationSettings,
   type TenantView,
 } from "@callmate/shared";
 import { useState } from "react";
 import { useParams } from "react-router";
-import { asError, useApi, useLoad } from "../api.ts";
+import { ApiError, asError, useApi, useLoad } from "../api.ts";
 import { formatPhone, toUkMobileE164 } from "../format.ts";
 import { NumberSection } from "../number-section.tsx";
 import { TenantHeader } from "../tenant-header.tsx";
@@ -31,9 +32,116 @@ export function SettingsPage({ me }: { me: MeView }) {
       <TenantHeader me={me} tenant={tenant.data} />
       <NumberSection tenant={tenant.data} isAdmin={me.role === "admin"} onBought={tenant.reload} />
       <Notifications key={`n-${tenant.data.id}`} tenant={tenant.data} />
+      <Documents
+        key={`d-${tenant.data.id}`}
+        tenant={tenant.data}
+        canAccept={me.role === "owner"}
+        onAccepted={tenant.reload}
+      />
       <DataDownload tenantId={tenant.data.id} />
       <Cancel tenant={tenant.data} onCancelled={tenant.reload} />
     </>
+  );
+}
+
+/**
+ * The legal documents (BUILD_PLAN Step 11), and accepting any whose current version the
+ * business hasn't: new, or changed since. Only the owner can accept, for their business.
+ */
+function Documents({
+  tenant,
+  canAccept,
+  onAccepted,
+}: {
+  tenant: TenantView;
+  canAccept: boolean;
+  onAccepted: () => void;
+}) {
+  const { api } = useApi();
+  const documents = useLoad(
+    () => api<DocumentsView>(`/tenants/${tenant.id}/documents`),
+    `documents-${tenant.id}`,
+  );
+  const [ticked, setTicked] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+
+  if (documents.status === "loading") return <p className="muted">Loading documents…</p>;
+  if (documents.status === "error") {
+    return <ErrorNote error={documents.error} retry={documents.reload} />;
+  }
+  const outstanding = documents.data.documents.filter((document) => document.needsAccepting);
+
+  const accept = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      // The versions shown here: the API refuses any that changed since this page loaded.
+      await api<DocumentsView>(`/tenants/${tenant.id}/documents/accept`, {
+        method: "POST",
+        body: { versions: Object.fromEntries(outstanding.map((d) => [d.type, d.version])) },
+      });
+      setTicked(false);
+      documents.reload();
+      onAccepted();
+    } catch (caught) {
+      setError(asError(caught));
+      // A newer version arrived: show it, so what's ticked next is what's on screen.
+      if (caught instanceof ApiError && caught.status === 409) documents.reload();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="card" id="documents">
+      <h2>Documents</h2>
+      <ul className="list">
+        {documents.data.documents.map((document) => (
+          <li key={document.type}>
+            <p>
+              <strong>{document.title}</strong>{" "}
+              <span className="muted">version {document.version}</span>
+            </p>
+            <p>{document.summary}</p>
+            {document.url && (
+              <p>
+                <a href={document.url} target="_blank" rel="noreferrer">
+                  Read the {document.title}
+                </a>
+              </p>
+            )}
+            <p className={document.needsAccepting ? "" : "muted"}>
+              {document.needsAccepting
+                ? document.acceptedAt
+                  ? `An earlier version was accepted on ${formatUkDateTime(document.acceptedAt)}: this one needs accepting.`
+                  : "Not accepted yet."
+                : `Accepted on ${formatUkDateTime(document.acceptedAt!)}.`}
+            </p>
+          </li>
+        ))}
+      </ul>
+      {outstanding.length > 0 && canAccept && (
+        <>
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={ticked}
+              onChange={(event) => setTicked(event.target.checked)}
+            />{" "}
+            I've read {outstanding.length === 1 ? "this document" : "these documents"} and accept{" "}
+            {outstanding.length === 1 ? "it" : "them"} for {tenant.businessName}.
+          </label>
+          <button type="button" disabled={!ticked || busy} onClick={() => void accept()}>
+            {busy ? "Saving…" : "Accept"}
+          </button>
+        </>
+      )}
+      {outstanding.length > 0 && !canAccept && (
+        <p className="muted">Only the business's owner can accept these.</p>
+      )}
+      {error && <ErrorNote error={error} />}
+    </section>
   );
 }
 
