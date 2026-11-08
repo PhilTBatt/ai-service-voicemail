@@ -153,7 +153,7 @@ export function twilioRouter({
           twiml = agentDial(sipUri, `${publicBaseUrl}/webhooks/twilio/dial-status`);
         } catch (error) {
           // The platform is unreachable: the caller still hears something.
-          raiseAlert("voice-platform-unreachable", { tenantId, callSid, error });
+          alert("voice-platform-unreachable", { tenantId, callSid, error });
           twiml = voicemail();
         }
         break;

@@ -189,14 +189,18 @@ describe("POST /webhooks/twilio/voice", () => {
     expect(xml).toContain("<Record");
   });
 
-  it("falls back to the voicemail when the voice platform can't register the call", async () => {
-    const { number } = await makeTenant("live");
+  it("falls back to the voicemail when the voice platform can't register the call, and alerts", async () => {
+    const { tenantId, number } = await makeTenant("live");
     const register = voice.registerInboundCall.bind(voice);
     voice.registerInboundCall = () => Promise.reject(new Error("Retell is down"));
     try {
       const response = await post("/webhooks/twilio/voice", call(number));
       expect(response.status).toBe(200);
       expect(await response.text()).toContain("<Record");
+      expect(alert).toHaveBeenCalledWith(
+        "voice-platform-unreachable",
+        expect.objectContaining({ tenantId }),
+      );
     } finally {
       voice.registerInboundCall = register;
     }
