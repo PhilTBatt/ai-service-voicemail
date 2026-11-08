@@ -4,12 +4,14 @@ import type { AddressInfo } from "node:net";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { createApp } from "../app.ts";
 import { parseAllowlist } from "../core/outbound-allowlist.ts";
+import { openingLine } from "../core/scripts.ts";
 import { assignPhoneNumber, createAdminPool, createTenant } from "../db/cross-tenant.ts";
 import { createPool } from "../db/pool.ts";
 import { FakeTelephonyProvider } from "../providers/telephony.fake.ts";
 import { FakeVoiceProvider } from "../providers/voice.fake.ts";
 import { TEST_ADMIN_DATABASE_URL, TEST_DATABASE_URL } from "../testing/databases.ts";
 import { MOBILE_BANDS, bandMobile } from "../testing/drama-mobiles.ts";
+import { AGENT_DROPPED_UNDER_SECONDS } from "./twilio.ts";
 
 // The public URL Twilio signs for, which is not where the test server listens: the route
 // must verify against PUBLIC_BASE_URL, never the request's own host.
@@ -310,6 +312,43 @@ describe("POST /webhooks/twilio/dial-status", () => {
       expect(xml).toContain("<Record");
     },
   );
+
+  // An agent that answered and dropped a few seconds in used to leave the caller hung up on.
+  it.each([
+    ["0", "<Record"],
+    ["3", "<Record"],
+    [String(AGENT_DROPPED_UNDER_SECONDS - 1), "<Record"],
+    [String(AGENT_DROPPED_UNDER_SECONDS), "<Hangup/>"],
+    ["95", "<Hangup/>"],
+  ])("after an answered agent leg of %s seconds, answers %s", async (seconds, expected) => {
+    const xml = await (
+      await post("/webhooks/twilio/dial-status", {
+        CallSid: "CA1",
+        DialCallStatus: "completed",
+        DialCallDuration: seconds,
+        CallStatus: "in-progress",
+      })
+    ).text();
+    expect(xml).toContain(expected);
+  });
+
+  it("treats an unreadable duration as unknown, and hangs up as before", async () => {
+    const xml = await (
+      await post("/webhooks/twilio/dial-status", {
+        CallSid: "CA1",
+        DialCallStatus: "completed",
+        DialCallDuration: "soon",
+      })
+    ).text();
+    expect(xml).toContain("<Hangup/>");
+  });
+
+  it("keeps the threshold under the time the opening takes, so no finished call counts as a drop", () => {
+    // The opening disclosure is spoken whole before anything else. At a brisk three words a
+    // second, a shorter opening would need a lower threshold: this fails to say so.
+    const words = openingLine({ business: "Jo's", tradesperson: "Jo" }).split(/\s+/).length;
+    expect(AGENT_DROPPED_UNDER_SECONDS).toBeLessThan(words / 3);
+  });
 });
 
 describe("POST /webhooks/twilio/voicemail-done", () => {

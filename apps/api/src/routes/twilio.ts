@@ -73,7 +73,17 @@ const voiceWebhookSchema = z.object({
 const dialStatusSchema = z.object({
   CallSid: z.string().min(1),
   DialCallStatus: z.string().optional(),
+  /** "The duration in seconds of the dialed call" (Twilio's <Dial> docs). Unreadable: unknown. */
+  DialCallDuration: z.coerce.number().int().nonnegative().optional().catch(undefined),
+  /** The caller's own leg. Logged only: the <Dial> docs don't say what it holds here. */
+  CallStatus: z.string().optional(),
 });
+
+/**
+ * An answered agent leg shorter than this can't have been a call the agent finished: its
+ * opening disclosure alone takes about ten seconds, and the caller can't talk over it.
+ */
+export const AGENT_DROPPED_UNDER_SECONDS = 8;
 
 const inboundSmsSchema = z.object({
   MessageSid: z.string().min(1),
@@ -218,19 +228,28 @@ export function twilioRouter({
     if (!res.headersSent) res.type("text/xml").send(twiml);
   };
 
-  // After the agent leg ends. A normal end hangs up; anything else means the agent never
-  // answered, so the caller gets the voicemail instead of silence.
+  // After the agent leg ends, Twilio carries on with the caller using what this returns
+  // ("Twilio will continue the initial call after the dialed party hangs up", its <Dial> docs).
+  // A normal end hangs up. An agent that never answered, or answered and dropped before it
+  // could have finished its opening, leaves the caller with the voicemail instead of a dead
+  // line. If the caller had hung up first, nobody hears this (the docs don't say whether
+  // Twilio even asks), so the voicemail is safe either way.
   router.post("/dial-status", verified, (req, res) => {
     const parsed = dialStatusSchema.safeParse(req.body);
     const status = parsed.success ? parsed.data.DialCallStatus : undefined;
+    const seconds = parsed.success ? parsed.data.DialCallDuration : undefined;
     const answered = status === "completed" || status === "answered";
-    if (!answered) {
-      logger.warn("Agent leg did not connect", {
+    const droppedEarly = answered && seconds !== undefined && seconds < AGENT_DROPPED_UNDER_SECONDS;
+    if (!answered || droppedEarly) {
+      logger.warn(droppedEarly ? "Agent leg ended early" : "Agent leg did not connect", {
         callSid: parsed.success ? parsed.data.CallSid : null,
         status,
+        seconds,
+        // What the caller's leg says at this point, to learn from the first live drops.
+        callStatus: parsed.success ? parsed.data.CallStatus : undefined,
       });
     }
-    res.type("text/xml").send(answered ? hangup() : voicemail());
+    res.type("text/xml").send(answered && !droppedEarly ? hangup() : voicemail());
   });
 
   router.post("/voicemail-done", verified, (_req, res) => {
