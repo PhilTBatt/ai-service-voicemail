@@ -10,6 +10,7 @@ import {
 } from "./cross-tenant.ts";
 import { createPool } from "./pool.ts";
 import { TEST_ADMIN_DATABASE_URL, TEST_DATABASE_URL } from "../testing/databases.ts";
+import { MOBILE_BANDS, bandMobile } from "../testing/drama-mobiles.ts";
 import { applySmsCommand } from "./tenant-commands.ts";
 
 const app = createPool(TEST_DATABASE_URL);
@@ -22,7 +23,7 @@ afterAll(async () => {
 const NOW = new Date("2026-07-15T10:00:00Z"); // 11:00 BST
 
 async function makeTenant(status: "live" | "paused" | "suspended" | "onboarding", versions = 2) {
-  const mobile = `+4477009${String(Math.floor(Math.random() * 100000)).padStart(5, "0")}`;
+  const mobile = await bandMobile(admin, MOBILE_BANDS["db/tenant-commands.test.ts"]);
   const tenantId = await createTenant(admin, {
     businessName: "Command Plumbing",
     trade: "plumber",

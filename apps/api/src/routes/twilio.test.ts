@@ -9,6 +9,7 @@ import { createPool } from "../db/pool.ts";
 import { FakeTelephonyProvider } from "../providers/telephony.fake.ts";
 import { FakeVoiceProvider } from "../providers/voice.fake.ts";
 import { TEST_ADMIN_DATABASE_URL, TEST_DATABASE_URL } from "../testing/databases.ts";
+import { MOBILE_BANDS, bandMobile } from "../testing/drama-mobiles.ts";
 
 // The public URL Twilio signs for, which is not where the test server listens: the route
 // must verify against PUBLIC_BASE_URL, never the request's own host.
@@ -86,7 +87,8 @@ async function makeTenant(
   if (status !== "demo" && status !== "onboarding") {
     await admin.query("UPDATE tenants SET status = $2 WHERE id = $1", [tenantId, status]);
   }
-  const number = `+442079460${String(Math.floor(Math.random() * 1000)).padStart(3, "0")}`;
+  // 000-989: 990-999 stay free for fixed numbers (the seed's, for one).
+  const number = `+442079460${String(Math.floor(Math.random() * 990)).padStart(3, "0")}`;
   await admin.query(
     "UPDATE phone_numbers SET status = 'released', released_at = now() WHERE number = $1 AND status = 'active'",
     [number],
@@ -337,7 +339,7 @@ describe("POST /webhooks/twilio/sms", () => {
   /** A tenant whose registered mobile is unique, and allowlisted unless told otherwise. */
   async function makeTexter(status: "live" | "paused" = "live", { allowed = true } = {}) {
     const { tenantId } = await makeTenant(status);
-    const mobile = `+4477009${String(Math.floor(Math.random() * 100000)).padStart(5, "0")}`;
+    const mobile = await bandMobile(admin, MOBILE_BANDS["routes/twilio.test.ts"]);
     await admin.query("UPDATE tenants SET notification_mobile = $2 WHERE id = $1", [
       tenantId,
       mobile,

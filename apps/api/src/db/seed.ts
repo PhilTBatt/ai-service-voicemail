@@ -27,7 +27,9 @@ export const SEED_TENANTS: readonly SeedTenant[] = [
     status: "demo",
     notificationMobile: "+447700900001",
     notificationEmail: "demo@example.com",
-    phoneNumber: "+441632960001", // 01632 960001
+    // 990-999 in each drama range is kept for fixed numbers: tests pick theirs at random from
+    // 000-989, so none can take a seed number while the seed test is looking it up.
+    phoneNumber: "+441632960992", // 01632 960992
     providerSid: "PN_SEED_ANTS_PLUMBING",
   },
   {
@@ -38,7 +40,7 @@ export const SEED_TENANTS: readonly SeedTenant[] = [
     status: "onboarding",
     notificationMobile: "+447700900002",
     notificationEmail: "test-electrics@example.com",
-    phoneNumber: "+442079460002", // 020 7946 0002
+    phoneNumber: "+442079460992", // 020 7946 0992
     providerSid: "PN_SEED_TEST_ELECTRICS",
   },
 ];
