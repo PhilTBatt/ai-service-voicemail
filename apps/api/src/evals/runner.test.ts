@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { URGENCY_RULES } from "../core/extraction.ts";
 import { FakeLlmProvider } from "../providers/llm.fake.ts";
 import { sampleAgentDefinition } from "../testing/agent-fixture.ts";
+import { evalAgents } from "./businesses.ts";
 import { buildJudgePrompt } from "./judge.ts";
 import { parsePersona } from "./persona.ts";
 import { renderReport } from "./report.ts";
@@ -65,8 +67,7 @@ describe("runEvals", () => {
       .willReturn({ pass: true, reason: "nothing to contradict" });
 
     const report = await runEvals({
-      definition,
-      context,
+      agentFor: () => ({ definition, context }),
       personas: [tap, silent],
       llm,
       capPence: 100,
@@ -104,7 +105,12 @@ describe("runEvals", () => {
         pass: false,
         reason: "The summary says kitchen; the caller never said which tap.",
       });
-    const report = await runEvals({ definition, context, personas: [tap], llm, capPence: 100 });
+    const report = await runEvals({
+      agentFor: () => ({ definition, context }),
+      personas: [tap],
+      llm,
+      capPence: 100,
+    });
     expect(report.failed).toBe(1);
     expect(report.results[0]!.verdicts.filter((v) => !v.pass).map((v) => v.check)).toEqual([
       "no prices",
@@ -119,8 +125,7 @@ describe("runEvals", () => {
     // A real model's prices with a 0p cap: the first call tips it over.
     const pricey = Object.assign(llm, { model: "claude-sonnet-5-5" });
     const report = await runEvals({
-      definition,
-      context,
+      agentFor: () => ({ definition, context }),
       personas: [tap, silent],
       llm: pricey,
       capPence: 0,
@@ -145,8 +150,7 @@ describe("runEvals", () => {
       })
       .willReturn({ pass: true, reason: "ok" });
     const report = await runEvals({
-      definition,
-      context,
+      agentFor: () => ({ definition, context }),
       personas: [tap, silent],
       llm,
       capPence: 100,
@@ -162,8 +166,7 @@ describe("runEvals", () => {
       .willReturn({ trigger: "none", reply: "Thanks.", done: true })
       .willReturn(EXTRACTION);
     const report = await runEvals({
-      definition,
-      context,
+      agentFor: () => ({ definition, context }),
       personas: [tap],
       llm,
       capPence: 100,
@@ -189,5 +192,26 @@ describe("buildJudgePrompt", () => {
     expect(user).toContain("Caller: [silence]");
     expect(user).toContain("Name: Sam");
     expect(user).toContain("Flags: none");
+  });
+
+  // The eval run of 2026-11-07 failed a calmly mentioned gas smell's "emergency" as unsupported.
+  it("judges the urgency by the extraction's own rules, not by how worried the caller sounded", () => {
+    const { system } = buildJudgePrompt([], { ...EXTRACTION, urgency: "emergency" });
+    expect(system).toContain(URGENCY_RULES);
+    expect(system).toContain("not by how worried the caller sounded");
+  });
+});
+
+describe("runEvals with several trades", () => {
+  it("puts each persona through the agent for its own trade", async () => {
+    const roofing = { ...tap, id: "roof", trade: "roofer" as const };
+    const llm = new FakeLlmProvider()
+      .willReturn({ trigger: "none", reply: "Thanks.", done: true })
+      .willReturn(EXTRACTION);
+    const agentFor = evalAgents();
+    await runEvals({ agentFor, personas: [roofing], llm, capPence: 100, judge: false });
+    // The agent model was given the roofer's prompt, and the extraction the roofer's name.
+    expect(llm.requests[0]!.system).toContain("You are the AI phone assistant for Test Roofing");
+    expect(llm.requests[1]!.system).toContain("on behalf of Test Roofing");
   });
 });

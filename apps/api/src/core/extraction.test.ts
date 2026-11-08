@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildExtractionPrompt, callExtractionSchema } from "./extraction.ts";
+import { URGENCY_RULES, buildExtractionPrompt, callExtractionSchema } from "./extraction.ts";
 
 const VALID = {
   callerName: "Sam",
@@ -45,8 +45,47 @@ describe("buildExtractionPrompt", () => {
     );
     expect(system).toContain("Ant's Plumbing");
     expect(system).toContain("Never guess a name, number or postcode");
-    expect(system).toContain('"emergency" if there was any mention of gas');
+    expect(system).toContain(URGENCY_RULES);
     expect(user).toBe("Transcript:\n\nAssistant: Hi there.\nCaller: Hello.");
+  });
+
+  // The eval run of 2026-11-07: "water pouring through my kitchen ceiling" came out urgent, and
+  // a dripping tap whose caller wanted a call today came out urgent too.
+  it("names every emergency the scripts cover, and judges urgency by the problem, not the request", () => {
+    for (const emergency of [
+      "a gas smell",
+      "a suspected gas leak",
+      "a CO alarm",
+      "a burning smell",
+      "an electric shock",
+      "exposed live wires",
+      "water pouring through a ceiling",
+      "a ceiling, wall or roof coming down",
+      "danger to a person",
+    ]) {
+      expect(URGENCY_RULES).toContain(emergency);
+    }
+    expect(URGENCY_RULES).toContain("Even when the caller plays it down");
+    expect(URGENCY_RULES).toContain("judge the problem, not the request");
+  });
+
+  it("tells the model nothing was booked, so a requested time isn't written up as agreed", () => {
+    const { system } = buildExtractionPrompt([], { businessName: "B", tradespersonName: "Ant" });
+    expect(system).toContain("Nothing is ever booked on these calls");
+    expect(system).toContain("never write a day, time or date as settled");
+  });
+
+  // The eval run of 2026-11-08 lost two postcodes spelled out as "X Q, one three, one N P".
+  it("keeps a spelled-out postcode, and one in an area the model doesn't recognise", () => {
+    const { system } = buildExtractionPrompt([], { businessName: "B", tradespersonName: "Ant" });
+    expect(system).toContain("spelled out letter by letter");
+    expect(system).toContain("Write it even if you don't recognise the area");
+  });
+
+  it("calls a silent call 'other', so the judge and the extraction agree", () => {
+    expect(URGENCY_RULES).toContain(
+      '"other" if the call wasn\'t about a job at all, or the caller said nothing',
+    );
   });
 });
 

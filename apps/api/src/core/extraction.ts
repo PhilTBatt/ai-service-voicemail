@@ -22,6 +22,17 @@ export type CallExtraction = z.infer<typeof callExtractionSchema>;
 /** Stored when extraction fails for good (invalid output twice); the transcript is still there. */
 export const EXTRACTION_FAILED_SUMMARY = "Couldn't summarise, see the transcript";
 
+/**
+ * How a call's urgency is decided: by the problem, never by how calm or pushy the caller is.
+ * Shared with the eval judge (evals/judge.ts), which marked a deliberate "emergency" for a
+ * calmly mentioned gas smell as unsupported when it didn't know these rules (2026-11-07).
+ */
+export const URGENCY_RULES = `- "emergency" if there was any mention of a gas smell or a suspected gas leak, carbon monoxide or a CO alarm, fire, smoke, sparks, a burning smell, an electric shock, exposed live wires, water that can't be stopped (a burst pipe, flooding, water pouring through a ceiling), a ceiling, wall or roof coming down, or danger to a person. Even when the caller plays it down: over-trigger on purpose.
+- "urgent" if the problem can't wait: no heating, hot water, water or power at all (one cold radiator or one dead socket isn't that), water getting in that isn't pouring, someone locked out, or a property that can't be secured.
+- "routine" for any other job. A caller wanting someone soon, today or at a set time doesn't make a job urgent on its own: judge the problem, not the request.
+- "spam" for sales calls, robocalls or wrong numbers.
+- "other" if the call wasn't about a job at all, or the caller said nothing.`;
+
 export interface ExtractionContext {
   businessName: string;
   tradespersonName: string;
@@ -42,9 +53,10 @@ Rules:
       ? ` The caller rang from ${callerNumber}: if they agreed to be called back on the number they're calling from and gave no other, callbackNumber is ${callerNumber}.`
       : ""
   }
-- postcode: as given, upper case, with the usual space (for example "LS1 4AP"). Null if not given.
-- jobSummary: what the job is and anything essential, in at most two short lines, written for ${tradespersonName}. No greetings, no padding.
-- urgency: "emergency" if there was any mention of gas, carbon monoxide, fire, smoke, sparks, flooding or danger to a person; "urgent" if the caller needs someone today or has no heating, water or power; "routine" otherwise; "spam" for sales calls, robocalls or wrong numbers; "other" if the call wasn't about a job at all.
+- postcode: as given, upper case, with the usual space (for example "LS1 4AP"). A postcode spelled out letter by letter ("L S one, four A P") counts as given: put it together. Write it even if you don't recognise the area. Null only if it wasn't given or was cut off.
+- jobSummary: what the job is and anything essential, in at most two short lines, written for ${tradespersonName}. No greetings, no padding. Nothing is ever booked on these calls: if the caller asked for a day or time, write it as their request ("asked if someone could come tomorrow at 9"), and never write a day, time or date as settled.
+- urgency, one of:
+${URGENCY_RULES}
 - priceAsked: true if the caller asked about cost or a quote at any point.
 - flags: short notes ${tradespersonName} should see, such as "mentioned gas smell", "existing customer chasing a job", "caller abusive", "call cut off". Empty if nothing stands out.`;
 

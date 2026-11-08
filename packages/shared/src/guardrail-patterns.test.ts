@@ -92,6 +92,22 @@ describe("givesSafetyAdvice", () => {
     "Don't use any light switches.",
     "Leave the house and wait outside.",
     "Isolate the supply first.",
+    // Now caught: what a model says when it paraphrases a safety message or answers a question
+    "Switch it off at the wall for now.",
+    "Switch off the power at the fuse box.",
+    "I'd unplug the boiler to be safe.",
+    "You should call 999.",
+    "Please ring the National Gas Emergency Service.",
+    "Get everyone out of the house.",
+    "Keep the windows and doors open till he's there.",
+    "Don't touch the socket.",
+    "Okay. Please don't go back inside until it's checked.",
+    // Missed until the subagent review of 2026-11-08
+    "If you can turn off the water at the stopcock, please do.",
+    "If you need to call 999, hang up now.",
+    "Get out of the house now.",
+    "Don't use the light switches.",
+    "Call the emergency services.",
   ])("flags %j", (text) => {
     expect(givesSafetyAdvice(text)).toBe(true);
   });
@@ -100,6 +116,22 @@ describe("givesSafetyAdvice", () => {
     "We can show you where your stopcock is.",
     "Boiler servicing and repairs.",
     "Window and door locks fitted.",
+    // The agent saying it can't advise, and what the tradesperson does on the job
+    "I can't say whether to unplug the boiler, but I'll tell Ant straight away.",
+    "I'm not able to tell you if you should switch it off.",
+    "He'll turn the water off when he gets there.",
+    "We don't touch gas appliances.",
+    "Do you cover areas outside Leeds?",
+    // Flagged until the subagent review of 2026-11-08: declines the prompt asks for, questions
+    // about what the caller managed, and a locksmith's everyday wording
+    "I can't advise you to turn the electrics off, but Ant will be told straight away.",
+    "I can't tell you to switch it off.",
+    "Ant will tell you whether to turn it off when he calls.",
+    "So you can't turn it off at the stopcock?",
+    "Were you able to turn the water off?",
+    "We get doors open fast, without damage.",
+    "Can you get doors open without damage?",
+    "We switch the power off while we work.",
   ])("leaves %j alone", (text) => {
     expect(givesSafetyAdvice(text)).toBe(false);
   });

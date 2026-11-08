@@ -1,6 +1,7 @@
-// The two things the agent must never do (CLAUDE.md): quote prices and commit to times. One
-// list, used twice: the API scans what the agent said after each call (core/guardrails.ts),
-// and the profile editor refuses tenant-written text the agent would read out (profile.ts).
+// The things the agent must never do (CLAUDE.md): quote prices, commit to times, and give safety
+// advice beyond the approved scripts. One list each, used twice: the API scans what the agent
+// said after each call (core/guardrails.ts), and the profile editor refuses tenant-written text
+// the agent would read out (profile.ts).
 // The scan only queues a call for review, so it errs towards flagging; the editor shares the
 // lists, so they stay clear of everyday wording ("free quotes", "24 hours a day", "he'll
 // call you back as soon as he can") and of the agent's own deflections ("I can't book you in").
@@ -66,18 +67,49 @@ export const COMMITMENT_PATTERNS: RegExp[] = [
   /\bexpect (?:a|his|her|their) call\b[^.]{0,30}\b(?:within|in|by|today|tomorrow|this)\b/i,
 ];
 
+const SUPPLY = "(?:gas|water|electrics?|electricity|power|supply|mains|meter|boiler|socket)";
+// Not advice, though the words are there. Each ends where the advice verb starts.
+/** The agent declining: "I can't advise you to turn it off", "I can't say whether to unplug it". */
+const DECLINED =
+  "(?:can't|cannot|can not|not able to|unable to|won't)\\s+(?:say|tell(?:\\s+you)?|advise(?:\\s+(?:you|on))?|recommend|confirm)\\s+(?:(?:whether|if)\\s+(?:(?:you\\s+should|you\\s+need\\s+to|it's\\s+safe\\s+to|to)\\s+)?|to\\s+)?";
+/** The agent deferring: "Ant will tell you whether to turn it off". */
+const DEFERRED =
+  "(?:will|'ll)\\s+(?:advise(?:\\s+you)?|tell\\s+you|say|let\\s+you\\s+know)\\s+(?:whether|if)\\s+(?:(?:you\\s+should|to)\\s+)?";
+/** A question about what the caller managed: "were you able to turn the water off?" */
+const ASKED = "(?:(?:able|managed)\\s+to|did\\s+you|(?:you|they)\\s+(?:can't|cannot|couldn't))\\s+";
+/** What the tradesperson does on the job: "he'll turn the water off", "we switch the power off". */
+const THE_TRADE_DOES = "(?:we|he|she|they)(?:'ll|\\s+will|\\s+can|\\s+may|\\s+would)?\\s+";
+const NOT_ADVICE = `(?<!\\b(?:${DECLINED}|${DEFERRED}|${ASKED}|${THE_TRADE_DOES}))`;
+
 /**
  * Safety advice: the agent gives only Appendix A's messages, word for word, so a profile may
- * not add its own ("turn the gas off at the meter", "open the windows").
+ * not add its own ("turn the gas off at the meter", "open the windows"), and after a call the
+ * agent's own words are checked for it (core/guardrails.ts, which allows the scripts
+ * themselves). "If you can turn the water off, please do" is advice; "I can't advise you to
+ * turn it off" isn't.
  */
 export const SAFETY_ADVICE_PATTERNS: RegExp[] = [
-  /\bturn (?:it|them|the (?:gas|water|electrics?|electricity|power|supply|mains|meter)|your (?:gas|water|electrics?|power|supply|mains|stopcock|meter))(?: supply)? off\b/i,
-  /\bturn off (?:the |your )?(?:gas|water|electrics?|electricity|power|supply|mains|stopcock|meter)\b/i,
-  /\bopen (?:the |all |your |some )?(?:doors|windows)\b/i,
-  /\b(?:don't|do not|never) (?:use|touch|press|flick) (?:any )?(?:light |electrical )?switch(?:es)?\b/i,
-  /\b(?:evacuate|leave the (?:house|property|building|premises))\b/i,
-  /\bisolate (?:the |your )?(?:supply|power|water|gas|circuit|mains)\b/i,
-];
+  `\\bturn (?:it|them|the ${SUPPLY}|your (?:${SUPPLY}|stopcock))(?: supply)? off\\b`,
+  `\\bturn off (?:the |your )?(?:${SUPPLY}|stopcock)\\b`,
+  `\\bswitch (?:it|them|everything|the ${SUPPLY}|your ${SUPPLY})(?: supply)? off\\b`,
+  `\\bswitch off (?:the |your )?${SUPPLY}\\b`,
+  "\\bunplug (?:it|them|everything|the (?:boiler|appliance|heater|socket))\\b",
+  "\\bopen (?:the |all |your |some )?(?:doors|windows)\\b",
+  // Not "get": a locksmith gets doors open for a living.
+  "\\b(?:keep|leave) (?:the |all |your |some )?(?:doors|windows)(?: and (?:the )?(?:doors|windows))? open\\b",
+  "\\b(?:don't|do not|never) (?:use|touch|press|flick) (?:any |the |your )?(?:light |electrical )?switch(?:es)?\\b",
+  // Only as an instruction: "Don't touch it", "Get out now", not "we don't touch gas work".
+  "(?:^|[.!?,;]\\s+|\\bplease\\s+)(?:(?:don't|do not) (?:touch|go near|go back in(?:side|to)?)|get out)\\b",
+  "\\b(?:evacuate|leave the (?:house|property|building|premises))\\b",
+  "\\bget (?:everyone|everybody|yourself|your family|the (?:kids|children)) out\\b",
+  "\\bisolate (?:the |your )?(?:supply|power|water|gas|circuit|mains)\\b",
+  // The scripts' own numbers, said in the agent's words. The gas emergency numbers are
+  // apps/api's GAS_EMERGENCY_NUMBER; core/guardrails.test.ts checks each one is caught.
+  "\\b(?:call|ring|dial|phone) (?:999|112)\\b",
+  "\\b(?:call|ring|phone|contact) (?:the )?(?:national )?gas emergency\\b",
+  "\\b0800\\s?(?:111\\s?999|002\\s?001)\\b",
+  "\\b(?:call|ring|dial|phone|contact) (?:the )?(?:emergency services|fire (?:brigade|service)|police|ambulance)\\b",
+].map((source) => new RegExp(`${NOT_ADVICE}${source}`, "i"));
 
 /** True when the text names a price, a rate, or "free of charge". */
 export function mentionsPrice(text: string): boolean {

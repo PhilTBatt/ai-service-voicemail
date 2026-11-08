@@ -14,9 +14,15 @@ import { judgeSummary, type JudgeVerdict } from "./judge.ts";
 import type { Persona } from "./persona.ts";
 import { simulateCall, type SimulationResult } from "./simulate.ts";
 
-export interface EvalRunOptions {
+/** The agent a persona rings, and what the extraction is told about that business. */
+export interface EvalAgent {
   definition: AgentDefinition;
   context: ExtractionContext;
+}
+
+export interface EvalRunOptions {
+  /** Each persona rings a business of its own trade (persona.trade). */
+  agentFor: (persona: Persona) => EvalAgent;
   personas: Persona[];
   llm: LlmProvider;
   capPence: number;
@@ -63,8 +69,7 @@ function toE164(ukNumber: string): string {
 }
 
 export async function runEvals({
-  definition,
-  context,
+  agentFor,
   personas,
   llm,
   capPence,
@@ -137,6 +142,7 @@ export async function runEvals({
   };
 
   async function runPersona(persona: Persona): Promise<PersonaResult> {
+    const { definition, context } = agentFor(persona);
     const simulation = await simulateCall({ llm, meter }, definition, persona);
 
     // The same extraction prompt and schema the pipeline uses, so the eval tests them too.

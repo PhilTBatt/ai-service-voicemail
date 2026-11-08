@@ -26,6 +26,7 @@ That spends Retell credit and takes a few minutes.
 id: gas-smell # lower-case words and dashes; the filename should match
 name: Gas smell
 description: The caller can smell gas in the kitchen.
+trade: plumber # the business rung; plumber (the demo tenant) unless given
 caller:
   brief: > # the role-play brief for the model playing the caller
     You can smell gas near the boiler. You're worried but calm...
@@ -48,15 +49,19 @@ expect:
     callbackNumber: "+447700900101"
     postcode: XQ12 3JL
   flagsInclude: [gas] # substrings expected among the extraction's flags
-  ending: close # close | caller | silence | any
+  ending: close # close | caller | silence | any, or a list such as [close, caller]
   maxTurns: 18 # agent and caller turns combined
 ```
 
-Every file is validated when loaded, and `apps/api/src/evals/persona.test.ts` checks that the fourteen personas the plan requires exist and use fictional details.
+Every file is validated when loaded, and `apps/api/src/evals/persona.test.ts` checks that the fourteen personas the plan requires exist, that every trade and the out-of-hours and holiday wording are rung at least once, and that the details are fictional.
+
+A persona for another trade rings a stand-in business built from that trade's template (`apps/api/src/evals/businesses.ts`: Test Electrics, Test Heating, Test Roofing, Test Locks, Test Builders). The live Retell batch runs only the plumber's personas, because the synced demo agent is a plumber.
 
 ## What gets checked
 
-For every persona: the disclosure comes first, the expected scripts appear verbatim as whole turns, no prices or commitments in the agent's words (the guardrail scanner plus a money pattern), the extraction matches the expectations, the call ends the expected way within the turn limit, and the judge finds nothing in the summary that the transcript doesn't support.
+For every persona: the disclosure comes first, the expected scripts appear verbatim as whole turns, no prices, commitments or safety advice in the agent's own words (the guardrail scanner plus a money pattern; script words count as the agent's own anywhere but in the script's own turn), the agent answers every caller turn (no dead air), no safety message plays more than twice (once more if it's played down or things get worse) and the water message only once, the extraction matches the expectations, the call ends the expected way within the turn limit, and the judge finds nothing in the summary that the transcript doesn't support. The judge is given the extraction's urgency rules, so a deliberately cautious "emergency" isn't marked as unsupported.
+
+The Retell batch run applies the same never-do and conversation checks when it can read the transcript turn by turn, and fails a "transcript read turn by turn" check when it can't, rather than skipping them silently.
 
 ## Limits
 

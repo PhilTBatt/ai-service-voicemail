@@ -7,10 +7,9 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { loadConfig } from "../config.ts";
-import { buildAgentDefinition } from "../core/prompt-builder.ts";
+import { DEMO_TRADE, evalAgents } from "../evals/businesses.ts";
 import { loadPersonas, PERSONAS_DIR } from "../evals/persona.ts";
 import { RetellBatchTests, TEST_CASE_PREFIX, checkRetellRun } from "../evals/retell-batch.ts";
-import { sampleProfile } from "../testing/profile-fixture.ts";
 
 const { values } = parseArgs({
   options: {
@@ -30,9 +29,24 @@ if (!values.agent) {
   process.exit(2);
 }
 
+// The synced demo agent is the plumber: personas that ring another trade's business can only
+// run in the local simulation (npm run evals).
 const all = loadPersonas();
-const selected = values.persona?.length ? all.filter((p) => values.persona!.includes(p.id)) : all;
-const definition = buildAgentDefinition(sampleProfile({ isDemo: false }));
+const otherTrades = all.filter((p) => p.trade !== DEMO_TRADE).map((p) => p.id);
+const demoPersonas = all.filter((p) => p.trade === DEMO_TRADE);
+const selected = values.persona?.length
+  ? demoPersonas.filter((p) => values.persona!.includes(p.id))
+  : demoPersonas;
+if (selected.length === 0) {
+  console.error(
+    `No demo-trade personas matched. Known: ${demoPersonas.map((p) => p.id).join(", ")}`,
+  );
+  process.exit(2);
+}
+if (otherTrades.length > 0) {
+  console.log(`Left out (another trade's business, local evals only): ${otherTrades.join(", ")}`);
+}
+const { definition } = evalAgents()({ trade: DEMO_TRADE });
 const client = new RetellBatchTests({ apiKey: config.retellApiKey });
 
 const flowId = await client.flowIdForAgent(values.agent);

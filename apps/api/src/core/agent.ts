@@ -5,9 +5,19 @@
 /** A message spoken exactly as written, which the caller can't talk over. */
 export interface FixedScript {
   id: "gas_emergency" | "danger" | "water_leak" | "are_you_ai";
-  /** When to speak it, in plain language for the model. Over-trigger on purpose. */
+  /**
+   * When to speak it, in plain language for the model. Over-trigger on purpose, but on news
+   * (a first mention, something worse, a warning played down), not on every turn that still
+   * mentions the hazard: the condition is checked after each thing the caller says.
+   */
   trigger: string;
   text: string;
+  /**
+   * Spoken at most once a call, whatever the model makes of the trigger: for a message that
+   * says nothing new the second time. The eval run of 2026-11-08 heard the water message three
+   * times in a call whose caller had said they couldn't find the stopcock.
+   */
+  oncePerCall?: boolean;
 }
 
 export interface AgentLimits {
@@ -36,6 +46,11 @@ export interface AgentDefinition {
   scripts: FixedScript[];
   /** Spoken exactly, then the call ends. */
   close: string;
+  /**
+   * When to move to the close, in plain language for the model: one wording for the platform's
+   * flow and the eval simulation alike.
+   */
+  closeWhen: string;
   /**
    * Values our server supplies for each call (whether the business is open right now, and
    * so on). The instructions refer to them as {{name}}.

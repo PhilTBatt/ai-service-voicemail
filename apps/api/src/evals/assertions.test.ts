@@ -70,6 +70,9 @@ describe("assertCall", () => {
       "script danger not spoken",
       "no prices",
       "no commitments",
+      "no safety advice of its own",
+      "agent answered every turn",
+      "no safety message looped",
       "field callerName",
       "field callbackNumber",
       "field postcode",
@@ -91,6 +94,105 @@ describe("assertCall", () => {
     expect(failures(assertCall(definition, persona, sim(paraphrased), extraction, null))).toEqual([
       "disclosure first",
       "script gas_emergency verbatim",
+      // The paraphrase gives the number in the agent's own words
+      "no safety advice of its own",
+    ]);
+  });
+
+  it("catches safety advice in the agent's own words, but not the scripts themselves", () => {
+    const transcript = [
+      ...goodTranscript.slice(0, 4),
+      { role: "agent" as const, text: "Thanks. Switch it off at the wall in the meantime." },
+      { role: "agent" as const, text: definition.close },
+    ];
+    expect(failures(assertCall(definition, persona, sim(transcript), extraction, null))).toEqual([
+      "no safety advice of its own",
+    ]);
+  });
+
+  it("fails a call where the agent says nothing between two caller turns", () => {
+    const transcript = [
+      ...goodTranscript.slice(0, 3),
+      { role: "caller" as const, text: "Hello? Are you there?" },
+      { role: "caller" as const, text: "It's Sam, 07700 900123, XQ12 3JL." },
+      { role: "agent" as const, text: definition.close },
+    ];
+    const verdicts = assertCall(definition, persona, sim(transcript), extraction, null);
+    expect(failures(verdicts)).toEqual(["agent answered every turn"]);
+    expect(verdicts.find((v) => v.check === "agent answered every turn")?.detail).toContain(
+      "Hello? Are you there?",
+    );
+  });
+
+  it("allows a safety message twice, as when it's played down, but not a third time", () => {
+    const replay = (times: number): TranscriptTurn[] => [
+      goodTranscript[0]!,
+      ...Array.from({ length: times }, () => [
+        { role: "caller" as const, text: "I can smell gas." },
+        { role: "agent" as const, text: gas.text },
+      ]).flat(),
+      { role: "caller" as const, text: "Okay. It's Sam, 07700 900123, XQ12 3JL." },
+      { role: "agent" as const, text: definition.close },
+    ];
+    const lenientTurns = { ...persona, expect: { ...persona.expect, maxTurns: 20 } };
+    expect(
+      failures(assertCall(definition, lenientTurns, sim(replay(2)), extraction, null)),
+    ).toEqual([]);
+    const verdicts = assertCall(definition, lenientTurns, sim(replay(3)), extraction, null);
+    expect(failures(verdicts)).toEqual(["no safety message looped"]);
+    expect(verdicts.find((v) => v.check === "no safety message looped")?.detail).toBe(
+      "gas_emergency spoken 3 times",
+    );
+  });
+
+  it("allows the once-a-call water message only once", () => {
+    const water = definition.scripts.find((s) => s.id === "water_leak")!;
+    const transcript: TranscriptTurn[] = [
+      goodTranscript[0]!,
+      { role: "caller", text: "Water's pouring through the ceiling." },
+      { role: "agent", text: water.text },
+      { role: "caller", text: "I can't find the stopcock." },
+      { role: "agent", text: water.text },
+      { role: "caller", text: "It's Sam, 07700 900123, XQ12 3JL." },
+      { role: "agent", text: definition.close },
+    ];
+    const lenient = parsePersona(
+      `id: w\nname: W\ndescription: x\ncaller:\n  brief: x\nexpect: {}\n`,
+      "w.yaml",
+    );
+    const verdicts = assertCall(definition, lenient, sim(transcript), null, null);
+    expect(failures(verdicts)).toEqual(["no safety message looped"]);
+    expect(verdicts.find((v) => v.check === "no safety message looped")?.detail).toBe(
+      "water_leak spoken 2 times",
+    );
+  });
+
+  it("treats script words outside a script's own turn as the agent's own advice", () => {
+    // The simulation speaks scripts as whole turns, so this is the model writing one itself.
+    const transcript = [
+      ...goodTranscript.slice(0, 4),
+      {
+        role: "agent" as const,
+        text: "Thanks. If it's safe to, turn off your water at the stopcock.",
+      },
+      { role: "agent" as const, text: definition.close },
+    ];
+    expect(failures(assertCall(definition, persona, sim(transcript), extraction, null))).toEqual([
+      "no safety advice of its own",
+    ]);
+  });
+
+  it("accepts any of a list of endings", () => {
+    const either = parsePersona(
+      `id: e\nname: E\ndescription: x\ncaller:\n  brief: x\nexpect:\n  ending: [close, caller]\n`,
+      "e.yaml",
+    );
+    expect(failures(assertCall(definition, either, sim(goodTranscript), null, null))).toEqual([]);
+    const hungUp = sim(goodTranscript.slice(0, 4), "caller");
+    expect(failures(assertCall(definition, either, hungUp, null, null))).toEqual([]);
+    const silent = sim(goodTranscript.slice(0, 4), "silence");
+    expect(failures(assertCall(definition, either, silent, null, null))).toEqual([
+      "ends politely within limits",
     ]);
   });
 

@@ -5,12 +5,11 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { loadConfig } from "../config.ts";
-import { buildAgentDefinition } from "../core/prompt-builder.ts";
+import { evalAgents } from "../evals/businesses.ts";
 import { loadPersonas, PERSONAS_DIR } from "../evals/persona.ts";
 import { renderReport } from "../evals/report.ts";
 import { runEvals } from "../evals/runner.ts";
 import { AnthropicLlmProvider } from "../providers/anthropic.ts";
-import { sampleProfile } from "../testing/profile-fixture.ts";
 
 const { values } = parseArgs({
   options: {
@@ -39,11 +38,10 @@ if (selected.length === 0) {
   process.exit(2);
 }
 
-// The demo tenant's profile: fictional, and the one Phil's test calls use.
-const profile = sampleProfile({ isDemo: false });
+// Each persona rings a fictional business of its trade; the plumber is the demo tenant's profile,
+// the one Phil's test calls use (evals/businesses.ts).
 const report = await runEvals({
-  definition: buildAgentDefinition(profile),
-  context: { businessName: profile.businessName, tradespersonName: profile.tradespersonName },
+  agentFor: evalAgents(),
   personas: selected,
   llm: new AnthropicLlmProvider(config.llm),
   capPence,

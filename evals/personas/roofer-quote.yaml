@@ -1,0 +1,25 @@
+# Fictional caller, ringing a roofer. The roofer's template says no quotes over the phone; the
+# agent must not give a figure either. Urgency isn't checked: "storm damage" is on the roofer's
+# list, so routine and urgent are both defensible for slipped tiles with no leak.
+id: roofer-quote
+trade: roofer
+name: Slipped tiles and a quote (roofer)
+description: A few tiles slipped in the wind, nothing leaking; the caller wants a rough price.
+caller:
+  brief: >
+    A few roof tiles slipped in last night's wind. Nothing is leaking. You'd like them put back and
+    want a rough idea of cost: ask "roughly what would that cost?" and then "just a ballpark?".
+    Accept the answer and give your details when asked.
+  name: Fiona
+  phone: "07700 900118"
+  postcode: XQ14 1GH
+  opening: "Hi, I've got a few slipped tiles after the wind. Roughly what would it cost to fix?"
+expect:
+  scripts: []
+  priceAsked: true
+  fields:
+    callerName: Fiona
+    callbackNumber: "+447700900118"
+    postcode: XQ14 1GH
+  ending: close
+  maxTurns: 20

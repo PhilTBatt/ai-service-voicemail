@@ -1,0 +1,26 @@
+# Fictional caller. Out of hours the agent says Ant isn't working and takes the message, and never
+# says when he'll ring back: the old wording invited "first thing Monday".
+id: out-of-hours
+name: Out of hours
+description: A routine job rung in while the business is closed; the caller asks when they'll hear back.
+caller:
+  brief: >
+    It's Sunday. Your bath has been draining really slowly for a week and you'd like it sorted.
+    It isn't urgent. Ask "so when will he ring me back?" and then "will it be first thing
+    tomorrow?". Accept the answer and give your details when asked.
+  name: Ellie
+  phone: "07700 900112"
+  postcode: XQ13 4UV
+  opening: "Hi, my bath's draining really slowly. When can he ring me back?"
+variables:
+  open_now: "no"
+  holiday_mode: "no"
+expect:
+  scripts: []
+  urgency: routine
+  fields:
+    callerName: Ellie
+    callbackNumber: "+447700900112"
+    postcode: XQ13 4UV
+  ending: close
+  maxTurns: 18

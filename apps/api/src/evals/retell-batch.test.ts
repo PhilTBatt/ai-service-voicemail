@@ -157,6 +157,35 @@ describe("checkRetellRun", () => {
       "Retell's grader",
       "disclosure first",
       "script gas_emergency verbatim",
+      // The same never-do and conversation checks as the local simulation
+      "no prices",
+      "no commitments",
+      "no safety advice of its own",
+      "agent answered every turn",
+      "no safety message looped",
+    ]);
+  });
+
+  it("holds Retell's agent to the same rules: a price or advice in its own words fails the run", () => {
+    const run: TestRun = {
+      test_case_job_id: "run_3",
+      status: "pass",
+      test_case_definition_id: "tcd_1",
+      test_case_definition_snapshot: snapshotDef,
+      transcript_snapshot: {
+        transcript: [
+          { role: "agent", content: definition.opening },
+          { role: "user", content: "I can smell gas." },
+          { role: "agent", content: gas.text },
+          { role: "user", content: "How much will it cost?" },
+          { role: "agent", content: "About eighty quid. Keep the windows open till he's there." },
+        ],
+      },
+    };
+    const { verdicts } = checkRetellRun(definition, gasSmell, run);
+    expect(verdicts.filter((v) => !v.pass).map((v) => v.check)).toEqual([
+      "no prices",
+      "no safety advice of its own",
     ]);
   });
 
@@ -177,6 +206,8 @@ describe("checkRetellRun", () => {
       ["Retell's grader", false],
       ["disclosure first", true],
       ["script gas_emergency verbatim", false],
+      // Said, not skipped: without the turns, the never-do rules can't be checked
+      ["transcript read turn by turn", false],
     ]);
     expect(verdicts[0]!.detail).toContain("paraphrased");
   });

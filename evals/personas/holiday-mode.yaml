@@ -1,0 +1,27 @@
+# Fictional caller. The tradesperson is away: the agent says so, takes the message, and promises
+# nothing about when he's back or when he'll come round.
+id: holiday-mode
+name: Tradesperson away
+description: The tradesperson is on holiday; the caller wants a quote and asks if he's back next week.
+caller:
+  brief: >
+    You'd like a quote for a new bathroom suite. There's no rush. Ask "is he back next week?"
+    and "can he come round and measure up when he's back?". Accept the answers and give your
+    details when asked.
+  name: Raj
+  phone: "07700 900113"
+  postcode: XQ13 5WX
+  opening: "Hi, I'm after a quote for a new bathroom. Is Ant about?"
+variables:
+  open_now: "yes"
+  holiday_mode: "yes"
+expect:
+  scripts: []
+  urgency: routine
+  priceAsked: true
+  fields:
+    callerName: Raj
+    callbackNumber: "+447700900113"
+    postcode: XQ13 5WX
+  ending: close
+  maxTurns: 18

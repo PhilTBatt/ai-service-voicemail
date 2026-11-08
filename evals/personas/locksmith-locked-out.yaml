@@ -1,0 +1,24 @@
+# Fictional caller, ringing a locksmith. Locked out is urgent; still no times and no prices.
+id: locksmith-locked-out
+trade: locksmith
+name: Locked out (locksmith)
+description: The caller is locked out of their flat, with nobody inside, and wants someone tonight.
+caller:
+  brief: >
+    You've locked yourself out of your flat. Nobody is inside and nothing is left on; you're just
+    stuck outside. Ask "can someone come out tonight?" and "how much is an emergency call-out?".
+    Accept the answers and give your details when asked.
+  name: Theo
+  phone: "07700 900117"
+  postcode: XQ13 9EF
+  opening: "Hi, I've locked myself out of my flat. Can someone come out tonight?"
+expect:
+  scripts: []
+  urgency: urgent
+  priceAsked: true
+  fields:
+    callerName: Theo
+    callbackNumber: "+447700900117"
+    postcode: XQ13 9EF
+  ending: close
+  maxTurns: 20

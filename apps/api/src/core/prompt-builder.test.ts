@@ -1,4 +1,4 @@
-import { TRADES } from "@callmate/shared";
+import { TRADES, givesSafetyAdvice, mentionsPrice, promisesTime } from "@callmate/shared";
 import { describe, expect, it } from "vitest";
 import { sampleProfile } from "../testing/profile-fixture.ts";
 import { tenantProfileSchema } from "./profile.ts";
@@ -69,6 +69,67 @@ describe("buildAgentDefinition", () => {
       for (const keyword of template.emergencyKeywords) expect(instructions).toContain(keyword);
       for (const faq of template.defaultFaqs) expect(instructions).toContain(faq.answer);
     });
+
+    // The agent reads these out, and the post-call scan would flag every call that used one.
+    it.each(TRADES)("%s: template wording has no prices, times or safety advice", (trade) => {
+      const template = TRADE_TEMPLATES[trade];
+      const spoken = [
+        ...template.questions,
+        ...template.defaultFaqs.flatMap((faq) => [faq.question, faq.answer]),
+      ];
+      for (const text of spoken) {
+        expect(mentionsPrice(text), text).toBe(false);
+        expect(promisesTime(text), text).toBe(false);
+        expect(givesSafetyAdvice(text), text).toBe(false);
+      }
+    });
+
+    it.each(TRADES)(
+      "%s: speaks each safety message until it's been spoken, not on every mention",
+      (trade) => {
+        const { scripts } = buildAgentDefinition(sampleProfile({ trade }));
+        const byId = (id: string) => scripts.find((s) => s.id === id);
+        // Keyed on the message, not the first mention, so a mention passed over still triggers
+        // it on the next turn (subagent review, 2026-11-08).
+        for (const id of ["gas_emergency", "danger", "water_leak"]) {
+          expect(byId(id)?.trigger).toContain("this message hasn't been spoken yet in the call");
+          expect(byId(id)?.trigger).not.toContain("first time");
+        }
+        for (const id of ["gas_emergency", "danger"]) {
+          expect(byId(id)?.trigger).toContain("If in doubt, trigger.");
+          expect(byId(id)?.trigger).toContain("Again, once, if");
+          expect(byId(id)?.trigger).toContain("Not when it has been spoken");
+          // Played down or worse: spoken again, so these two may repeat.
+          expect(byId(id)?.oncePerCall).toBeUndefined();
+        }
+        expect(byId("gas_emergency")?.trigger).toContain("plays this message down");
+        // The water message says nothing new the second time.
+        expect(byId("water_leak")?.oncePerCall).toBe(true);
+      },
+    );
+  });
+
+  it("gives the platform and the simulation one close condition, which a call-back request doesn't meet", () => {
+    const { closeWhen } = buildAgentDefinition(sampleProfile());
+    expect(closeWhen).toContain("a confirmed call-back number, their postcode");
+    // The platform closes as soon as this holds, so a caller in a hurry is asked once first.
+    expect(closeWhen).toContain("you've already asked once for anything that's missing");
+    expect(closeWhen).toContain("asking to be rung back isn't wanting to go");
+    expect(closeWhen).toContain("isn't about Ant's Plumbing at all");
+  });
+
+  it("never says when the tradesperson will call back out of hours", () => {
+    const { instructions } = buildAgentDefinition(sampleProfile());
+    expect(instructions).toContain("never say when Ant will call back");
+    expect(instructions).not.toContain("call back when they're next open");
+  });
+
+  it("tells the agent to decline safety questions and still get the number and postcode", () => {
+    const { instructions } = buildAgentDefinition(sampleProfile());
+    expect(instructions).toContain("don't advise them: say you can't give safety advice");
+    expect(instructions).toContain("ask for whatever's missing in one short question");
+    // "Please do ring the gas emergency number now" (eval run of 2026-11-08) is a paraphrase too.
+    expect(instructions).toContain("don't tell the caller to ring anyone, or what to do");
   });
 
   it("uses the Northern Ireland gas number for NI tenants", () => {

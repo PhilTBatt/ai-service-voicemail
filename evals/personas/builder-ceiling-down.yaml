@@ -1,0 +1,23 @@
+# Fictional caller, ringing a builder. A ceiling coming down gets the danger script and is an
+# emergency, even with nobody hurt: over-trigger on purpose.
+id: builder-ceiling-down
+trade: general_builder
+name: Ceiling come down (builder)
+description: Part of a bedroom ceiling came down overnight; nobody was hurt.
+caller:
+  brief: >
+    Part of the plaster ceiling in your back bedroom came down overnight. Nobody was hurt and
+    nobody is in the room now. You want a builder to look at it. Give your details when asked.
+  name: Hannah
+  phone: "07700 900120"
+  postcode: XQ14 3LM
+  opening: "Hi, part of my bedroom ceiling's come down overnight."
+expect:
+  scripts: [danger]
+  urgency: emergency
+  fields:
+    callerName: Hannah
+    callbackNumber: "+447700900120"
+    postcode: XQ14 3LM
+  ending: [close, caller]
+  maxTurns: 18

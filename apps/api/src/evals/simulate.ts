@@ -2,8 +2,9 @@
 // persona, another plays the agent from the same AgentDefinition the voice platform gets.
 // A small engine stands in for the platform's flow: it speaks the opening and the closing
 // line itself, speaks a fixed script word for word when the agent model says its trigger
-// applies, keeps a script from firing on two consecutive turns (the flow's cool-down), and
-// handles silence the way the agent limits do (one prompt, then end the call).
+// applies, keeps a script from firing on two consecutive turns (the flow's cool-down) and a
+// once-a-call script from firing twice, and handles silence the way the agent limits do (one
+// prompt, then end the call).
 //
 // This tests the prompt and the scripts' triggers, not the platform. The platform's own
 // batch tests are the authority for what Retell actually says (decision 007).
@@ -50,11 +51,11 @@ export function agentSystemPrompt(definition: AgentDefinition, variables: Record
 
 ## How this simulation works
 You are being run as a text simulation of the phone agent, one turn at a time. The system has already spoken the opening and speaks the fixed safety messages for you. Each turn, decide:
-- "trigger": if the caller's latest words meet one of these conditions, name it and the system speaks the fixed message word for word (never write it yourself):
+- "trigger": if the conversation so far meets one of these conditions, name it and the system speaks the fixed message word for word (never write it yourself):
 ${triggers}
   Otherwise "none".
-- "reply": what you say next, ignored when a trigger fires. One or two short sentences, one question at a time, natural British English.
-- "done": true once you have the caller's name, a confirmed call-back number, their postcode, the job and its urgency, or the caller wants to end the call, or the call isn't about the business at all. The system then speaks the closing line.
+- "reply": what you'd say next if no fixed message were spoken. Always fill it in, even when you name a trigger: the system may hold a message back (it never plays one twice in a row) and then speaks your reply instead. One or two short sentences, one question at a time, natural British English.
+- "done": true when this holds: ${definition.closeWhen}. The system then speaks the closing line straight after your reply, so a reply with "done" mustn't ask anything.
 If the caller has said nothing (shown as "[silence]"), reply with one short prompt to check they're still there.`;
 }
 
@@ -72,7 +73,7 @@ export function callerSystemPrompt(persona: Persona) {
 Your situation: ${caller.brief}
 ${details ? `${details} Give these details only when asked, one at a time, the way people do on the phone.` : "You don't give personal details."}
 
-Speak as a real caller would: one or two sentences at a time, informal British English, no stage directions, no narration. Never say you are an AI or a simulation. Set "hangUp" to true when you've said everything you came to say and the assistant has wound the call up, or when your situation says you'd give up and hang up.`;
+Speak as a real caller would: one or two sentences at a time, informal British English, no stage directions, no narration. Never say you are an AI or a simulation. Set "hangUp" to true only once the assistant has said goodbye, or when your situation says you'd give up and hang up (or do as you're told and hang up). Giving your last detail isn't the end of the call: wait for the assistant to wind it up.`;
 }
 
 function renderConversation(transcript: TranscriptTurn[]): string {
@@ -153,8 +154,15 @@ export async function simulateCall(
     if (!decision.ok) throw new Error(`Agent model gave ${decision.reason} for ${persona.id}`);
     const { trigger, reply, done } = decision.value;
 
+    // Held back, so the reply is spoken instead: the same script on consecutive turns (the
+    // flow's cool-down), or a once-a-call script a second time.
+    const named = trigger === "none" ? undefined : scriptsById.get(trigger);
     const script: FixedScript | undefined =
-      trigger !== "none" && trigger !== lastScript ? scriptsById.get(trigger) : undefined;
+      named &&
+      named.id !== lastScript &&
+      !(named.oncePerCall === true && scriptsSpoken.includes(named.id))
+        ? named
+        : undefined;
     if (script) {
       // The flow speaks the script, uninterrupted, then returns to taking the message.
       transcript.push({ role: "agent", text: script.text });

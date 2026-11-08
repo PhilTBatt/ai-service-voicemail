@@ -31,8 +31,8 @@ export const heatingEngineer: TradeTemplate = {
     },
     {
       question: "How often should a boiler be serviced?",
-      answer:
-        "Once a year is the usual advice. The tradesperson will confirm what's right for yours when they call back.",
+      // Servicing is gas safety advice, which only Appendix A's scripts give: the answer defers.
+      answer: "The tradesperson will advise on servicing for your boiler when they call back.",
     },
   ],
 };

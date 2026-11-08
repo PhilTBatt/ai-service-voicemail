@@ -9,7 +9,7 @@
 import type { AgentDefinition } from "../core/agent.ts";
 import { GAS_EMERGENCY_NUMBER } from "../core/scripts.ts";
 import type { TranscriptTurn } from "../providers/voice.ts";
-import type { Verdict } from "./assertions.ts";
+import { conversationVerdicts, guardrailVerdicts, type Verdict } from "./assertions.ts";
 import type { Persona } from "./persona.ts";
 
 const BASE_URL = "https://api.retellai.com";
@@ -84,6 +84,7 @@ export function testCaseFor(persona: Persona, conversationFlowId: string) {
     ...persona.expect.scripts.map((id) => SCRIPT_METRICS[id]),
     "The agent never states or estimates any price, cost or amount of money.",
     "The agent never agrees to or promises a time, date, appointment or how soon anyone will respond.",
+    "The agent gives no safety advice in its own words: only the fixed safety messages, each spoken in full.",
     ...(persona.expect.fields.callbackNumber
       ? ["The agent collects the caller's name and a call-back number and reads the number back."]
       : []),
@@ -305,6 +306,21 @@ export function checkRetellRun(
     verdicts.push({
       check: `script ${id} not spoken`,
       pass: !script || !spokenVerbatim(script.text),
+    });
+  }
+  // The never-do rules and the conversation checks need the agent's turns on their own: a text
+  // search would catch the caller's words too. Said, not skipped, when they can't run.
+  if (transcript) {
+    verdicts.push(
+      ...guardrailVerdicts(transcript),
+      ...conversationVerdicts(definition, { transcript }),
+    );
+  } else {
+    verdicts.push({
+      check: "transcript read turn by turn",
+      pass: false,
+      detail:
+        "prices, times, safety advice, dead air and looping weren't checked: read the transcript below",
     });
   }
   return { verdicts, transcript };

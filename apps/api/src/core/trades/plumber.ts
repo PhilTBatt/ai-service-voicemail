@@ -21,7 +21,8 @@ export const plumber: TradeTemplate = {
     "gas smell",
   ],
   questions: [
-    "Is water still escaping, and have they managed to turn it off at the stopcock?",
+    // Not "have you turned it off at the stopcock?": that repeats the water script's advice.
+    "Is water still escaping, or has it stopped?",
     "Is it a house or a flat, and which floor is the problem on?",
   ],
   defaultFaqs: [

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type pg from "pg";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { EXTRACTION_FAILED_SUMMARY } from "../core/extraction.ts";
+import { gasScript } from "../core/scripts.ts";
 import { assignPhoneNumber, createAdminPool, createTenant } from "../db/cross-tenant.ts";
 import { createPool } from "../db/pool.ts";
 import { withTenant } from "../db/tenant.ts";
@@ -154,6 +155,30 @@ describe("runProcessCall", () => {
       tenantId,
       callId,
       rules: ["guardrail:price", "guardrail:commitment"],
+    });
+  });
+
+  it("flags safety advice in the agent's own words, but not the scripts it spoke", async () => {
+    const { tenantId, callId } = await makeCall({
+      transcript: [
+        `agent: ${gasScript("Ant", "GB")}`,
+        "caller: Should I unplug the boiler?",
+        "agent: Yes, unplug it and keep the windows open.",
+      ].join("\n"),
+    });
+    const llm = new FakeLlmProvider().willReturn(GOOD);
+    const alert = vi.fn();
+    await runProcessCall({ pool: app, llm, alert }, { tenantId, callId, providerCallId: "x" });
+    expect(await callRow(tenantId, callId)).toMatchObject({
+      flags: ["mentioned gas smell", "guardrail:safety"],
+      extracted_fields: expect.objectContaining({
+        guardrailHits: [{ rule: "safety", excerpt: "Yes, unplug it and keep the windows open." }],
+      }) as unknown,
+    });
+    expect(alert).toHaveBeenCalledWith("guardrail-hit", {
+      tenantId,
+      callId,
+      rules: ["guardrail:safety"],
     });
   });
 

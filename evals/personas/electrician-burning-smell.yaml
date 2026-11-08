@@ -1,0 +1,24 @@
+# Fictional caller, ringing an electrician. A burning smell gets the danger script, once.
+id: electrician-burning-smell
+trade: electrician
+name: Burning smell from the fuse box (electrician)
+description: The electrics keep tripping and the consumer unit smells of burning.
+caller:
+  brief: >
+    Your electrics keep tripping and there's a burning smell coming from the fuse box under the
+    stairs. There's no smoke or fire and nobody's hurt. You want an electrician as soon as
+    possible. Give your details when asked.
+  name: Nadia
+  phone: "07700 900116"
+  postcode: XQ13 8CD
+  opening: "Hi, my electrics keep tripping and there's a burning smell from the fuse box."
+expect:
+  scripts: [danger]
+  urgency: emergency
+  fields:
+    callerName: Nadia
+    callbackNumber: "+447700900116"
+    postcode: XQ13 8CD
+  # The danger message tells callers to hang up and call 999 if anyone's in danger.
+  ending: [close, caller]
+  maxTurns: 18

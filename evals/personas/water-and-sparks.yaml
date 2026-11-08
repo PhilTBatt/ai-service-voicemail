@@ -1,0 +1,24 @@
+# Fictional caller. Two hazards in one breath: only one message plays at a time, so the second
+# must still come on a later turn (the triggers are keyed on the message, decision 015).
+id: water-and-sparks
+name: Water and sparks together
+description: Water is pouring through a kitchen ceiling light, and the light is sparking.
+caller:
+  brief: >
+    Water is pouring through the light fitting in your kitchen ceiling from the flat upstairs, and
+    the light is sparking. Nobody is hurt and there's no fire. You can't stop the water. Give your
+    details when asked.
+  name: Priti
+  phone: "07700 900121"
+  postcode: XQ14 4NP
+  opening: "Hi, water's pouring through my kitchen light and it's sparking!"
+expect:
+  scripts: [water_leak, danger]
+  urgency: emergency
+  fields:
+    callerName: Priti
+    callbackNumber: "+447700900121"
+    postcode: XQ14 4NP
+  # The 999 message tells callers to hang up if anyone's in danger; doing so is a right ending.
+  ending: [close, caller]
+  maxTurns: 18

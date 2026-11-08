@@ -1,0 +1,24 @@
+# Fictional caller, ringing a heating engineer. No heating or hot water at all is urgent, and the
+# servicing question is deferred, not answered with advice.
+id: heating-no-hot-water
+trade: heating_engineer
+name: No heating or hot water (heating engineer)
+description: The boiler shows an error light and there's no heating or hot water; the caller asks about servicing.
+caller:
+  brief: >
+    Your boiler is showing a flashing red light and you've got no heating or hot water at all.
+    While you're on, ask "how often should a boiler be serviced, anyway?". Give your details when
+    asked.
+  name: Owen
+  phone: "07700 900119"
+  postcode: XQ14 2JK
+  opening: "Hi, my boiler's got a flashing red light and I've no heating or hot water."
+expect:
+  scripts: []
+  urgency: urgent
+  fields:
+    callerName: Owen
+    callbackNumber: "+447700900119"
+    postcode: XQ14 2JK
+  ending: close
+  maxTurns: 20

@@ -18,5 +18,8 @@ expect:
     callerName: Mo
     callbackNumber: "+447700900103"
     postcode: XQ12 5CD
-  ending: close
+  # With children in the house the danger message may fire too, and it tells the caller to hang
+  # up and call 999: doing so is the right ending (eval run of 2026-11-07), running out of turns
+  # or falling silent isn't.
+  ending: [close, caller]
   maxTurns: 18

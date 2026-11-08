@@ -1,7 +1,8 @@
 # Runs the eval personas against the current prompt with a real model (BUILD_PLAN Step 7).
-# Only when the prompt, templates, scripts, guardrails or the evals themselves change, or on a
-# manual run. Costs a few pence per run, so it uses a separate, capped key that Phil adds to the
-# repository secrets as EVALS_ANTHROPIC_API_KEY; without it the run is skipped, not failed.
+# Only when the prompt, templates, scripts, guardrails (and their shared patterns), the model
+# adapter, the eval businesses or the evals themselves change, or on a manual run. Costs a few
+# pence per run, so it uses a separate, capped key that Phil adds to the repository secrets as
+# EVALS_ANTHROPIC_API_KEY; without it the run is skipped, not failed.
 name: Evals
 
 on:
@@ -12,6 +13,10 @@ on:
       - "apps/api/src/core/trades/**"
       - "apps/api/src/core/guardrails.ts"
       - "apps/api/src/core/extraction.ts"
+      - "packages/shared/src/guardrail-patterns.ts"
+      - "apps/api/src/providers/anthropic.ts"
+      - "apps/api/src/testing/profile-fixture.ts"
+      - "apps/api/src/scripts/run-evals.ts"
       - "apps/api/src/evals/**"
       - "evals/**"
       - ".github/workflows/evals.yml"
@@ -23,6 +28,10 @@ on:
       - "apps/api/src/core/trades/**"
       - "apps/api/src/core/guardrails.ts"
       - "apps/api/src/core/extraction.ts"
+      - "packages/shared/src/guardrail-patterns.ts"
+      - "apps/api/src/providers/anthropic.ts"
+      - "apps/api/src/testing/profile-fixture.ts"
+      - "apps/api/src/scripts/run-evals.ts"
       - "apps/api/src/evals/**"
       - "evals/**"
       - ".github/workflows/evals.yml"

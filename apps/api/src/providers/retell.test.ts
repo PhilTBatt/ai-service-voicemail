@@ -2,6 +2,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { sampleAgentDefinition, sampleCallEndedEvent } from "../testing/agent-fixture.ts";
 import { RetellApiStub } from "../testing/retell-stub.ts";
 import {
+  COOL_DOWN_ONCE_PER_CALL,
   RetellVoiceProvider,
   buildAgent,
   buildConversationFlow,
@@ -220,13 +221,26 @@ describe("RetellVoiceProvider agents", () => {
       expect(byId[script.id], script.id).toMatchObject({
         instruction: { type: "static_text", text: script.text },
         interruption_sensitivity: 0,
-        global_node_setting: { condition: script.trigger, cool_down: 1 },
+        global_node_setting: {
+          condition: script.trigger,
+          // Once a call for the water message; the gas and 999 messages may be spoken again.
+          cool_down: script.id === "water_leak" ? COOL_DOWN_ONCE_PER_CALL : 1,
+        },
         edges: [{ destination_node_id: "take_message" }],
       });
     }
     expect(byId.close).toMatchObject({
       type: "end",
       instruction: { type: "static_text", text: definition.close },
+    });
+    // The close condition is the definition's, which the eval simulation uses too.
+    expect(byId.take_message).toMatchObject({
+      edges: [
+        {
+          transition_condition: { type: "prompt", prompt: definition.closeWhen },
+          destination_node_id: "close",
+        },
+      ],
     });
     // No script text leaks into the model's prompt node.
     expect(JSON.stringify(byId.take_message)).not.toContain("0800 111 999");

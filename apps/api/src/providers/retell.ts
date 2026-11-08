@@ -343,6 +343,17 @@ export const EMERGENCY_FUNCTIONS: Partial<
   },
 };
 
+/**
+ * Retell's cool_down: "The same global node won't be triggered again within the next N node
+ * transitions" (API reference, read 2026-11-08). Our reading, unverified until the live batch
+ * run: with 1, the caller's reply straight after a message moves the flow on rather than
+ * playing it again, so a dismissal there gets the agent's acknowledgement, and the message can
+ * play again (once, by its trigger) on the caller's words after that. A number no call reaches
+ * means once a call.
+ */
+const COOL_DOWN_REPEATABLE = 1;
+export const COOL_DOWN_ONCE_PER_CALL = 1000;
+
 function scriptNode(script: FixedScript, functionUrl: string | undefined) {
   // An emergency script hands on to its alert function node; the rest go straight back to
   // taking the message.
@@ -355,7 +366,10 @@ function scriptNode(script: FixedScript, functionUrl: string | undefined) {
     // The caller can't talk over a safety message, and it's repeated (re-fired) rather
     // than paraphrased if dismissed. Afterwards the call carries on; never "go back".
     interruption_sensitivity: 0,
-    global_node_setting: { condition: script.trigger, cool_down: 1 },
+    global_node_setting: {
+      condition: script.trigger,
+      cool_down: script.oncePerCall ? COOL_DOWN_ONCE_PER_CALL : COOL_DOWN_REPEATABLE,
+    },
     edges: [promptEdge(`${script.id}_continue`, "The caller has responded", next)],
   };
 }
@@ -427,13 +441,8 @@ export function buildConversationFlow(definition: AgentDefinition, functionUrl?:
           type: "prompt",
           text: "Take the caller's message as your instructions describe, one question at a time.",
         },
-        edges: [
-          promptEdge(
-            "message_to_close",
-            "You have the caller's name, a confirmed call-back number, their postcode, the job and its urgency, or the caller wants to end the call",
-            "close",
-          ),
-        ],
+        // The same wording the eval simulation decides "done" by (evals/simulate.ts).
+        edges: [promptEdge("message_to_close", definition.closeWhen, "close")],
       },
       ...definition.scripts.map((script) => scriptNode(script, functionUrl)),
       ...emergency.nodes,

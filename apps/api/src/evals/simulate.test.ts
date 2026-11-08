@@ -3,7 +3,7 @@ import { FakeLlmProvider } from "../providers/llm.fake.ts";
 import { sampleAgentDefinition } from "../testing/agent-fixture.ts";
 import { CostMeter } from "./cost.ts";
 import { parsePersona, type Persona } from "./persona.ts";
-import { agentSystemPrompt, simulateCall } from "./simulate.ts";
+import { agentSystemPrompt, callerSystemPrompt, simulateCall } from "./simulate.ts";
 
 const definition = sampleAgentDefinition();
 const gas = definition.scripts.find((s) => s.id === "gas_emergency")!;
@@ -169,5 +169,39 @@ expect:
     expect(prompt).not.toContain("{{open_now}}");
     expect(prompt).toContain('If "no" is "no"');
     expect(prompt).toContain("- gas_emergency:");
+  });
+
+  it("speaks a once-a-call script only once, using the model's reply the second time", async () => {
+    const water = definition.scripts.find((s) => s.id === "water_leak")!;
+    expect(water.oncePerCall).toBe(true);
+    const llm = new FakeLlmProvider()
+      .willReturn({ trigger: "water_leak", reply: "Can I take your name?", done: false })
+      .willReturn({ say: "I can't find the stopcock. It's Sam.", hangUp: false })
+      .willReturn({ trigger: "none", reply: "Thanks Sam. What's your number?", done: false })
+      .willReturn({ say: "07700 900123. It's still pouring in.", hangUp: false })
+      // Not consecutive, so only the once-a-call rule holds it back.
+      .willReturn({ trigger: "water_leak", reply: "Thanks. And your postcode?", done: false })
+      .willReturn({ say: "XQ12 3JL.", hangUp: false })
+      .willReturn({ trigger: "none", reply: "Thanks.", done: true });
+
+    const result = await simulateCall({ llm, meter: meter() }, definition, chatty);
+    const agentTurns = result.transcript.filter((t) => t.role === "agent").map((t) => t.text);
+    expect(agentTurns.filter((text) => text === water.text)).toHaveLength(1);
+    expect(agentTurns).toContain("Thanks. And your postcode?");
+    expect(result.scriptsSpoken).toEqual(["water_leak"]);
+  });
+
+  it("tells the simulated caller to wait for the goodbye before hanging up", () => {
+    // Three personas "hung up" on their last detail in the 2026-11-08 run, before the close.
+    expect(callerSystemPrompt(chatty)).toContain("wait for the assistant to wind it up");
+  });
+
+  it("decides 'done' by the same condition as the platform's flow, and always asks for a reply", () => {
+    const prompt = agentSystemPrompt(definition, {});
+    expect(prompt).toContain(`"done": true when this holds: ${definition.closeWhen}.`);
+    // The reply and the goodbye are spoken back to back, so a question there goes unanswered.
+    expect(prompt).toContain('a reply with "done" mustn\'t ask anything');
+    // A held-back script falls back to the reply: an empty one was dead air (2026-11-07).
+    expect(prompt).toContain("Always fill it in, even when you name a trigger");
   });
 });

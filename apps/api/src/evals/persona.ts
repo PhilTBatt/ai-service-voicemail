@@ -3,16 +3,21 @@
 // can read and edit them without touching code. Fictional details only (CLAUDE.md).
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
+import { TRADES } from "@callmate/shared";
 import { parse } from "yaml";
 import { z } from "zod";
 import { URGENCIES } from "../core/extraction.ts";
 
 const SCRIPT_IDS = ["gas_emergency", "danger", "water_leak", "are_you_ai"] as const;
+const ENDINGS = ["close", "caller", "silence", "any"] as const;
+export type Ending = (typeof ENDINGS)[number];
 
 export const personaSchema = z.object({
   id: z.string().regex(/^[a-z0-9-]+$/, "lower-case words and dashes"),
   name: z.string().min(1),
   description: z.string().min(1),
+  /** The trade of the business rung (evals/businesses.ts): the demo plumber unless given. */
+  trade: z.enum(TRADES).default("plumber"),
   caller: z.object({
     /** The role-play brief for the model playing the caller. */
     brief: z.string().min(1),
@@ -49,8 +54,11 @@ export const personaSchema = z.object({
       .default({}),
     /** Substrings that must appear among the extraction's flags (case-insensitive). */
     flagsInclude: z.array(z.string().min(1)).default([]),
-    /** How the call should end: the closing line, the caller hanging up, silence, or any. */
-    ending: z.enum(["close", "caller", "silence", "any"]).default("any"),
+    /**
+     * How the call should end: the closing line, the caller hanging up, silence, or any. A list
+     * allows each: [close, caller] for a caller who may do as the 999 message says and hang up.
+     */
+    ending: z.union([z.enum(ENDINGS), z.array(z.enum(ENDINGS)).min(1)]).default("any"),
     /** Total turns (agent and caller) the call must finish within. */
     maxTurns: z.number().int().positive().default(20),
   }),
