@@ -4,28 +4,58 @@
 
 // The lookbehind only lets a match start at the beginning of a run of address characters.
 // Without it the pattern retries from every position, and a 100k-character string takes
-// over 10 seconds, blocking the whole process.
-const EMAIL = /(?<![A-Z0-9._%+-])[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
+// over 10 seconds, blocking the whole process. Letters in any alphabet (zoë@exämple.org).
+const EMAIL = /(?<![\p{L}\p{N}._%+-])[\p{L}\p{N}._%+-]+@[\p{L}\p{N}.-]+\.\p{L}{2,}/gu;
+
+// What's left of an address cut off mid-way ("jo@exam", when a message is truncated).
+const EMAIL_CUT = /(?<![\p{L}\p{N}._%+-])[\p{L}\p{N}._%+-]+@[\p{L}\p{N}-]+(?![\p{L}\p{N}.-])/gu;
 
 // UK numbers written nationally (07700 900123, (020) 7946 0123) or internationally
-// (+44 7700 900123, +44 (0)20 7946 0123, 0044 7700 900123), with spaces or hyphens.
-const UK_PHONE = /(?:(?:\+|\b00)44[\s-]?(?:\(0\)[\s-]?)?|\(?\b0)[1-9](?:[\s-]?\)?[\s-]?\d){8,9}\b/g;
+// (+44 7700 900123, +44 (0)20 7946 0123, 0044 7700 900123), with spaces, hyphens or dots.
+const UK_PHONE =
+  /(?:(?:\+|\b00)44[\s.-]?(?:\(0\)[\s.-]?)?|\(?\b0)[1-9](?:[\s.-]?\)?[\s.-]?\d){8,9}\b/g;
 
-// Any other international number (+ then 8 to 15 digits), such as a caller from abroad.
-const INTERNATIONAL_PHONE = /\+[1-9](?:[\s-]?\d){7,14}\b/g;
+// A UK number with its 44 but no + (447700900123), or a mobile with no leading 0 (7700900123).
+const UK_PHONE_BARE = /\b(?:44[1-9]\d{8,9}|7\d{9})\b/g;
 
-// UK postcodes in all six shapes (A9 9AA to AA9A 9AA), any case, with or without the space.
-const POSTCODE = /\b[A-Z]{1,2}\d[A-Z\d]?\s?\d[A-Z]{2}\b/gi;
+// Any other international number (+ or 00, then 8 to 15 digits), such as a caller from abroad.
+const INTERNATIONAL_PHONE = /(?:\+|\b00)[1-9](?:[\s.-]?\d){7,14}\b/g;
+
+// UK postcodes in all six shapes (A9 9AA to AA9A 9AA), any case, with or without the space,
+// or with a + for it (as in a form-encoded body).
+const POSTCODE = /\b[A-Z]{1,2}\d[A-Z\d]?(?:\s+|\+)?\d[A-Z]{2}\b/gi;
 
 // Signed call-page links (core/signed-links.ts): the token is a seven-day credential.
 const CALL_TOKEN = /\/c\/[0-9a-f]{32}\.[0-9a-z]{1,8}\.[A-Za-z0-9_-]{22}(?![A-Za-z0-9_-])/g;
 
-const REDACTED_KEYS = new Set(["transcript", "summary", "body", "message"]);
+// Fields that are call content, or a caller's details, whatever they hold: replaced whole.
+const REDACTED_KEYS = new Set([
+  "transcript",
+  "transcript_object",
+  "summary",
+  "call_summary",
+  "body",
+  "message",
+  "text",
+  "content",
+  "callername",
+  "caller_name",
+  "extractedfields",
+  "extracted_fields",
+]);
+
+// Percent-encoded text (a form body, a URL) hides a number or an address from the patterns:
+// %2B447700900123, jo%40example.com, XQ12%203JL.
+function decodePercents(text: string): string {
+  return text.replace(/%2B/gi, "+").replace(/%40/g, "@").replace(/%20/g, " ");
+}
 
 export function redactText(text: string): string {
-  return text
+  return decodePercents(text)
     .replace(EMAIL, "[email]")
+    .replace(EMAIL_CUT, "[email]")
     .replace(UK_PHONE, "[phone]")
+    .replace(UK_PHONE_BARE, "[phone]")
     .replace(INTERNATIONAL_PHONE, "[phone]")
     .replace(POSTCODE, "[postcode]")
     .replace(CALL_TOKEN, "/c/[token]");

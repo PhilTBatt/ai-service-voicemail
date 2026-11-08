@@ -3,6 +3,7 @@
 // message, uninterruptible global nodes for the fixed scripts, and a static end node.
 // Nothing outside this file knows Retell's shapes.
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { redactText } from "../redact.ts";
 import { z } from "zod";
 import type { AgentDefinition, FixedScript } from "../core/agent.ts";
 import {
@@ -58,7 +59,9 @@ export class RetellApiError extends Error {
   readonly path: string;
 
   constructor(status: number, path: string, detail: string) {
-    super(`Retell ${path} failed: HTTP ${status} ${detail}`);
+    // The provider's own words can quote the address or number it refused. Errors are logged,
+    // and stored with failed jobs in the queue's tables, so the detail is redacted here, once.
+    super(`Retell ${redactText(path)} failed: HTTP ${status} ${redactText(detail)}`);
     this.status = status;
     this.path = path;
   }

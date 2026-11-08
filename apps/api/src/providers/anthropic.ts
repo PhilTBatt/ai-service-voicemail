@@ -24,6 +24,9 @@ export class AnthropicLlmProvider implements LlmProvider {
       // Extraction is short and the queue retries whole jobs, so fail fast here.
       timeout: 30_000,
       maxRetries: 1,
+      // Fixed, so ANTHROPIC_LOG=debug can't make the SDK print requests to the console: their
+      // bodies are transcripts, past our redacting logger.
+      logLevel: "warn",
       ...(customFetch && { fetch: customFetch }),
     });
   }

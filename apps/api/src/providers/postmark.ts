@@ -1,6 +1,7 @@
 // Postmark's email API (decision 010), over fetch like the other adapters so it's testable
 // offline. Docs read 2026-11-07: https://postmarkapp.com/developer/api/email-api
 import type { EmailMessage, EmailProvider, EmailReceipt } from "./email.ts";
+import { redactText } from "../redact.ts";
 
 export interface PostmarkOptions {
   /** The server token, from the server's "API Tokens" tab. A secret. */
@@ -22,7 +23,11 @@ export class PostmarkApiError extends Error {
   readonly errorCode: number | null;
 
   constructor(status: number, errorCode: number | null, detail: string) {
-    super(`Postmark /email failed: HTTP ${status}, error ${errorCode ?? "?"}: ${detail}`);
+    // The provider's own words can quote the address or number it refused. Errors are logged,
+    // and stored with failed jobs in the queue's tables, so the detail is redacted here, once.
+    super(
+      `Postmark /email failed: HTTP ${status}, error ${errorCode ?? "?"}: ${redactText(detail)}`,
+    );
     this.status = status;
     this.errorCode = errorCode;
   }

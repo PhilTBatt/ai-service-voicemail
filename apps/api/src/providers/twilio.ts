@@ -2,6 +2,7 @@
 // offline, like the Retell adapter); webhook signatures are checked with Twilio's own SDK,
 // which Twilio says to use rather than reimplementing the scheme.
 import twilio from "twilio";
+import { redactText } from "../redact.ts";
 import {
   PurchaseNotAllowedError,
   type AvailableNumber,
@@ -34,7 +35,9 @@ export class TwilioApiError extends Error {
   readonly status: number;
 
   constructor(status: number, path: string, detail: string) {
-    super(`Twilio ${path} failed: HTTP ${status} ${detail}`);
+    // The provider's own words can quote the address or number it refused. Errors are logged,
+    // and stored with failed jobs in the queue's tables, so the detail is redacted here, once.
+    super(`Twilio ${redactText(path)} failed: HTTP ${status} ${redactText(detail)}`);
     this.status = status;
   }
 }

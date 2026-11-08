@@ -34,6 +34,12 @@ const PHONES = [
   "03069 990123",
   // A caller from abroad (US 555-01xx is reserved for fiction)
   "+1 202-555-0143",
+  "001 202 555 0143",
+  // Shapes the patterns used to miss
+  "07700.900.123", // dots
+  "%2B447700900123", // percent-encoded, as in a form body or URL
+  "447700900123", // the 44 without its +
+  "7700900123", // a mobile without its 0
 ];
 
 const POSTCODES = [
@@ -45,9 +51,20 @@ const POSTCODES = [
   "XQ1A 2NP", // AA9A 9AA
   "xq12 3jl", // lower case
   "XQ123JL", // no space
+  "XQ12  3JL", // two spaces
+  "XQ12+3JL", // form-encoded space
+  "XQ12%203JL", // percent-encoded space
 ];
 
-const EMAILS = ["caller@example.com", "first.last+tag@sub.example.org", "07700900123@example.net"];
+const EMAILS = [
+  "caller@example.com",
+  "first.last+tag@sub.example.org",
+  "07700900123@example.net",
+  "zoë@example.com", // letters beyond ASCII
+  "jo@exämple.org",
+  "jo%40example.com", // percent-encoded @
+  "jo@exam", // cut off part-way, as in a truncated message
+];
 
 // Things that look number-ish but aren't personal data, so must survive.
 const HARMLESS = [
@@ -92,12 +109,20 @@ describe("redactText", () => {
 });
 
 describe("redactField", () => {
-  it.each(["transcript", "summary", "body", "message", "Body", "TRANSCRIPT"])(
-    "replaces the %s field whole, whatever its case",
-    (key) => {
-      expect(redactField(key, "I'm at home, my boiler is broken")).toBe("[redacted]");
-    },
-  );
+  it.each([
+    "transcript",
+    "summary",
+    "body",
+    "message",
+    "Body",
+    "TRANSCRIPT",
+    "text",
+    "content",
+    "callerName",
+    "extracted_fields",
+  ])("replaces the %s field whole, whatever its case", (key) => {
+    expect(redactField(key, "I'm at home, my boiler is broken")).toBe("[redacted]");
+  });
 
   it("pattern-redacts any other field", () => {
     expect(redactField("callerNumber", "+447700900123")).toBe("[phone]");
@@ -189,5 +214,32 @@ describe("call-page tokens", () => {
       "https://callmate.example.com/c/[token]/recording",
     );
     expect(redactValue({ path: `/c/${token}` })).toEqual({ path: "/c/[token]" });
+  });
+});
+
+describe("provider errors", () => {
+  it("never carry the address or number the provider quoted", async () => {
+    const { PostmarkApiError } = await import("./providers/postmark.ts");
+    const { TwilioApiError } = await import("./providers/twilio.ts");
+    const { RetellApiError } = await import("./providers/retell.ts");
+    const bounced = new PostmarkApiError(
+      422,
+      406,
+      "You tried to send to recipient(s) that have been marked as inactive. Found inactive addresses: jo@example.com.",
+    );
+    expect(bounced.message).not.toContain("jo@example.com");
+    expect(bounced.message).toContain("[email]");
+    const refused = new TwilioApiError(
+      400,
+      "/Calls.json?To=%2B441134960150",
+      "The 'To' number +447700900123 is not a valid phone number.",
+    );
+    expect(refused.message).not.toMatch(/447700900123|441134960150/);
+    const retell = new RetellApiError(
+      400,
+      "/register-phone-call",
+      "from_number +447700900123 invalid",
+    );
+    expect(retell.message).not.toContain("447700900123");
   });
 });
