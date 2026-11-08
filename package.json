@@ -21,6 +21,7 @@
     "format:check": "prettier --check .",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "vitest run",
+    "coverage": "vitest run --coverage",
     "check": "npm run lint && npm run format:check && npm run typecheck && npm test",
     "db:up": "docker compose up -d --wait",
     "db:down": "docker compose down",
@@ -40,6 +41,7 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^26.6.6",
+    "@vitest/coverage-v8": "^5.1.0",
     "dbmate": "^2.37.0",
     "eslint": "^10.14.0",
     "prettier": "^3.9.10",

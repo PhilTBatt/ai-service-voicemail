@@ -1,46 +1,11 @@
-// The worker process: runs background jobs. Same image as the API, different command.
-import { ConfigError, loadConfig, retellUrls } from "./config.ts";
+// The worker process: runs background jobs. Same image as the API, different command. What it
+// runs is set up in worker-jobs.ts; this starts the process and stops it cleanly.
+import { ConfigError, loadConfig } from "./config.ts";
 import { createAdminPool } from "./db/cross-tenant.ts";
 import { createPool } from "./db/pool.ts";
-import { startDeadLetterWatcher } from "./jobs/dead-letter.ts";
-import { enqueueNotificationsWith } from "./jobs/enqueue-notifications.ts";
-import { runNotifyEmail, type NotifyEmailJobData } from "./jobs/notify-email.ts";
-import { runNotifyEmergency, type NotifyEmergencyJobData } from "./jobs/notify-emergency.ts";
-import { runNotifySms, type NotifySmsJobData } from "./jobs/notify-sms.ts";
-import { runProcessCall, type ProcessCallJobData } from "./jobs/process-call.ts";
-import {
-  NOTIFY_EMAIL_QUEUE,
-  NOTIFY_EMERGENCY_QUEUE,
-  RECONCILE_CALLS_CRON,
-  RECONCILE_CALLS_QUEUE,
-  NOTIFY_SMS_QUEUE,
-  OFFBOARDING_QUEUE,
-  ONBOARDING_QUEUE,
-  PROCESS_CALL_QUEUE,
-  RECONCILE_VOICEMAILS_CRON,
-  RECONCILE_VOICEMAILS_QUEUE,
-  RETENTION_CRON,
-  RETENTION_QUEUE,
-  SYNC_AGENT_QUEUE,
-  startQueue,
-} from "./jobs/queue.ts";
-import { reconcileCalls } from "./jobs/reconcile-calls.ts";
-import {
-  enqueueOnboardingWith,
-  runOnboardingJob,
-  type OnboardingJobData,
-} from "./jobs/onboarding.ts";
-import { runOffboardingJob, type OffboardingJobData } from "./jobs/offboarding.ts";
-import { reconcileVoicemails } from "./jobs/reconcile-voicemails.ts";
-import { runRetention } from "./jobs/retention.ts";
-import { runSyncAgent, type SyncAgentJobData } from "./jobs/sync-agent.ts";
+import { startQueue } from "./jobs/queue.ts";
 import { logger } from "./logger.ts";
-import { AnthropicLlmProvider } from "./providers/anthropic.ts";
-import { ClerkAuthProvider } from "./providers/clerk.ts";
-import { PostmarkEmailProvider } from "./providers/postmark.ts";
-import { RetellVoiceProvider } from "./providers/retell.ts";
-import { TwilioSmsProvider } from "./providers/twilio-sms.ts";
-import { TwilioTelephonyProvider } from "./providers/twilio.ts";
+import { registerJobs } from "./worker-jobs.ts";
 
 try {
   const config = loadConfig(process.env);
@@ -51,154 +16,18 @@ try {
   const pool = createPool(config.databaseUrl);
   const admin = config.adminDatabaseUrl ? createAdminPool(config.adminDatabaseUrl) : null;
   const boss = await startQueue(config.databaseUrl);
-  // The worker syncs agents, so it decides their webhook and function URLs.
-  const voice = new RetellVoiceProvider({ apiKey: config.retellApiKey, ...retellUrls(config) });
-  if (!config.publicBaseUrl) {
-    logger.warn("PUBLIC_BASE_URL isn't set: agents sync without webhook or function URLs");
-  }
-  const queues = [SYNC_AGENT_QUEUE, "dead-letter"];
-  await startDeadLetterWatcher(boss);
-  const enqueueNotifications = enqueueNotificationsWith(boss);
-
-  await boss.work<SyncAgentJobData>(SYNC_AGENT_QUEUE, async (jobs) => {
-    for (const job of jobs) await runSyncAgent({ pool, voice }, job.data);
-  });
-
-  if (config.llm) {
-    const llm = new AnthropicLlmProvider(config.llm);
-    const { judgeSampleRate } = config.llm;
-    await boss.work<ProcessCallJobData>(PROCESS_CALL_QUEUE, async (jobs) => {
-      for (const job of jobs) {
-        await runProcessCall(
-          {
-            pool,
-            llm,
-            enqueueNotifications,
-            judgeSampleRate,
-          },
-          job.data,
-        );
-      }
-    });
-    queues.push(PROCESS_CALL_QUEUE);
-  } else {
-    logger.warn("Call processing disabled: ANTHROPIC_API_KEY isn't set (jobs wait in the queue)");
-  }
-
-  if (config.sms && config.signingSecret && config.publicBaseUrl) {
-    const deps = {
-      pool,
-      sms: new TwilioSmsProvider({
-        ...config.sms,
-        statusCallbackUrl: `${config.publicBaseUrl}/webhooks/twilio/sms-status`,
-      }),
-      outbound: config.outbound,
-      signingSecret: config.signingSecret,
-      publicBaseUrl: config.publicBaseUrl,
-    };
-    await boss.work<NotifyEmergencyJobData>(NOTIFY_EMERGENCY_QUEUE, async (jobs) => {
-      for (const job of jobs) await runNotifyEmergency(deps, job.data);
-    });
-    await boss.work<NotifySmsJobData>(NOTIFY_SMS_QUEUE, async (jobs) => {
-      for (const job of jobs) await runNotifySms(deps, job.data);
-    });
-    // Onboarding texts, and going live after the test call (which then texts).
-    await boss.work<OnboardingJobData>(ONBOARDING_QUEUE, async (jobs) => {
-      for (const job of jobs) {
-        await runOnboardingJob({ ...deps, dashboardOrigin: config.dashboardOrigin }, job.data);
-      }
-    });
-    // When a business leaves: the text, and the email where email is set up.
-    const leavingEmail = config.email ? new PostmarkEmailProvider(config.email) : undefined;
-    // Deleting a business's data needs the admin pool and Twilio as well as Retell, and Clerk
-    // for the logins. The worker never checks a login token, so it names no sites for one.
-    const deletion =
-      admin && config.twilio
-        ? {
-            admin,
-            voice,
-            telephony: new TwilioTelephonyProvider(config.twilio),
-            auth: config.clerkSecretKey
-              ? new ClerkAuthProvider({ secretKey: config.clerkSecretKey, authorizedParties: [] })
-              : undefined,
-          }
-        : undefined;
-    await boss.work<OffboardingJobData>(OFFBOARDING_QUEUE, async (jobs) => {
-      for (const job of jobs) {
-        await runOffboardingJob({ ...deps, email: leavingEmail, deletion }, job.data);
-      }
-    });
-    queues.push(NOTIFY_EMERGENCY_QUEUE, NOTIFY_SMS_QUEUE, ONBOARDING_QUEUE, OFFBOARDING_QUEUE);
-  } else {
-    logger.warn(
-      "SMS notifications disabled: needs TWILIO_SMS_FROM, SIGNING_SECRET and PUBLIC_BASE_URL (jobs wait in the queue)",
-    );
-  }
-
-  if (config.email && config.signingSecret && config.publicBaseUrl) {
-    const deps = {
-      pool,
-      email: new PostmarkEmailProvider(config.email),
-      outbound: config.outbound,
-      signingSecret: config.signingSecret,
-      publicBaseUrl: config.publicBaseUrl,
-    };
-    await boss.work<NotifyEmailJobData>(NOTIFY_EMAIL_QUEUE, async (jobs) => {
-      for (const job of jobs) await runNotifyEmail(deps, job.data);
-    });
-    queues.push(NOTIFY_EMAIL_QUEUE);
-  } else {
-    logger.warn(
-      "Email notifications disabled: needs POSTMARK_SERVER_TOKEN, EMAIL_FROM, SIGNING_SECRET and PUBLIC_BASE_URL (jobs wait in the queue)",
-    );
-  }
-
-  if (admin) {
-    // Agent calls whose webhook never arrived (and provisional mid-call rows): stored every 15 min.
-    await boss.work(RECONCILE_CALLS_QUEUE, async () => {
-      await reconcileCalls({ pool, admin, boss, voice });
-    });
-    await boss.schedule(RECONCILE_CALLS_QUEUE, RECONCILE_CALLS_CRON, null, { tz: "Europe/London" });
-    queues.push(RECONCILE_CALLS_QUEUE);
-  } else {
-    logger.warn("Call reconciliation disabled: ADMIN_DATABASE_URL isn't set");
-  }
-
-  if (config.twilio) {
-    const telephony = new TwilioTelephonyProvider(config.twilio);
-    await boss.work(RECONCILE_VOICEMAILS_QUEUE, async () => {
-      await reconcileVoicemails({
-        pool,
-        telephony,
-        enqueueNotifications,
-        enqueueOnboarding: enqueueOnboardingWith(boss),
-      });
-    });
-    await boss.schedule(RECONCILE_VOICEMAILS_QUEUE, RECONCILE_VOICEMAILS_CRON, null, {
-      tz: "Europe/London",
-    });
-    queues.push(RECONCILE_VOICEMAILS_QUEUE);
-
-    if (admin) {
-      await boss.work(RETENTION_QUEUE, async () => {
-        await runRetention({ admin, voice, telephony });
-      });
-      await boss.schedule(RETENTION_QUEUE, RETENTION_CRON, null, { tz: "Europe/London" });
-      queues.push(RETENTION_QUEUE);
-    } else {
-      logger.warn("Retention disabled: ADMIN_DATABASE_URL isn't set");
-    }
-  } else {
-    logger.warn("Voicemail reconciliation and retention disabled: Twilio isn't configured");
-  }
+  const queues = await registerJobs(
+    { ...config, retellApiKey: config.retellApiKey },
+    { boss, pool, admin },
+  );
   logger.info("Worker listening", { queues, nodeEnv: config.nodeEnv });
 
-  // Let the job in hand finish, then close the queue and the pool (Azure sends SIGTERM).
+  // Let the job in hand finish, then close the queue and both pools (Azure sends SIGTERM).
   const shutdown = (signal: NodeJS.Signals) => {
     logger.info("Worker shutting down", { signal });
     void boss
       .stop({ graceful: true, timeout: 30_000, close: true })
-      .then(() => pool.end())
+      .then(() => Promise.all([pool.end(), admin?.end()]))
       .then(() => logger.info("Worker shutdown complete"));
   };
   process.once("SIGTERM", shutdown);
