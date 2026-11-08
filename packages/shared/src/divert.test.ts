@@ -36,6 +36,10 @@ describe("divertInstructions, for each network", () => {
     for (const network of ["ee", "lyca", "bt_mobile"] as const) {
       expect(noAnswer(network), network).toBe("**61*+441134960150#");
       expect(divertInstructions(network, NUMBER).method).toBe("settings");
+      // An iPhone's Call Forwarding setting is "divert everything": they must be warned off it.
+      expect(divertInstructions(network, NUMBER).notes.join(" ")).toContain(
+        "On an iPhone, don't use",
+      );
     }
     expect(divertInstructions("o2", NUMBER).method).toBe("dial");
     // Unknown network: the common form, and "ask your network" if it fails.
@@ -68,7 +72,7 @@ describe("divertInstructionsText", () => {
     const text = divertInstructionsText("o2", NUMBER, "https://app.example.com/tenants/t1/phone");
     expect(text).toBe(
       "AnswerMate: to send calls you miss to your assistant, dial **61*+441134960150*11*20# and press call. " +
-        "Check it with *#61#. Then ring your mobile from another phone and don't answer. " +
+        "Check it with *#61#. Then ring your mobile from another phone, don't answer, and leave a short message after the beep. " +
         "Full steps: https://app.example.com/tenants/t1/phone",
     );
     expect(divertInstructionsText("ee", NUMBER, "https://x.example/p")).toContain(

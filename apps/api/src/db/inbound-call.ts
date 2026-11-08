@@ -74,14 +74,16 @@ export async function loadInboundCallContext(
         ])
       ).rowCount === 1;
 
-    // Demo tenants cap each caller at a few calls a day (BUILD_PLAN Step 9); nobody else is counted.
+    // Demo tenants cap each caller at a few calls a day (BUILD_PLAN Step 9); nobody else is
+    // counted. Withheld callers count as one caller between them: otherwise dialling 141 first
+    // would get round the cap, and each call costs money.
     const callerCallsToday =
-      tenant.status === "demo" && from !== null
+      tenant.status === "demo"
         ? Number(
             (
               await client.query<{ n: string }>(
                 `SELECT count(*) AS n FROM calls
-                 WHERE tenant_id = $1 AND caller_number = $2 AND started_at >= $3`,
+                 WHERE tenant_id = $1 AND caller_number IS NOT DISTINCT FROM $2 AND started_at >= $3`,
                 [tenantId, from, startOfUkDay(now)],
               )
             ).rows[0]!.n,

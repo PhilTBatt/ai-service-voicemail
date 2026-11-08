@@ -1358,6 +1358,12 @@ describe("admin screens", () => {
         [demo, document, signer],
       );
     }
+    // The divert instructions went a minute ago, and the test call came after them.
+    await admin.query(
+      `INSERT INTO audit_log (tenant_id, action, details, created_at)
+       VALUES ($1, 'onboarding.advanced', '{"to": "divert_instructions_sent"}', now() - interval '1 minute')`,
+      [demo],
+    );
     await admin.query(
       "INSERT INTO calls (tenant_id, provider_call_id, started_at) VALUES ($1, $2, now())",
       [demo, `call_${randomUUID()}`],

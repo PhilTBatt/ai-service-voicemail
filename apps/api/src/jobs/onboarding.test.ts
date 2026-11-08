@@ -57,8 +57,11 @@ async function business(
   return { tenantId, number };
 }
 
-/** Everything the go-live rule looks at, short of the flags: terms accepted and a call. */
-async function readyToGoLive(tenantId: string) {
+/**
+ * Everything the go-live rule looks at, short of the flags: terms accepted, the divert
+ * instructions sent, and a call after them (or, if told, a call before them, which doesn't count).
+ */
+async function readyToGoLive(tenantId: string, { callBeforeInstructions = false } = {}) {
   const signer = await createUser(admin, {
     email: `wren-${randomUUID()}@example.com`,
     role: "owner",
@@ -70,8 +73,13 @@ async function readyToGoLive(tenantId: string) {
     );
   }
   await admin.query(
-    "INSERT INTO calls (tenant_id, provider_call_id, started_at) VALUES ($1, $2, now())",
-    [tenantId, `CA${randomUUID()}`],
+    `INSERT INTO audit_log (tenant_id, action, details, created_at)
+     VALUES ($1, 'onboarding.advanced', '{"to": "divert_instructions_sent"}', now() - interval '1 minute')`,
+    [tenantId],
+  );
+  await admin.query(
+    "INSERT INTO calls (tenant_id, provider_call_id, started_at) VALUES ($1, $2, now() - $3::interval)",
+    [tenantId, `CA${randomUUID()}`, callBeforeInstructions ? "2 minutes" : "0 minutes"],
   );
 }
 
@@ -161,8 +169,9 @@ describe("the go-live action", () => {
 
     expect(await runOnboardingJob(deps(sms), { tenantId, action: "go-live" })).toBe("already-sent");
     expect(sms.sent).toHaveLength(1);
+    // The step to live, taken by the system (the fixture's own row is the instructions step).
     const audit = await admin.query<{ actor_user_id: string | null; details: { via: string } }>(
-      "SELECT actor_user_id, details FROM audit_log WHERE tenant_id = $1 AND action = 'onboarding.advanced'",
+      "SELECT actor_user_id, details FROM audit_log WHERE tenant_id = $1 AND action = 'onboarding.advanced' AND details->>'to' = 'live'",
       [tenantId],
     );
     expect(audit.rows).toEqual([
@@ -184,6 +193,33 @@ describe("the go-live action", () => {
       status: "onboarding",
     });
     expect(sms.sent).toHaveLength(0);
+  });
+
+  it("still texts when an admin takes the business live at the same moment", async () => {
+    const { tenantId } = await business("test_call_received", { isTest: true, isPilot: true });
+    await readyToGoLive(tenantId);
+    const sms = new FakeSmsProvider();
+    // The admin's step lands between the job reading the business and taking the step itself.
+    const advance: OnboardingJobDeps["advance"] = async () => {
+      await admin.query(
+        "UPDATE tenants SET onboarding_state = 'live', status = 'live' WHERE id = $1",
+        [tenantId],
+      );
+      return { outcome: "refused", reason: "It's already live" };
+    };
+    expect(await runOnboardingJob({ ...deps(sms), advance }, { tenantId, action: "go-live" })).toBe(
+      "sent",
+    );
+    expect(sms.sent).toHaveLength(1);
+    expect(sms.sent[0]!.body).toContain("AnswerMate is live");
+  });
+
+  it("won't take a call from before the divert instructions as the test call", async () => {
+    const { tenantId } = await business("test_call_received", { isTest: true, isPilot: true });
+    await readyToGoLive(tenantId, { callBeforeInstructions: true });
+    expect(
+      await runOnboardingJob(deps(new FakeSmsProvider()), { tenantId, action: "go-live" }),
+    ).toBe("not-ready");
   });
 
   it("texts a business an admin took live by hand", async () => {

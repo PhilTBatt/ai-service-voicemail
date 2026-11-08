@@ -53,6 +53,7 @@ function notesFor(network: MobileNetwork | null): string[] {
       return [
         "This network may not accept a ring time in the code, so the no-answer code here leaves it out.",
         "If your phone says it failed, set it in your phone instead: on Android, Phone, then Settings, Calls, Call forwarding, When unanswered. Or ask your network to divert unanswered calls to your AnswerMate number.",
+        "On an iPhone, don't use Settings, Phone, Call Forwarding: it sends every call to AnswerMate, even the ones you'd answer. Ask your network instead.",
       ];
     case "three":
     case "id_mobile":
@@ -140,7 +141,7 @@ export function divertInstructionsText(
     method === "settings" ? " If it fails, the page below shows how to set it in your phone." : "";
   return (
     `AnswerMate: to send calls you miss to your assistant, dial ${noAnswer.turnOn} and press call.${fallback} ` +
-    `Check it with ${noAnswer.check}. Then ring your mobile from another phone and don't answer. ` +
+    `Check it with ${noAnswer.check}. Then ring your mobile from another phone, don't answer, and leave a short message after the beep. ` +
     `Full steps: ${fullStepsUrl}`
   );
 }

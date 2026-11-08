@@ -23,7 +23,10 @@ const PLACEHOLDER =
 
 /**
  * The documents a business accepts at signup. While any is a placeholder, only a business
- * signed up from a test link may go live (core/onboarding.ts). Changing a version here makes
+ * signed up from a test link may go live (core/onboarding.ts). When the solicitor's documents
+ * arrive, give each a new version as well as setting `approved`: a placeholder version never
+ * counts as approved (index.test.ts and db/onboarding.ts check), so nobody who accepted a
+ * placeholder goes live without accepting the real document. Changing a version here makes
  * an open signup page ask the person to reload, so nobody accepts a version they didn't see.
  */
 export const LEGAL_DOCUMENTS: Record<LegalDocumentType, LegalDocument> = {

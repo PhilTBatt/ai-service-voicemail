@@ -45,6 +45,8 @@ export interface OnboardingJobDeps {
   outbound: OutboundPolicy;
   /** Where the dashboard is, for the link to the full divert steps. */
   dashboardOrigin: string;
+  /** Takes the step to live. Tests stand in for an admin doing it at the same moment. */
+  advance?: typeof advanceOnboarding;
 }
 
 export type OnboardingOutcome =
@@ -160,8 +162,12 @@ async function sendDivertInstructions(
 async function goLive(deps: OnboardingJobDeps, tenantId: string): Promise<OnboardingOutcome> {
   let tenant = await loadTenant(deps.pool, tenantId);
   if (tenant.onboarding_state === "test_call_received") {
-    const result = await advanceOnboarding(deps.pool, tenantId, "live", null);
-    if (result.outcome !== "advanced") {
+    const result = await (deps.advance ?? advanceOnboarding)(deps.pool, tenantId, "live", null);
+    // Read it again either way: an admin may have taken it live by hand a moment ago, which
+    // refuses this step, and the go-live text must still go (the admin's own job was dropped
+    // as a duplicate of this one).
+    tenant = await loadTenant(deps.pool, tenantId);
+    if (tenant.onboarding_state !== "live") {
       // Not an error: an admin sees the reason on the Onboarding tab and sorts it.
       logger.info("Test call received, not live yet", {
         tenantId,
@@ -169,7 +175,6 @@ async function goLive(deps: OnboardingJobDeps, tenantId: string): Promise<Onboar
       });
       return "not-ready";
     }
-    tenant = await loadTenant(deps.pool, tenantId);
   }
   if (tenant.onboarding_state !== "live") return "not-live";
   if (tenant.go_live_sent) return "already-sent";

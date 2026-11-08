@@ -395,12 +395,36 @@ describe("POST /webhooks/twilio/sms", () => {
 });
 
 describe("the demo line (POST /webhooks/twilio/voice)", () => {
+  it("counts withheld callers as one: between them, three calls a day", async () => {
+    const { tenantId, number } = await makeTenant("demo");
+    for (const startedAt of [
+      "2026-07-15T06:30:00Z",
+      "2026-07-15T08:00:00Z",
+      "2026-07-15T09:30:00Z",
+    ]) {
+      await admin.query(
+        `INSERT INTO calls (tenant_id, provider_call_id, caller_number, started_at, ended_at)
+         VALUES ($1, $2, NULL, $3, $3)`,
+        [tenantId, `call_${randomUUID()}`, startedAt],
+      );
+    }
+    const withheld = await (await post("/webhooks/twilio/voice", call(number, "anonymous"))).text();
+    expect(withheld).toContain("three calls a day");
+    // A caller who shows their number still gets through.
+    const shown = await (
+      await post("/webhooks/twilio/voice", call(number, "+447700900322"))
+    ).text();
+    expect(shown).toContain("<Dial");
+  });
+
   it("caps each caller at three calls a day, counting in UK time", async () => {
     const { tenantId, number } = await makeTenant("demo");
     const caller = "+447700900321";
-    // Three calls earlier today (NOW is 11:00 BST on 15 July), and one yesterday that doesn't count.
+    // Three calls earlier today (NOW is 11:00 BST on 15 July), the first at 00:30 BST, which is
+    // still 14 July in UTC; and one yesterday that doesn't count. Counting from UTC midnight
+    // would find only two today.
     for (const startedAt of [
-      "2026-07-15T06:30:00Z",
+      "2026-07-14T23:30:00Z",
       "2026-07-15T08:00:00Z",
       "2026-07-15T09:30:00Z",
       "2026-07-14T22:59:00Z",

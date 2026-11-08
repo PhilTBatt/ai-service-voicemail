@@ -60,7 +60,7 @@ Not on the plan's list for this step, but launch needs them too (from PROGRESS):
 - **Step 6:** the live check: a real test call, with its text and email within 60 s.
 - **Step 7:** the Appendix A wording approved, and the first eval runs.
 - **Step 8:** the Azure subscription, then production.
-- **Step 9:** the demo number, the demo inbox and Ant's mobile, then the 20-call check.
+- **Step 9:** a way to create the demo business in production, the demo number, the demo inbox and Ant's mobile, then the 20-call check and the reply-latency check (p95 under 1.5 s; decision 007 measured Retell's p90 at 1.7 to 1.9 s).
 - **Step 12:** a GoCardless sandbox account, and the decisions on Stripe and on bundles.
 - **Step 13:** how long to keep billing records (with Phil's accountant).
 - **Step 14:** the status page (decision 014), the synthetic calls' budget, and the restore drill.

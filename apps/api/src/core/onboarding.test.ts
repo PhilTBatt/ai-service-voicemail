@@ -1,6 +1,12 @@
-import { ONBOARDING_STATES, type OnboardingState } from "@callmate/shared";
+import {
+  MOBILE_NETWORK_KEYS,
+  ONBOARDING_STATES,
+  divertInstructionsText,
+  type OnboardingState,
+} from "@callmate/shared";
 import { describe, expect, it } from "vitest";
 import { canAdvance, goLiveVerdict, nextState, type OnboardingFacts } from "./onboarding.ts";
+import { smsEncoding, toGsm7 } from "./sms.ts";
 
 /** Every fact in place, except that payment and pilot are tested on their own. */
 const EVERYTHING: OnboardingFacts = {
@@ -98,5 +104,17 @@ describe("going live on placeholder documents", () => {
       reason: "The legal documents are still placeholders, so only a test business can go live",
     });
     expect(goLiveVerdict({ ...placeholders, isTest: true }).ok).toBe(true);
+  });
+});
+
+describe("the divert instructions text", () => {
+  it("fits in three GSM-7 segments for every network, even with a long dashboard address", () => {
+    const steps =
+      "https://dashboard.answermate.example.co.uk/tenants/0b6d2c2e-8c5f-4d43-9c4b-0d8c2f9b7a11/phone";
+    for (const network of [...MOBILE_NETWORK_KEYS, null]) {
+      const text = toGsm7(divertInstructionsText(network, "+441134960150", steps));
+      expect(smsEncoding(text).encoding, String(network)).toBe("GSM-7");
+      expect(smsEncoding(text).segments, String(network)).toBeLessThanOrEqual(3);
+    }
   });
 });

@@ -109,8 +109,9 @@ function Instructions({ tenant }: { tenant: TenantView }) {
             your AnswerMate number.
           </li>
           <li>
-            Ring your mobile from another phone and don't answer. After the rings, you'll hear
-            AnswerMate. That call is your test call: it tells us your divert works.
+            Ring your mobile from another phone and don't answer. After the rings you'll hear a
+            short message and a beep: say a few words, then hang up. That's your test call: it tells
+            us your divert works.
           </li>
         </ol>
       </section>

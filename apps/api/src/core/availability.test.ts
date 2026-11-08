@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isOnHolidayAt, isOpenAt, perCallVariables } from "./availability.ts";
+import { isOnHolidayAt, isOpenAt, perCallVariables, startOfUkDay } from "./availability.ts";
 import type { OpeningHours } from "./profile.ts";
 
 // Mon–Fri 08:00–18:00, Sat 09:00–13:00, Sun 09:00–12:00 (Sunday hours only for the clock-change tests).
@@ -88,5 +88,23 @@ describe("perCallVariables", () => {
         at("2026-07-15T20:00:00Z"),
       ),
     ).toEqual({ open_now: "no", holiday_mode: "no" });
+  });
+});
+
+describe("startOfUkDay", () => {
+  const start = (iso: string) => startOfUkDay(new Date(iso)).toISOString();
+
+  it("finds UK midnight in winter and summer, and just after midnight in BST", () => {
+    expect(start("2026-01-15T12:00:00Z")).toBe("2026-01-15T00:00:00.000Z"); // GMT
+    expect(start("2026-07-15T12:00:00Z")).toBe("2026-07-14T23:00:00.000Z"); // BST
+    expect(start("2026-07-14T23:30:00Z")).toBe("2026-07-14T23:00:00.000Z"); // 00:30 BST on the 15th
+  });
+
+  it("finds it on the days the clocks change", () => {
+    // 29 March: the clocks go forward at 01:00 GMT, so the day began at 00:00 GMT.
+    expect(start("2026-03-29T12:00:00Z")).toBe("2026-03-29T00:00:00.000Z");
+    // 25 October: they go back at 01:00 GMT (02:00 BST), so the day began at 00:00 BST.
+    expect(start("2026-10-25T00:30:00Z")).toBe("2026-10-24T23:00:00.000Z");
+    expect(start("2026-10-25T12:00:00Z")).toBe("2026-10-24T23:00:00.000Z");
   });
 });

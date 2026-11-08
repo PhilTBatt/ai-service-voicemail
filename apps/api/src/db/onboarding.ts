@@ -49,7 +49,13 @@ async function loadFacts(
               t.contact_name IS NOT NULL AS has_contact_name,
               t.notification_mobile IS NOT NULL AS has_mobile,
               p.synced_at IS NOT NULL AS agent_synced,
-              EXISTS (SELECT 1 FROM calls c WHERE c.tenant_id = t.id) AS has_call
+              -- The test call proves the divert, so only a call after the instructions counts.
+              EXISTS (SELECT 1 FROM calls c WHERE c.tenant_id = t.id
+                        AND c.started_at > (SELECT min(a.created_at) FROM audit_log a
+                                            WHERE a.tenant_id = t.id
+                                              AND a.action = 'onboarding.advanced'
+                                              AND a.details->>'to' = 'divert_instructions_sent')
+                     ) AS has_call
        FROM tenants t
        LEFT JOIN LATERAL (SELECT version, synced_at FROM agent_profiles
                           WHERE tenant_id = t.id ORDER BY version DESC LIMIT 1) p ON true
@@ -64,11 +70,14 @@ async function loadFacts(
     status: row.status,
     facts: {
       termsAccepted: row.documents_accepted === 3, // terms, DPA and privacy notice
-      // Each accepted version is the current one, and the current one is solicitor-approved.
+      // Each accepted version is the current one, the current one is solicitor-approved, and
+      // it isn't a placeholder (approving one by mistake mustn't approve every placeholder
+      // acceptance with it).
       documentsApproved: LEGAL_DOCUMENT_TYPES.every(
         (type) =>
           row.accepted_versions[type] === LEGAL_DOCUMENTS[type].version &&
-          LEGAL_DOCUMENTS[type].approved,
+          LEGAL_DOCUMENTS[type].approved &&
+          !/placeholder/i.test(LEGAL_DOCUMENTS[type].version),
       ),
       isTest: row.is_test,
       paymentReady: false, // Step 12
