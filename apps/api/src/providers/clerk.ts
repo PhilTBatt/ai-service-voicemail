@@ -24,6 +24,12 @@ export interface ClerkAuthOptions {
    * `azp` claim), and a token made for any other site is refused.
    */
   authorizedParties: string[];
+  /**
+   * Clerk's JWT public key (PEM). With it, verifying a token needs no call to Clerk at all; without
+   * it, the SDK fetches Clerk's keys, and again for any token naming a key it hasn't seen, which
+   * anyone can send.
+   */
+  jwtKey?: string | undefined;
 }
 
 /** The parts of a Clerk user this adapter reads. */
@@ -66,6 +72,8 @@ export class ClerkAuthProvider implements AuthProvider {
         verifyToken(token, {
           secretKey: options.secretKey,
           authorizedParties: options.authorizedParties,
+          // The SDK's own words: "Networkless if the `jwtKey` is provided."
+          ...(options.jwtKey && { jwtKey: options.jwtKey }),
         }),
       getUser: (userId) => client.users.getUser(userId),
       deleteUser: (userId) => client.users.deleteUser(userId),

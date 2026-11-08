@@ -241,6 +241,7 @@ export function dashboardRouter({
   // The agent profile: what the tenant edits, plus how the sync of the latest version is
   // going ("live in about a minute", or the error). Null before the first save.
   tenant.get("/profile", async (_req, res) => {
+    const isAdmin = principalOf(res).role === "admin";
     const tenantId = tenantIdOf(res);
     const row = await withTenant(
       pool,
@@ -258,7 +259,7 @@ export function dashboardRouter({
     );
     res.json(
       row
-        ? presentProfile(row)
+        ? presentProfile(row, isAdmin)
         : ({ profile: null, version: null, sync: null } satisfies ProfileView),
     );
   });
@@ -442,7 +443,7 @@ export function dashboardRouter({
   return router;
 }
 
-function presentProfile(row: ProfileRow): ProfileView {
+function presentProfile(row: ProfileRow, isAdmin: boolean): ProfileView {
   return {
     // Checked against the schema when saved; the editor checks again before saving back.
     profile: {
@@ -459,7 +460,9 @@ function presentProfile(row: ProfileRow): ProfileView {
     sync: {
       state: row.synced_at ? "live" : row.sync_error ? "error" : "pending",
       syncedAt: row.synced_at?.toISOString() ?? null,
-      error: row.sync_error,
+      // The voice platform's own words, which can name its internals: Phil's to read. The
+      // tradesperson sees that it failed, and an alert has already gone to Phil.
+      error: isAdmin ? row.sync_error : null,
     },
   };
 }

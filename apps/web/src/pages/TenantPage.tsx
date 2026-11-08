@@ -8,7 +8,7 @@ import {
   type SwitchView,
   type TenantView,
 } from "@callmate/shared";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router";
 import { asError, useApi, useLoad } from "../api.ts";
 import { callsQuery, NO_FILTERS, type CallFilters } from "../calls-query.ts";
@@ -85,6 +85,11 @@ function Calls({ tenantId }: { tenantId: string }) {
   const [error, setError] = useState<Error | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const query = callsQuery(filters);
+  // Which list is on screen now, so a page that arrives for an earlier filter is dropped.
+  const shown = useRef(`${tenantId}?${query}`);
+  useEffect(() => {
+    shown.current = `${tenantId}?${query}`;
+  }, [tenantId, query]);
 
   // A new filter starts again from the newest call.
   useEffect(() => {
@@ -107,12 +112,16 @@ function Calls({ tenantId }: { tenantId: string }) {
 
   const loadMore = async () => {
     if (!pages?.nextBefore) return;
+    const asked = `${tenantId}?${query}`;
     setLoadingMore(true);
     try {
       const next = await api<CallListView>(
         `/tenants/${tenantId}/calls?${callsQuery(filters, pages.nextBefore)}`,
       );
-      setPages({ calls: [...pages.calls, ...next.calls], nextBefore: next.nextBefore });
+      if (shown.current !== asked) return; // the filter changed while it loaded
+      setPages((list) =>
+        list ? { calls: [...list.calls, ...next.calls], nextBefore: next.nextBefore } : list,
+      );
     } catch (caught) {
       setError(asError(caught));
     } finally {

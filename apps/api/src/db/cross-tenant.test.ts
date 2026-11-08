@@ -7,6 +7,7 @@ import {
   createTenant,
   estimateCosts,
   findTenantIdByNumber,
+  listCurrentUsage,
   listTenants,
 } from "./cross-tenant.ts";
 import { createPool } from "./pool.ts";
@@ -203,5 +204,22 @@ describe("estimateCosts", () => {
       },
     });
     expect(unpriced).toEqual(["mystery:widgets", "unpriced-model:input_tokens"]);
+  });
+});
+
+describe("listCurrentUsage", () => {
+  it("counts calls in the UK month: the first hour of 1 August (BST) is still July in UTC", async () => {
+    const tenantId = await createTenant(admin, {
+      businessName: "Month End Plumbing",
+      trade: "plumber",
+    });
+    await admin.query(
+      `INSERT INTO calls (tenant_id, provider_call_id, started_at)
+       VALUES ($1, $2, '2026-07-31T22:30:00Z'), ($1, $3, '2026-07-31T23:30:00Z')`,
+      [tenantId, `call_${randomUUID()}`, `call_${randomUUID()}`],
+    );
+    // 01:15 BST on 1 August. The first call was at 23:30 BST on 31 July, the second at 00:30 on 1 August.
+    const usage = await listCurrentUsage(admin, new Date("2026-08-01T00:15:00Z"));
+    expect(usage.find((row) => row.tenantId === tenantId)).toMatchObject({ calls: 1 });
   });
 });

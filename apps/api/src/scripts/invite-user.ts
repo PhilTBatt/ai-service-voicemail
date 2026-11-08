@@ -8,7 +8,12 @@ import { parseArgs } from "node:util";
 import { z } from "zod";
 import { loadConfig } from "../config.ts";
 import { ROLES } from "../db/accounts.ts";
-import { addMembership, createAdminPool, inviteUser } from "../db/cross-tenant.ts";
+import {
+  addMembership,
+  auditScriptAction,
+  createAdminPool,
+  inviteUser,
+} from "../db/cross-tenant.ts";
 
 const { values } = parseArgs({
   options: {
@@ -52,6 +57,11 @@ try {
     process.exitCode = 1;
   } else {
     if (tenant !== undefined) await addMembership(admin, tenant, result.userId);
+    await auditScriptAction(admin, {
+      tenantId: tenant ?? null,
+      action: "user.invited",
+      details: { role, userId: result.userId },
+    });
     console.log(
       `Invited as ${role}${tenant ? ` of tenant ${tenant}` : ""}. Their first login with that address becomes the account.`,
     );

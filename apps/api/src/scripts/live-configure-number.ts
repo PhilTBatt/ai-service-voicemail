@@ -8,7 +8,12 @@
 //                                                         record a console-bought number, then apply
 import { parseArgs } from "node:util";
 import { loadConfig } from "../config.ts";
-import { activeNumberFor, createAdminPool, reassignNumber } from "../db/cross-tenant.ts";
+import {
+  activeNumberFor,
+  auditScriptAction,
+  createAdminPool,
+  reassignNumber,
+} from "../db/cross-tenant.ts";
 import { SEED_TENANTS } from "../db/seed.ts";
 import { TwilioTelephonyProvider } from "../providers/twilio.ts";
 
@@ -52,6 +57,11 @@ try {
     console.log(`Would record ${values.adopt} (${values.sid}) as "${demo.businessName}"'s number.`);
     if (values.confirm) {
       await reassignNumber(admin, demo.id, values.adopt, values.sid);
+      await auditScriptAction(admin, {
+        tenantId: demo.id,
+        action: "number.adopted",
+        details: { number: values.adopt, providerSid: values.sid },
+      });
       active = { number: values.adopt, providerSid: values.sid };
       console.log("Recorded.");
     }

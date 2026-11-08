@@ -1,12 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   CSV_EXPORTS,
   type AvailableNumbersView,
   type CancellationsView,
   type OnboardingView,
+  type ProfileView,
   type ProvisionedNumberView,
   type TenantView,
 } from "@callmate/shared";
@@ -49,6 +50,8 @@ let send: (
   token?: string,
 ) => Promise<Response>;
 let stop: () => Promise<void>;
+/** The API's root, for requests the helpers can't make (a body that isn't JSON). */
+let apiRoot = "";
 
 /** Two tenants, one call each, and a person in every role: the fixture for every test. */
 let tenantA: string;
@@ -90,6 +93,7 @@ beforeAll(async () => {
   }).listen(0);
   await once(server, "listening");
   const { port } = server.address() as AddressInfo;
+  apiRoot = `http://127.0.0.1:${port}/api`;
   get = (path, token) =>
     fetch(`http://127.0.0.1:${port}/api${path}`, {
       headers: token === undefined ? {} : { authorization: `Bearer ${token}` },
@@ -148,6 +152,74 @@ async function insertCall(tenantId: string, summary: string, urgency: string, st
   );
   return rows[0]!.id;
 }
+
+describe("review fixes (Step 10)", () => {
+  it("asks the login provider about a login with no account at most once a minute", async () => {
+    const asked = vi.spyOn(auth, "verifiedEmail");
+    try {
+      const token = auth.tokenFor({ subject: `sub_${randomUUID()}`, email: "nobody@example.com" });
+      expect((await get("/me", token)).status).toBe(403);
+      expect((await get("/me", token)).status).toBe(403);
+      expect(asked).toHaveBeenCalledTimes(1);
+    } finally {
+      asked.mockRestore();
+    }
+  });
+
+  it("answers a body that isn't JSON with a 400, not a 500", async () => {
+    const response = await fetch(`${apiRoot}/tenants/${tenantA}/notifications`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", authorization: `Bearer ${tokens.ownerA}` },
+      body: "{not json",
+    });
+    expect(response.status).toBe(400);
+  });
+
+  it("answers a tenant ID that can't be one with a 404, even for the admin", async () => {
+    expect((await get("/tenants/not-a-tenant/calls", tokens.admin)).status).toBe(404);
+  });
+
+  it("tells only the admin the voice platform's own words when a sync fails", async () => {
+    const tenant = await createTenant(admin, { businessName: "Sync Trouble", trade: "plumber" });
+    await admin.query(
+      "INSERT INTO agent_profiles (tenant_id, version, trade_template, sync_error) VALUES ($1, 1, 'plumber', 'Retell refused the prompt')",
+      [tenant],
+    );
+    const owner = await personFor(tenant);
+    expect((await json<ProfileView>(get(`/tenants/${tenant}/profile`, owner))).sync).toMatchObject({
+      state: "error",
+      error: null,
+    });
+    expect(
+      (await json<ProfileView>(get(`/tenants/${tenant}/profile`, tokens.admin))).sync,
+    ).toMatchObject({ state: "error", error: "Retell refused the prompt" });
+  });
+
+  it("buys one number at a time for a business", async () => {
+    const tenant = await createTenant(admin, {
+      businessName: "Two Tabs Plumbing",
+      trade: "plumber",
+    });
+    const holder = await admin.connect();
+    try {
+      // Another purchase for the same business, still going.
+      await holder.query("SELECT pg_advisory_lock(hashtext($1))", [`buy-number:${tenant}`]);
+      const response = await send(
+        "POST",
+        `/admin/tenants/${tenant}/number`,
+        { number: "+441632960993", confirm: true },
+        tokens.admin,
+      );
+      expect(response.status).toBe(409);
+      expect(await response.json()).toEqual({
+        error: "A number is already being bought for this business",
+      });
+    } finally {
+      await holder.query("SELECT pg_advisory_unlock_all()");
+      holder.release();
+    }
+  });
+});
 
 describe("authentication", () => {
   it("wants a bearer token, and one the provider recognises", async () => {

@@ -11,6 +11,7 @@ import {
 } from "@callmate/shared";
 import type pg from "pg";
 import type { CostPrices } from "../core/prices.ts";
+import { startOfUkDate, usagePeriodFor } from "../core/usage.ts";
 import { createPool } from "./pool.ts";
 
 /**
@@ -214,6 +215,56 @@ export async function auditAdminAction(
   );
 }
 
+/**
+ * Records what a script did (npm run invite-user, the live-* number scripts): nobody is
+ * logged in, so there's no person, and the details say "script". BUILD_PLAN Step 10: every
+ * admin action is recorded, and granting admin is the one most worth having on record.
+ */
+export async function auditScriptAction(
+  admin: AdminPool,
+  entry: { tenantId: string | null; action: string; details: object },
+): Promise<void> {
+  await admin.query(
+    "INSERT INTO audit_log (tenant_id, actor_user_id, action, details) VALUES ($1, NULL, $2, $3)",
+    [entry.tenantId, entry.action, { via: "script", ...entry.details }],
+  );
+}
+
+/** Whether there's a business with this ID (any status). A malformed ID is simply "no". */
+export async function tenantExists(admin: AdminPool, tenantId: string): Promise<boolean> {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(tenantId)) {
+    return false;
+  }
+  return (await admin.query("SELECT 1 FROM tenants WHERE id = $1", [tenantId])).rowCount === 1;
+}
+
+/**
+ * Runs `work` while holding a lock named `key` that no other process can take meanwhile, or
+ * returns { held: false } straight away if another holds it. For actions that mustn't overlap
+ * for one business: buying its number, deleting its data.
+ */
+export async function withAdvisoryLock<T>(
+  admin: AdminPool,
+  key: string,
+  work: () => Promise<T>,
+): Promise<{ held: true; result: T } | { held: false }> {
+  const client = await admin.connect();
+  try {
+    const { rows } = await client.query<{ locked: boolean }>(
+      "SELECT pg_try_advisory_lock(hashtext($1)) AS locked",
+      [key],
+    );
+    if (!rows[0]?.locked) return { held: false };
+    try {
+      return { held: true, result: await work() };
+    } finally {
+      await client.query("SELECT pg_advisory_unlock(hashtext($1))", [key]);
+    }
+  } finally {
+    client.release();
+  }
+}
+
 /** A flagged call with the tenant it belongs to, for the admin's review queue. */
 export type FlaggedCall = import("../routes/call-view.ts").CallRow & {
   tenant: { id: string; businessName: string };
@@ -248,8 +299,13 @@ export interface TenantUsage {
   calls: number;
 }
 
-/** Every tenant's billable seconds and call count for the period containing `today`. */
+/**
+ * Every tenant's billable seconds and call count for the period containing `today`. Months are
+ * UK months: in summer, the first hour of the 1st (UK time) is still the last day of the
+ * month before in UTC, which is what the database's own clock would use.
+ */
 export async function listCurrentUsage(admin: AdminPool, today: Date): Promise<TenantUsage[]> {
+  const { periodStart, periodEnd } = usagePeriodFor(today);
   const { rows } = await admin.query<TenantUsage>(
     `SELECT t.id AS "tenantId", t.business_name AS "businessName", t.status,
             to_char(u.period_start, 'YYYY-MM-DD') AS "periodStart",
@@ -257,14 +313,14 @@ export async function listCurrentUsage(admin: AdminPool, today: Date): Promise<T
             COALESCE(u.billable_seconds, 0)::int AS "billableSeconds",
             (SELECT count(*) FROM calls c
               WHERE c.tenant_id = t.id
-                AND c.started_at >= COALESCE(u.period_start, date_trunc('month', $1::timestamptz)::date)
-                AND c.started_at < COALESCE(u.period_end, (date_trunc('month', $1::timestamptz) + interval '1 month')::date)
+                AND c.started_at >= COALESCE(u.period_start::timestamp AT TIME ZONE 'Europe/London', $2)
+                AND c.started_at < COALESCE(u.period_end::timestamp AT TIME ZONE 'Europe/London', $3)
             )::int AS calls
      FROM tenants t
      LEFT JOIN usage_periods u
        ON u.tenant_id = t.id AND u.period_start <= $1::date AND u.period_end > $1::date
      ORDER BY t.business_name`,
-    [today],
+    [periodStart, startOfUkDate(periodStart), startOfUkDate(periodEnd)],
   );
   return rows;
 }

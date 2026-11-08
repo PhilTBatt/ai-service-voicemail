@@ -40,7 +40,18 @@ export function bearerToken(header: string | undefined): string {
   return value.startsWith("Bearer ") ? value.slice("Bearer ".length).trim() : "";
 }
 
-export function authenticate(pool: pg.Pool, auth: AuthProvider): RequestHandler {
+/** A tenant ID's shape: anything else can't be one, so it's a 404 before any lookup. */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function authenticate(
+  pool: pg.Pool,
+  auth: AuthProvider,
+  { noAccountForMs = 60_000, now = () => Date.now() } = {},
+): RequestHandler {
+  // Logins with no account here, and until when to stop asking the provider about them.
+  // Anyone can make a login with the provider, so without this each of their requests would
+  // cost a call to it. A person invited in the meantime waits at most this long.
+  const noAccount = new Map<string, number>();
   return async (req, res, next) => {
     const token = bearerToken(req.headers.authorization);
     if (token === "") {
@@ -53,9 +64,13 @@ export function authenticate(pool: pg.Pool, auth: AuthProvider): RequestHandler 
       return;
     }
     let account = await findAccountBySubject(pool, identity.subject);
-    if (account === null) {
+    if (account === null && (noAccount.get(identity.subject) ?? 0) <= now()) {
       const email = await auth.verifiedEmail(identity.subject);
       if (email !== null) account = await claimAccountByEmail(pool, identity.subject, email);
+      if (account === null) {
+        if (noAccount.size >= 10_000) noAccount.delete(noAccount.keys().next().value!);
+        noAccount.set(identity.subject, now() + noAccountForMs);
+      }
     }
     if (account === null) {
       // The subject is opaque, so it's safe to log; the email isn't, and the logger would
@@ -91,6 +106,10 @@ export function requireRole(...roles: Role[]): RequestHandler {
 export function requireTenantAccess(): RequestHandler {
   return (req: Request, res: Response, next: NextFunction) => {
     const { tenantId } = req.params;
+    if (typeof tenantId !== "string" || !UUID.test(tenantId)) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
     const principal = principalOf(res);
     const allowed =
       typeof tenantId === "string" &&

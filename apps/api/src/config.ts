@@ -70,6 +70,13 @@ const envSchema = z
       .string()
       .startsWith("sk_", "expected a Clerk secret key (sk_...)")
       .optional(),
+    // Optional: Clerk's JWT public key (PEM), so checking a login token needs no call to Clerk.
+    // Not a secret. On one line, its line breaks can be written as \n.
+    CLERK_JWT_KEY: z
+      .string()
+      .transform((key) => key.replaceAll("\\n", "\n"))
+      .pipe(z.string().startsWith("-----BEGIN PUBLIC KEY-----", "expected a PEM public key"))
+      .optional(),
     // The site the dashboard is served from. Login tokens made for any other site are refused.
     // Defaults to the local dev server (npm run dev:web).
     DASHBOARD_ORIGIN: z.url().optional(),
@@ -120,6 +127,7 @@ const envSchema = z
     adminDatabaseUrl: env.ADMIN_DATABASE_URL,
     signingSecret: env.SIGNING_SECRET,
     clerkSecretKey: env.CLERK_SECRET_KEY,
+    clerkJwtKey: env.CLERK_JWT_KEY,
     // An origin is scheme, host and port: a trailing slash or path would never match a token.
     dashboardOrigin: new URL(env.DASHBOARD_ORIGIN ?? "http://localhost:5173").origin,
     email:

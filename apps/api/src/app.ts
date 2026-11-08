@@ -115,6 +115,14 @@ export function createApp({
   // it to the client outside production. Log through the redacting logger instead, and
   // give the client nothing.
   const onError: ErrorRequestHandler = (error: unknown, req, res, _next) => {
+    // Express's body parser marks what it refuses (malformed JSON, too large) with a 4xx
+    // status and a type: that's a bad request, not a fault here.
+    const { status, type } = (error ?? {}) as { status?: unknown; type?: unknown };
+    if (typeof status === "number" && status >= 400 && status < 500 && typeof type === "string") {
+      logger.warn("Refused a request body", { method: req.method, path: req.path, type });
+      res.status(status).json({ error: "Bad request" });
+      return;
+    }
     logger.error("Unhandled request error", { error, method: req.method, path: req.path });
     res.status(500).json({ error: "Internal server error" });
   };

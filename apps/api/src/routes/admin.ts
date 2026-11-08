@@ -26,6 +26,8 @@ import { startOfUkDate, usagePeriodFor } from "../core/usage.ts";
 import {
   activeNumberFor,
   auditAdminAction,
+  tenantExists,
+  withAdvisoryLock,
   estimateCosts,
   healthSnapshot,
   listCurrentUsage,
@@ -214,40 +216,46 @@ export function adminRouter({
       return;
     }
     const { tenantId } = req.params;
-    const exists =
-      z.uuid().safeParse(tenantId).success &&
-      (await admin.query("SELECT 1 FROM tenants WHERE id = $1", [tenantId])).rowCount === 1;
-    if (!exists) {
+    if (!(await tenantExists(admin, tenantId))) {
       res.status(404).json({ error: "Not found" });
       return;
     }
-    const current = await activeNumberFor(admin, tenantId);
-    if (current) {
-      res.status(409).json({ error: `This business already has ${current.number}` });
+    // One purchase at a time for a business. Two at once (two tabs, say) would both find no
+    // number and both buy one, and the second would mark the first released here while
+    // Twilio went on charging for it.
+    const run = await withAdvisoryLock(admin, `buy-number:${tenantId}`, async () => {
+      const current = await activeNumberFor(admin, tenantId);
+      if (current) {
+        return { status: 409, body: { error: `This business already has ${current.number}` } };
+      }
+      try {
+        const bought = await buyNumberForTenant(
+          { ...numbers, admin },
+          { tenantId, number: body.data.number, confirm: true },
+        );
+        await auditAdminAction(admin, {
+          tenantId,
+          actorUserId: principalOf(res).userId,
+          action: "number.provisioned",
+          details: { via: "dashboard", number: bought.number, providerSid: bought.providerSid },
+        });
+        const view: ProvisionedNumberView = {
+          number: bought.number,
+          providerSid: bought.providerSid,
+        };
+        return { status: 200, body: view };
+      } catch (error) {
+        if (error instanceof PurchaseNotAllowedError) {
+          return { status: 409, body: { error: "Twilio refused: purchases aren't enabled" } };
+        }
+        throw error;
+      }
+    });
+    if (!run.held) {
+      res.status(409).json({ error: "A number is already being bought for this business" });
       return;
     }
-    try {
-      const bought = await buyNumberForTenant(
-        { ...numbers, admin },
-        { tenantId, number: body.data.number, confirm: true },
-      );
-      await auditAdminAction(admin, {
-        tenantId,
-        actorUserId: principalOf(res).userId,
-        action: "number.provisioned",
-        details: { via: "dashboard", number: bought.number, providerSid: bought.providerSid },
-      });
-      res.json({
-        number: bought.number,
-        providerSid: bought.providerSid,
-      } satisfies ProvisionedNumberView);
-    } catch (error) {
-      if (error instanceof PurchaseNotAllowedError) {
-        res.status(409).json({ error: "Twilio refused: purchases aren't enabled" });
-        return;
-      }
-      throw error;
-    }
+    res.status(run.result.status).json(run.result.body);
   });
 
   // Businesses that are leaving (BUILD_PLAN Step 13): callers hear "service has ended" for 30

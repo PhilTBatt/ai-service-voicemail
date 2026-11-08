@@ -58,6 +58,7 @@ async function start(config: Config): Promise<void> {
           auth: new ClerkAuthProvider({
             secretKey: config.clerkSecretKey,
             authorizedParties: [config.dashboardOrigin],
+            jwtKey: config.clerkJwtKey,
           }),
           boss,
           voice: retell,

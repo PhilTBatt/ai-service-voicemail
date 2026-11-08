@@ -20,6 +20,7 @@ import {
   deleteTenantData,
   deletionPlan,
   recordDeletionConfirmed,
+  withAdvisoryLock,
   type AdminPool,
   type DeletionPlan,
 } from "../db/cross-tenant.ts";
@@ -226,22 +227,11 @@ async function deleteData(
 ): Promise<DeletionOutcome> {
   const deletion = deps.deletion;
   if (!deletion) throw new Error("Deleting data needs the admin pool and Twilio configured");
-  const lock = await deletion.admin.connect();
-  const key = `delete-data:${job.tenantId}`;
-  try {
-    const { rows } = await lock.query<{ locked: boolean }>(
-      "SELECT pg_try_advisory_lock(hashtext($1)) AS locked",
-      [key],
-    );
-    if (!rows[0]?.locked) throw new Error(`Deleting ${job.tenantId}'s data is already running`);
-    try {
-      return await deleteDataLocked(deps, deletion, job);
-    } finally {
-      await lock.query("SELECT pg_advisory_unlock(hashtext($1))", [key]);
-    }
-  } finally {
-    lock.release();
-  }
+  const run = await withAdvisoryLock(deletion.admin, `delete-data:${job.tenantId}`, () =>
+    deleteDataLocked(deps, deletion, job),
+  );
+  if (!run.held) throw new Error(`Deleting ${job.tenantId}'s data is already running`);
+  return run.result;
 }
 
 async function deleteDataLocked(

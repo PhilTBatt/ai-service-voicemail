@@ -12,7 +12,7 @@
 import { parseArgs } from "node:util";
 import { buyNumberForTenant, searchNumbers } from "../admin/test-number.ts";
 import { loadConfig } from "../config.ts";
-import { createAdminPool } from "../db/cross-tenant.ts";
+import { auditScriptAction, createAdminPool } from "../db/cross-tenant.ts";
 import { SEED_TENANTS } from "../db/seed.ts";
 import { TwilioTelephonyProvider } from "../providers/twilio.ts";
 
@@ -78,6 +78,11 @@ if (values.search !== undefined) {
         },
         { tenantId: demo.id, number: values.buy, confirm: true },
       );
+      await auditScriptAction(admin, {
+        tenantId: demo.id,
+        action: "number.provisioned",
+        details: { number: bought.number, providerSid: bought.providerSid },
+      });
       console.log(
         `Bought ${bought.number} (${bought.providerSid}) and assigned it to the demo tenant.`,
       );
