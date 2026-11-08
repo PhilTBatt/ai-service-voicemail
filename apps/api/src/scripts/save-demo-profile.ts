@@ -7,7 +7,12 @@ import { loadConfig } from "../config.ts";
 import { saveAgentProfile, waitForSync } from "../db/agent-profiles.ts";
 import { createPool } from "../db/pool.ts";
 import { SEED_TENANTS } from "../db/seed.ts";
+import { lastHeartbeat, workerState } from "../db/worker-heartbeat.ts";
 import { startQueue } from "../jobs/queue.ts";
+
+/** "13:06:20", UK time. */
+const ukTime = (at: Date) =>
+  at.toLocaleTimeString("en-GB", { timeZone: "Europe/London", hour12: false });
 
 const { values } = parseArgs({
   options: {
@@ -66,9 +71,13 @@ try {
       );
       process.exitCode = 1;
     } else {
-      console.log(
-        `Not synced after ${waitSeconds} s. Is the worker running? Start it in another terminal with: npm run worker\nThe sync stays queued, so it runs once the worker starts.`,
-      );
+      // The worker checks in every 30 seconds (db/worker-heartbeat.ts), so this can say which.
+      const worker = workerState(await lastHeartbeat(pool), new Date());
+      const why =
+        worker.state === "running"
+          ? `The worker is running (it checked in at ${ukTime(worker.seenAt)}) but hasn't synced it: its log says why.`
+          : `${worker.state === "never" ? "No worker has ever checked in" : `The worker hasn't checked in since ${ukTime(worker.seenAt)}`}, so it isn't running. Start it in another terminal with: npm run worker\nThe sync stays queued, so it runs once the worker starts.`;
+      console.log(`Not synced after ${waitSeconds} s. ${why}`);
     }
   }
 } finally {

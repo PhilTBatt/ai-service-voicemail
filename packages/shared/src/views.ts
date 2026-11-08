@@ -131,6 +131,13 @@ export interface HealthView {
   deadLetteredJobs24h: number;
   /** Businesses whose latest profile failed to reach the voice platform. */
   failedSyncs: { tenantId: string; businessName: string; version: number; error: string }[];
+  /**
+   * The worker's last check-in: running, down (four check-ins missed), or never (none on
+   * record). Without a worker, no syncs, summaries or texts happen.
+   */
+  worker: { state: "running" | "down" | "never"; lastSeen: string | null };
+  /** Businesses whose latest profile has waited over 5 minutes, neither synced nor failed. */
+  waitingSyncs: { tenantId: string; businessName: string; version: number; savedAt: string }[];
 }
 
 /** PUT /api/admin/kill-switch */

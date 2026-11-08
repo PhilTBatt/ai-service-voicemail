@@ -80,12 +80,29 @@ function Health() {
         </button>
         {error && <ErrorNote error={error} />}
       </div>
+      <Worker worker={data.worker} />
       <div className="stats">
         <Stat label="Calls sent to voicemail" value={data.fallbackCalls} />
         <Stat label="Texts and emails that failed" value={data.failedNotifications} />
         <Stat label="Jobs that failed every retry" value={data.deadLetteredJobs24h} />
       </div>
       <p className="muted">Counts cover the last 24 hours.</p>
+      {data.waitingSyncs.length > 0 && (
+        <div className="card error">
+          <h3>Assistants waiting to be updated</h3>
+          <p className="muted">
+            Saved over five minutes ago, and nothing has synced them yet: is the worker running?
+          </p>
+          <ul>
+            {data.waitingSyncs.map((sync) => (
+              <li key={sync.tenantId}>
+                <Link to={`/tenants/${sync.tenantId}/profile`}>{sync.businessName}</Link>, version{" "}
+                {sync.version}, saved {formatUkDateTime(sync.savedAt)}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {data.failedSyncs.length > 0 && (
         <div className="card error">
           <h3>Assistants that couldn't be updated</h3>
@@ -100,6 +117,30 @@ function Health() {
         </div>
       )}
     </section>
+  );
+}
+
+/** Whether anything is running the jobs: syncs, summaries, texts and emails. */
+function Worker({ worker }: { worker: HealthView["worker"] }) {
+  if (worker.state === "running") {
+    return (
+      <p className="muted">
+        The worker is running: it last checked in at {formatUkDateTime(worker.lastSeen!)}.
+      </p>
+    );
+  }
+  return (
+    <div className="card error">
+      <p>
+        <strong>
+          {worker.state === "never"
+            ? "No worker has checked in yet."
+            : `The worker hasn't checked in since ${formatUkDateTime(worker.lastSeen!)}.`}
+        </strong>{" "}
+        Until one runs, assistants aren't updated and no call summaries, texts or emails go out.
+        Check the worker's logs (locally, start it with npm run worker).
+      </p>
+    </div>
   );
 }
 

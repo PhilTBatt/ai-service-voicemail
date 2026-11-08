@@ -20,6 +20,8 @@ test("the admin marks a flagged call reviewed, and it leaves the queue", async (
   await signIn(page, "admin@example.com");
   await page.getByRole("link", { name: "Admin" }).click();
   await expect(page.getByRole("heading", { name: "Calls to review" })).toBeVisible();
+  // No worker runs during the smoke tests, and the health panel says so.
+  await expect(page.getByText("No worker has checked in yet.")).toBeVisible();
   // The pipeline's flag, in words, on the seeded call.
   await expect(page.getByText("Named a price", { exact: true })).toBeVisible();
   await expect(page.getByText("Fuse box tripping.")).toBeVisible();

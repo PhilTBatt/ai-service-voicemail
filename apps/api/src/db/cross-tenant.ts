@@ -153,15 +153,31 @@ export interface HealthSnapshot {
   failedNotifications: number;
   /** Tenants whose latest profile version failed to sync, with the error. */
   failedSyncs: { tenantId: string; businessName: string; version: number; error: string }[];
+  /** When the worker last checked in (db/worker-heartbeat.ts), or null if it never has. */
+  workerSeenAt: Date | null;
+  /**
+   * Tenants whose latest profile was saved before `waitingBefore` and has neither synced nor
+   * failed: nothing has run its sync, which a worker that's down looks like.
+   */
+  waitingSyncs: { tenantId: string; businessName: string; version: number; savedAt: Date }[];
 }
 
-export async function healthSnapshot(admin: AdminPool, since: Date): Promise<HealthSnapshot> {
-  const [counts, syncs] = await Promise.all([
-    admin.query<{ kill_switch_on: boolean; fallback_calls: number; failed_notifications: number }>(
+export async function healthSnapshot(
+  admin: AdminPool,
+  { since, waitingBefore }: { since: Date; waitingBefore: Date },
+): Promise<HealthSnapshot> {
+  const [counts, syncs, waiting] = await Promise.all([
+    admin.query<{
+      kill_switch_on: boolean;
+      fallback_calls: number;
+      failed_notifications: number;
+      worker_seen_at: Date | null;
+    }>(
       `SELECT (SELECT kill_switch_on FROM system_settings) AS kill_switch_on,
               (SELECT count(*) FROM calls WHERE via_fallback AND started_at >= $1)::int AS fallback_calls,
               (SELECT count(*) FROM notifications
-                WHERE status IN ('failed', 'undelivered') AND updated_at >= $1)::int AS failed_notifications`,
+                WHERE status IN ('failed', 'undelivered') AND updated_at >= $1)::int AS failed_notifications,
+              (SELECT seen_at FROM worker_heartbeat) AS worker_seen_at`,
       [since],
     ),
     admin.query<{ tenantId: string; businessName: string; version: number; error: string }>(
@@ -172,6 +188,18 @@ export async function healthSnapshot(admin: AdminPool, since: Date): Promise<Hea
        WHERE p.sync_error IS NOT NULL
        ORDER BY t.business_name`,
     ),
+    // A cancelled business's agent is gone, so its last profile has nothing to sync to.
+    admin.query<{ tenantId: string; businessName: string; version: number; savedAt: Date }>(
+      `SELECT t.id AS "tenantId", t.business_name AS "businessName", p.version,
+              p.created_at AS "savedAt"
+       FROM tenants t
+       JOIN LATERAL (SELECT version, synced_at, sync_error, created_at FROM agent_profiles
+                     WHERE tenant_id = t.id ORDER BY version DESC LIMIT 1) p ON true
+       WHERE p.synced_at IS NULL AND p.sync_error IS NULL AND p.created_at < $1
+         AND t.status <> 'cancelled'
+       ORDER BY p.created_at`,
+      [waitingBefore],
+    ),
   ]);
   const row = counts.rows[0]!;
   return {
@@ -179,6 +207,8 @@ export async function healthSnapshot(admin: AdminPool, since: Date): Promise<Hea
     fallbackCalls: row.fallback_calls,
     failedNotifications: row.failed_notifications,
     failedSyncs: syncs.rows,
+    workerSeenAt: row.worker_seen_at,
+    waitingSyncs: waiting.rows,
   };
 }
 

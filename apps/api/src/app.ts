@@ -2,6 +2,7 @@ import express, { type ErrorRequestHandler } from "express";
 import type pg from "pg";
 import type { AlertFn } from "./alerts.ts";
 import type { OutboundPolicy } from "./core/outbound-allowlist.ts";
+import { lastHeartbeat, workerState } from "./db/worker-heartbeat.ts";
 import type { EnqueueNotifications } from "./jobs/enqueue-notifications.ts";
 import type { EnqueueOnboarding } from "./jobs/onboarding.ts";
 import { logger } from "./logger.ts";
@@ -69,6 +70,22 @@ export function createApp({
   // database outage never makes Azure restart containers that are otherwise healthy.
   app.get("/healthz", (_req, res) => {
     res.json({ status: "ok" });
+  });
+
+  // The worker's check-in, for an availability alert (Step 8): 503 once it has missed four.
+  // The API can be fine while the worker is down, so this stays out of /healthz and /readyz,
+  // which decide whether Azure restarts or routes to this API instance.
+  app.get("/healthz/worker", async (_req, res) => {
+    try {
+      const worker = workerState(await lastHeartbeat(pool), new Date());
+      res.status(worker.state === "running" ? 200 : 503).json({
+        status: worker.state,
+        lastSeen: worker.state === "never" ? null : worker.seenAt.toISOString(),
+      });
+    } catch (error) {
+      logger.warn("Worker check-in lookup failed", { error });
+      res.status(503).json({ status: "unknown", lastSeen: null });
+    }
   });
 
   // Readiness: can this instance do useful work? A 503 tells the load balancer to stop

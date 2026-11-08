@@ -3,6 +3,7 @@
 import { ConfigError, loadConfig } from "./config.ts";
 import { createAdminPool } from "./db/cross-tenant.ts";
 import { createPool } from "./db/pool.ts";
+import { recordHeartbeat, startHeartbeat } from "./db/worker-heartbeat.ts";
 import { startQueue } from "./jobs/queue.ts";
 import { logger } from "./logger.ts";
 import { registerJobs } from "./worker-jobs.ts";
@@ -20,11 +21,15 @@ try {
     { ...config, retellApiKey: config.retellApiKey },
     { boss, pool, admin },
   );
+  // The check-in the health panel, /healthz/worker and npm run demo:profile read.
+  const startedAt = new Date();
+  const heartbeat = startHeartbeat(() => recordHeartbeat(pool, startedAt));
   logger.info("Worker listening", { queues, nodeEnv: config.nodeEnv });
 
   // Let the job in hand finish, then close the queue and both pools (Azure sends SIGTERM).
   const shutdown = (signal: NodeJS.Signals) => {
     logger.info("Worker shutting down", { signal });
+    heartbeat.stop();
     void boss
       .stop({ graceful: true, timeout: 30_000, close: true })
       .then(() => Promise.all([pool.end(), admin?.end()]))

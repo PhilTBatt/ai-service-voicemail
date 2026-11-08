@@ -57,6 +57,9 @@ export default async function setup(): Promise<void> {
     // definitions stay; only queued, retrying and finished jobs go. The tables belong to the app
     // role, which the owner role is a member of.
     await owner.query("TRUNCATE pgboss.job, pgboss.job_dependency");
+    // No worker has checked in at the start of a run (db/worker-heartbeat.ts): the tests that
+    // need one record it, and the smoke tests show the admin a worker that isn't running.
+    await owner.query("TRUNCATE worker_heartbeat");
   } finally {
     await owner.end();
   }

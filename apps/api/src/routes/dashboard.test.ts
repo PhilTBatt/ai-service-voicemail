@@ -7,6 +7,7 @@ import {
   type AvailableNumbersView,
   type CallReviewedView,
   type CancellationsView,
+  type HealthView,
   type OnboardingView,
   type ProfileView,
   type ProvisionedNumberView,
@@ -1043,6 +1044,34 @@ describe("admin screens", () => {
       error: "Retell refused the prompt",
     });
     expect(typeof health.deadLetteredJobs24h).toBe("number");
+  });
+
+  it("names the syncs nothing has run, and says whether the worker is checking in", async () => {
+    const stuck = await createTenant(admin, { businessName: "Stuck Sync", trade: "plumber" });
+    const fresh = await createTenant(admin, { businessName: "Fresh Sync", trade: "plumber" });
+    const gone = await createTenant(admin, { businessName: "Gone Sync", trade: "plumber" });
+    await admin.query("UPDATE tenants SET status = 'cancelled' WHERE id = $1", [gone]);
+    // By the test app's clock (10:00): saved ten minutes ago and never run; saved a minute ago;
+    // and a cancelled business's.
+    await admin.query(
+      `INSERT INTO agent_profiles (tenant_id, version, trade_template, created_at)
+       VALUES ($1, 1, 'plumber', '2026-11-07T09:50:00Z'),
+              ($2, 1, 'plumber', '2026-11-07T09:59:00Z'),
+              ($3, 1, 'plumber', '2026-11-07T09:50:00Z')`,
+      [stuck, fresh, gone],
+    );
+    const health = await json<HealthView>(get("/admin/health", tokens.admin));
+    const waiting = health.waitingSyncs.map((sync) => sync.tenantId);
+    expect(health.waitingSyncs.find((sync) => sync.tenantId === stuck)).toMatchObject({
+      businessName: "Stuck Sync",
+      version: 1,
+      savedAt: expect.any(String) as unknown,
+    });
+    expect(waiting).not.toContain(fresh);
+    expect(waiting).not.toContain(gone);
+    // Another test file records check-ins (db/worker-heartbeat.test.ts), so any state will do.
+    expect(["running", "down", "never"]).toContain(health.worker.state);
+    expect(health.worker.lastSeen === null).toBe(health.worker.state === "never");
   });
 
   it("flips the kill switch and says who did it", async () => {

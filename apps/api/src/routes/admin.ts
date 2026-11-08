@@ -40,6 +40,7 @@ import {
   type AdminPool,
 } from "../db/cross-tenant.ts";
 import { advanceOnboarding, onboardingStatus, setPilot } from "../db/onboarding.ts";
+import { SYNC_WAITING_AFTER_MS, workerState } from "../db/worker-heartbeat.ts";
 import { ukDateTime } from "../core/uk-time.ts";
 import { withTenant } from "../db/tenant.ts";
 import type { EnqueueOffboarding } from "../jobs/offboarding.ts";
@@ -123,12 +124,27 @@ export function adminRouter({
   // One screen: is the service healthy right now? Counts over the last 24 hours, and the
   // syncs that are currently failing.
   router.get("/health", async (_req, res) => {
-    const since = new Date(now().getTime() - DAY_MS);
+    const at = now();
+    const since = new Date(at.getTime() - DAY_MS);
     const [snapshot, deadLettered] = await Promise.all([
-      healthSnapshot(admin, since),
+      healthSnapshot(admin, {
+        since,
+        waitingBefore: new Date(at.getTime() - SYNC_WAITING_AFTER_MS),
+      }),
       countDeadLettered(pool, since),
     ]);
-    res.json({ ...snapshot, deadLetteredJobs24h: deadLettered } satisfies HealthView);
+    const { workerSeenAt, waitingSyncs, ...counts } = snapshot;
+    // Is anything running the jobs? A stopped worker used to be silent here.
+    const worker = workerState(workerSeenAt ? { seenAt: workerSeenAt } : null, at);
+    res.json({
+      ...counts,
+      deadLetteredJobs24h: deadLettered,
+      worker: {
+        state: worker.state,
+        lastSeen: worker.state === "never" ? null : worker.seenAt.toISOString(),
+      },
+      waitingSyncs: waitingSyncs.map((sync) => ({ ...sync, savedAt: sync.savedAt.toISOString() })),
+    } satisfies HealthView);
   });
 
   // The kill switch: on sends every caller on every number to the fallback voicemail.
