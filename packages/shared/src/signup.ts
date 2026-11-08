@@ -16,6 +16,8 @@ export interface LegalDocument {
   approved: boolean;
   /** What the signup page shows. */
   summary: string;
+  /** Where the full text is, once there is one: the signup and documents pages link to it. */
+  url?: string;
 }
 
 const PLACEHOLDER =
@@ -49,6 +51,36 @@ export const LEGAL_DOCUMENTS: Record<LegalDocumentType, LegalDocument> = {
     summary: PLACEHOLDER,
   },
 };
+
+/** A business's latest accepted version of each document, as the API reads it. */
+export type AcceptedVersions = Partial<Record<LegalDocumentType, string>>;
+
+/**
+ * The documents whose current version a business hasn't accepted: never accepted, or changed
+ * since (a new version above). The dashboard asks the owner to accept them; the go-live rule
+ * already refuses a business without them (db/onboarding.ts).
+ */
+export function documentsToAccept(accepted: AcceptedVersions): LegalDocumentType[] {
+  return LEGAL_DOCUMENT_TYPES.filter((type) => accepted[type] !== LEGAL_DOCUMENTS[type].version);
+}
+
+const versionSeen = z.string().min(1).max(100);
+
+/**
+ * POST /api/tenants/:id/documents/accept: the version of each document the owner read and
+ * accepted. The API checks each is still the current one, so nobody accepts a version they
+ * didn't see.
+ */
+export const acceptDocumentsSchema = z.object({
+  versions: z
+    .strictObject({
+      terms: versionSeen.optional(),
+      dpa: versionSeen.optional(),
+      privacy_notice: versionSeen.optional(),
+    })
+    .refine((versions) => Object.values(versions).some(Boolean), "Accept at least one document"),
+});
+export type AcceptDocumentsInput = z.infer<typeof acceptDocumentsSchema>;
 
 /** The UK mobile networks Appendix C has notes for, and "other". */
 export const MOBILE_NETWORKS = {

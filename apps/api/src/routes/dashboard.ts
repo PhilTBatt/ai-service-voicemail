@@ -8,6 +8,9 @@
 import {
   CSV_EXPORTS,
   URGENCIES,
+  acceptDocumentsSchema,
+  documentsToAccept,
+  type DocumentsView,
   type CallListView,
   type AgentProfileInput,
   type CreatedSignupLinkView,
@@ -37,6 +40,12 @@ import {
   type AdminPool,
   type TenantWithCallCounts,
 } from "../db/cross-tenant.ts";
+import {
+  acceptDocuments,
+  latestAcceptances,
+  presentDocuments,
+  versionsOf,
+} from "../db/documents.ts";
 import { listOwnTenants } from "../db/own-tenants.ts";
 import { withTenant } from "../db/tenant.ts";
 import {
@@ -200,26 +209,25 @@ export function dashboardRouter({
 
   tenant.get("/", async (_req, res) => {
     const tenantId = tenantIdOf(res);
-    const row = await withTenant(
-      pool,
-      tenantId,
-      async (client) =>
-        (
-          await client.query<TenantRow>(
-            `SELECT id, business_name, trade, status, contact_name, notification_mobile,
-                    notification_email, service_region, created_at, mobile_network,
-                    cancellation_requested_at,
-                    (SELECT number FROM phone_numbers
-                     WHERE tenant_id = tenants.id AND status = 'active') AS number
-             FROM tenants WHERE id = $1`,
-            [tenantId],
-          )
-        ).rows[0],
-    );
-    if (!row) {
+    const found = await withTenant(pool, tenantId, async (client) => {
+      const row = (
+        await client.query<TenantRow>(
+          `SELECT id, business_name, trade, status, contact_name, notification_mobile,
+                  notification_email, service_region, created_at, mobile_network,
+                  cancellation_requested_at,
+                  (SELECT number FROM phone_numbers
+                   WHERE tenant_id = tenants.id AND status = 'active') AS number
+           FROM tenants WHERE id = $1`,
+          [tenantId],
+        )
+      ).rows[0];
+      return row && { row, accepted: await latestAcceptances(client, tenantId) };
+    });
+    if (!found) {
       res.status(404).json({ error: "Not found" });
       return;
     }
+    const { row, accepted } = found;
     res.json({
       id: row.id,
       businessName: row.business_name,
@@ -236,7 +244,47 @@ export function dashboardRouter({
       releaseDueAt: row.cancellation_requested_at
         ? releaseDueAt(row.cancellation_requested_at).toISOString()
         : null,
+      documentsToAccept: documentsToAccept(versionsOf(accepted)),
     } satisfies TenantView);
+  });
+
+  // The legal documents, and where this business stands with each (BUILD_PLAN Step 11).
+  tenant.get("/documents", async (_req, res) => {
+    const tenantId = tenantIdOf(res);
+    const accepted = await withTenant(pool, tenantId, (client) =>
+      latestAcceptances(client, tenantId),
+    );
+    res.json({ documents: presentDocuments(accepted) } satisfies DocumentsView);
+  });
+
+  // The owner accepts the current versions. Only the owner: the business is the one agreeing,
+  // so an admin can't accept for it. A version that has changed since the page loaded is
+  // refused (409) rather than recorded as accepted.
+  tenant.post("/documents/accept", requireRole("owner"), async (req, res) => {
+    const body = acceptDocumentsSchema.safeParse(req.body);
+    if (!body.success) {
+      res
+        .status(400)
+        .json({ error: "Invalid body", issues: z.flattenError(body.error).fieldErrors });
+      return;
+    }
+    const tenantId = tenantIdOf(res);
+    const result = await acceptDocuments(
+      pool,
+      tenantId,
+      principalOf(res).userId,
+      body.data,
+      enqueueOnboardingWith(boss),
+    );
+    if (result.outcome === "stale") {
+      res.status(409).json({
+        error:
+          "These documents have changed since the page loaded: reload to read the current versions",
+        stale: result.stale,
+      });
+      return;
+    }
+    res.json({ documents: presentDocuments(result.latest) } satisfies DocumentsView);
   });
 
   // The agent profile: what the tenant edits, plus how the sync of the latest version is

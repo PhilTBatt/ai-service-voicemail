@@ -3,7 +3,7 @@
 // the other doesn't expect fails `npm run typecheck` instead of breaking a page at runtime.
 // Times are ISO 8601 instants in UTC; the dashboard shows them in UK time.
 import type { OnboardingState } from "./onboarding.ts";
-import type { MobileNetwork } from "./signup.ts";
+import type { LegalDocumentType, MobileNetwork } from "./signup.ts";
 import type { AgentProfileInput } from "./profile.ts";
 
 export type Role = "owner" | "admin" | "reseller";
@@ -53,6 +53,31 @@ export interface TenantView {
   /** When it asked to cancel, and when its number may then be released; null if it hasn't. */
   cancellationRequestedAt: string | null;
   releaseDueAt: string | null;
+  /** Documents whose current version the business hasn't accepted: the dashboard asks the owner. */
+  documentsToAccept: LegalDocumentType[];
+}
+
+/** One legal document, and where this business stands with it. */
+export interface DocumentView {
+  type: LegalDocumentType;
+  title: string;
+  /** The current version: what accepting now records. */
+  version: string;
+  summary: string;
+  /** The full text, once there is one. */
+  url: string | null;
+  /** False while it's a placeholder: only a test business can go live on it. */
+  approved: boolean;
+  /** The latest version this business accepted, and when; null if it never has. */
+  acceptedVersion: string | null;
+  acceptedAt: string | null;
+  /** True when the accepted version isn't the current one. */
+  needsAccepting: boolean;
+}
+
+/** GET /api/tenants/:id/documents, and the answer to POST .../documents/accept. */
+export interface DocumentsView {
+  documents: DocumentView[];
 }
 
 /** A call as a list shows it: no transcript, no recording. */

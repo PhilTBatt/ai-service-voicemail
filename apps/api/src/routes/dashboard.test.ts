@@ -4,6 +4,9 @@ import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   CSV_EXPORTS,
+  LEGAL_DOCUMENTS,
+  LEGAL_DOCUMENT_TYPES,
+  type DocumentsView,
   type AvailableNumbersView,
   type CallReviewedView,
   type CancellationsView,
@@ -28,7 +31,7 @@ import {
 import { createPool } from "../db/pool.ts";
 import { FakeAuthProvider } from "../providers/auth.fake.ts";
 import { FakeTelephonyProvider } from "../providers/telephony.fake.ts";
-import { startQueue } from "../jobs/queue.ts";
+import { ONBOARDING_QUEUE, startQueue } from "../jobs/queue.ts";
 import { FakeVoiceProvider } from "../providers/voice.fake.ts";
 import { TEST_ADMIN_DATABASE_URL, TEST_DATABASE_URL } from "../testing/databases.ts";
 
@@ -278,6 +281,14 @@ describe("authorisation matrix", () => {
       method: "POST",
     },
     { name: "GET /tenants/:id/export", path: `/tenants/${tenantA}/export` },
+    { name: "GET /tenants/:id/documents", path: `/tenants/${tenantA}/documents` },
+    // No versions: refused (400) even for the owner, so the matrix accepts nothing.
+    {
+      name: "POST /tenants/:id/documents/accept",
+      path: `/tenants/${tenantA}/documents/accept`,
+      body: {},
+      method: "POST",
+    },
     { name: "GET /tenants/:id/export.csv", path: `/tenants/${tenantA}/export.csv?table=calls` },
     { name: "GET /admin/health", path: "/admin/health" },
     { name: "PUT /admin/kill-switch", path: "/admin/kill-switch", body: {} },
@@ -357,7 +368,8 @@ describe("authorisation matrix", () => {
       "POST /signup-links": 403,
     },
     ownerB: { "GET /me": "allowed", "GET /tenants": "allowed", default: 403 },
-    admin: { default: "allowed" },
+    // The business agrees to its own documents: an admin can read them, not accept them.
+    admin: { default: "allowed", "POST /tenants/:id/documents/accept": 403 },
     reseller: {
       "GET /me": "allowed",
       "GET /tenants": "allowed",
@@ -447,6 +459,116 @@ describe("tenant isolation through the API", () => {
     expect(ids).toEqual(expect.arrayContaining([tenantA, tenantB]));
     const detail = await json<object>(get(`/tenants/${tenantB}`, tokens.admin));
     expect(detail).toMatchObject({ businessName: "Other Sparks", trade: "electrician" });
+  });
+});
+
+describe("legal documents (Step 11)", () => {
+  /** A business of its own and its owner, so other tests' acceptances can't get in the way. */
+  async function ownedBusiness(businessName: string) {
+    const tenantId = await createTenant(admin, { businessName, trade: "plumber" });
+    const subject = `sub_${randomUUID()}`;
+    const email = `owner-${randomUUID()}@example.com`;
+    const userId = await createUser(admin, { authSubject: subject, email, role: "owner" });
+    await addMembership(admin, tenantId, userId);
+    return { tenantId, userId, token: auth.tokenFor({ subject, email }) };
+  }
+  const current = Object.fromEntries(
+    LEGAL_DOCUMENT_TYPES.map((type) => [type, LEGAL_DOCUMENTS[type].version]),
+  );
+  const acceptances = async (tenantId: string) =>
+    (
+      await admin.query<{ document_type: string; document_version: string; accepted_by: string }>(
+        `SELECT document_type, document_version, accepted_by FROM terms_acceptances
+         WHERE tenant_id = $1 ORDER BY document_type, accepted_at`,
+        [tenantId],
+      )
+    ).rows;
+
+  it("asks a business that accepted an older version, or none, to accept the current one", async () => {
+    const { tenantId, userId, token } = await ownedBusiness("Docs Plumbing");
+    await admin.query(
+      `INSERT INTO terms_acceptances (tenant_id, document_type, document_version, accepted_by)
+       VALUES ($1, 'terms', 'placeholder-2026-01-01', $2), ($1, 'dpa', $3, $2)`,
+      [tenantId, userId, LEGAL_DOCUMENTS.dpa.version],
+    );
+    const view = await json<TenantView>(get(`/tenants/${tenantId}`, token));
+    expect(view.documentsToAccept).toEqual(["terms", "privacy_notice"]);
+
+    const { documents } = await json<DocumentsView>(get(`/tenants/${tenantId}/documents`, token));
+    expect(documents.map((document) => document.type)).toEqual([...LEGAL_DOCUMENT_TYPES]);
+    expect(documents.find((document) => document.type === "terms")).toMatchObject({
+      version: LEGAL_DOCUMENTS.terms.version,
+      acceptedVersion: "placeholder-2026-01-01",
+      needsAccepting: true,
+    });
+    expect(documents.find((document) => document.type === "dpa")).toMatchObject({
+      acceptedVersion: LEGAL_DOCUMENTS.dpa.version,
+      acceptedAt: expect.any(String) as unknown,
+      needsAccepting: false,
+    });
+    expect(documents.find((document) => document.type === "privacy_notice")).toMatchObject({
+      acceptedVersion: null,
+      acceptedAt: null,
+      needsAccepting: true,
+    });
+  });
+
+  it("records the owner's acceptance once, audits who, and queues a go-live check", async () => {
+    const { tenantId, userId, token } = await ownedBusiness("Accepting Plumbing");
+    const accept = () =>
+      send("POST", `/tenants/${tenantId}/documents/accept`, { versions: current }, token);
+
+    const first = await accept();
+    expect(first.status).toBe(200);
+    const { documents } = (await first.json()) as DocumentsView;
+    expect(documents.every((document) => !document.needsAccepting)).toBe(true);
+    // A second click records nothing more.
+    expect((await accept()).status).toBe(200);
+
+    expect(await acceptances(tenantId)).toEqual(
+      [...LEGAL_DOCUMENT_TYPES].sort().map((type) => ({
+        document_type: type,
+        document_version: LEGAL_DOCUMENTS[type].version,
+        accepted_by: userId,
+      })),
+    );
+    const audit = await admin.query<{ actor_user_id: string }>(
+      "SELECT actor_user_id FROM audit_log WHERE tenant_id = $1 AND action = 'documents.accepted'",
+      [tenantId],
+    );
+    expect(audit.rows).toEqual([{ actor_user_id: userId }]);
+    // Accepting may be all a business was waiting on to go live.
+    const jobs = await app.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM pgboss.job
+       WHERE name = $1 AND data->>'tenantId' = $2 AND data->>'action' = 'go-live'`,
+      [ONBOARDING_QUEUE, tenantId],
+    );
+    expect(jobs.rows[0]!.n).toBe(1);
+    expect((await json<TenantView>(get(`/tenants/${tenantId}`, token))).documentsToAccept).toEqual(
+      [],
+    );
+  });
+
+  it("refuses a version that changed since the page loaded, and records nothing", async () => {
+    const { tenantId, token } = await ownedBusiness("Stale Plumbing");
+    const response = await send(
+      "POST",
+      `/tenants/${tenantId}/documents/accept`,
+      { versions: { ...current, terms: "an-older-version" } },
+      token,
+    );
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ stale: ["terms"] });
+    expect(await acceptances(tenantId)).toEqual([]);
+  });
+
+  it("refuses an empty or unknown acceptance", async () => {
+    const { tenantId, token } = await ownedBusiness("Empty Plumbing");
+    for (const body of [{}, { versions: {} }, { versions: { cookies: "v1" } }]) {
+      const response = await send("POST", `/tenants/${tenantId}/documents/accept`, body, token);
+      expect(response.status, JSON.stringify(body)).toBe(400);
+    }
+    expect(await acceptances(tenantId)).toEqual([]);
   });
 });
 
