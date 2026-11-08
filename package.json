@@ -14,6 +14,7 @@
     "dev:web": "npm run dev --workspace @callmate/web",
     "e2e": "npm run e2e --workspace @callmate/web",
     "e2e:install": "npm exec --workspace @callmate/web -- playwright install chromium",
+    "load": "node apps/api/src/scripts/run-load-test.ts",
     "build": "npm run build --workspaces --if-present",
     "lint": "eslint .",
     "format": "prettier --write .",

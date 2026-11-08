@@ -1,0 +1,52 @@
+# The load tests (BUILD_PLAN Step 14, decision 013): npm run load, which runs k6 against the API
+# with fakes for every outside service, at 10 times the expected busy hour. A broken threshold
+# fails the job. Manual only (Actions tab, "Load tests", "Run workflow"): it takes a few
+# minutes and tests capacity, not correctness, so it doesn't belong on every push.
+name: Load tests
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  load:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: callmate
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: callmate_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U callmate -d callmate_test"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+
+    env:
+      TEST_DATABASE_URL: postgres://callmate_app@127.0.0.1:5432/callmate_test
+      TEST_ADMIN_DATABASE_URL: postgres://callmate_admin@127.0.0.1:5432/callmate_test
+      TEST_MIGRATION_DATABASE_URL: postgres://callmate_owner@127.0.0.1:5432/callmate_test?sslmode=disable
+
+    steps:
+      # Pinned to full commit SHAs, as in ci.yml.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: package.json
+          cache: npm
+      - run: npm ci
+      - name: Create database roles
+        run: docker exec -i ${{ job.services.postgres.id }} psql -v ON_ERROR_STOP=1 -U callmate -d callmate_test < apps/api/src/db/roles.sql
+      # Starts the load-test API, runs k6 from its Docker image (pinned in the script), and
+      # prints the report: the p95 of every endpoint against its threshold.
+      - run: npm run load
