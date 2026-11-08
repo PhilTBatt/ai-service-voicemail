@@ -25,6 +25,7 @@ describe("TwiML", () => {
     );
     expect(xml).toMatchSnapshot();
     expect(xml).toContain("<Sip>sip:call_123@sip.retellai.com</Sip>");
+    expect(xml).toContain('timeout="10"');
   });
 
   it("plays the fallback greeting, records for up to two minutes, and reports the recording separately", () => {

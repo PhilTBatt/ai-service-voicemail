@@ -5,6 +5,7 @@
 // notifications channel. Queued mid-call by the flow's emergency function (with the kind),
 // and again after the call by process-call (the second run finds the texts already sent).
 import type pg from "pg";
+import { gasScriptSpoken } from "../core/spoken-scripts.ts";
 import { raiseAlert, type AlertFn } from "../alerts.ts";
 import { storedFieldsSchema } from "../core/extraction.ts";
 import { emergencyCallerSms, emergencyTradespersonSms } from "../core/notifications.ts";
@@ -35,13 +36,8 @@ export type NotifyEmergencyOutcome =
       caller: DeliveryOutcome | "no-number" | "not-gas";
     };
 
-/** The agent spoke Appendix A's gas script: the only case where the caller gets a text. */
-export function gasScriptSpoken(transcript: string | null): boolean {
-  return (
-    transcript !== null &&
-    transcript.split("\n").some((line) => /^agent: .*National Gas Emergency Service/i.test(line))
-  );
-}
+// Moved to core/spoken-scripts.ts, which the post-call job uses too; kept here for importers.
+export { gasScriptSpoken };
 
 export async function runNotifyEmergency(
   { pool, sms, outbound, alert = raiseAlert }: NotifyEmergencyDeps,

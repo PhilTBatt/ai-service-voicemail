@@ -70,6 +70,37 @@ const GOOD = {
 };
 
 describe("runProcessCall", () => {
+  const DANGER_CALL =
+    "agent: Hi, you're through to Extract Plumbing. How can I help?\n" +
+    "caller: There's a burning smell coming from the fuse box.\n" +
+    "agent: If anyone is in danger, or there's a fire or smoke, please hang up now and call 999.";
+
+  it("treats a call where the agent spoke an emergency script as an emergency, whatever the summary says", async () => {
+    const { tenantId, callId } = await makeCall({ transcript: DANGER_CALL });
+    const queued: { urgency: string | null }[] = [];
+    const llm = new FakeLlmProvider().willReturn({ ...GOOD, urgency: "urgent" });
+    await runProcessCall(
+      {
+        pool: app,
+        llm,
+        enqueueNotifications: (_client, call) => {
+          queued.push(call);
+          return Promise.resolve();
+        },
+      },
+      { tenantId, callId, providerCallId: "x" },
+    );
+    expect(await callRow(tenantId, callId)).toMatchObject({ urgency: "emergency" });
+    expect(queued).toEqual([expect.objectContaining({ urgency: "emergency" })]);
+  });
+
+  it("and when the summary fails altogether", async () => {
+    const { tenantId, callId } = await makeCall({ transcript: DANGER_CALL });
+    const llm = new FakeLlmProvider().willFail("invalid-output").willFail("invalid-output");
+    await runProcessCall({ pool: app, llm }, { tenantId, callId, providerCallId: "x" });
+    expect(await callRow(tenantId, callId)).toMatchObject({ urgency: "emergency" });
+  });
+
   it("stores the extraction and the token costs", async () => {
     const { tenantId, callId } = await makeCall();
     const llm = new FakeLlmProvider().willReturn(GOOD);

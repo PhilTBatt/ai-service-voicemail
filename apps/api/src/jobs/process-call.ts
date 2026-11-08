@@ -1,6 +1,7 @@
 // The process-call job (BUILD_PLAN Step 5): turn a stored transcript into the fields the
 // tradesperson needs. Idempotent: a call that's already been extracted is skipped.
 import type pg from "pg";
+import { emergencyScriptSpoken } from "../core/spoken-scripts.ts";
 import { raiseAlert, type AlertFn } from "../alerts.ts";
 import {
   EXTRACTION_FAILED_SUMMARY,
@@ -116,9 +117,11 @@ export async function runProcessCall(
   }
   const judgeFlags = judgeVerdict && !judgeVerdict.pass ? ["judge:failed"] : [];
 
-  // A mid-call emergency function already marked the call (db/calls.ts). The extraction can
-  // add to that but never downgrade it: over-trigger on purpose.
-  const stickyEmergency = loaded.call.urgency === "emergency";
+  // A mid-call emergency function already marked the call (db/calls.ts), or the agent spoke an
+  // emergency script (a caller told to ring 999 often hangs up before that function fires).
+  // Either way the extraction can add to it but never downgrade it: over-trigger on purpose.
+  const stickyEmergency =
+    loaded.call.urgency === "emergency" || emergencyScriptSpoken(loaded.call.transcript);
   const finalUrgency: CallExtraction["urgency"] | null = stickyEmergency
     ? "emergency"
     : (extraction?.urgency ?? null);
@@ -148,15 +151,18 @@ export async function runProcessCall(
         ],
       );
     } else {
+      // No summary, but a known emergency (a spoken script) is still recorded as one.
       await client.query(
         `UPDATE calls SET summary = $2, flags = flags || $3::text[],
-                          extracted_fields = extracted_fields || $4::jsonb
+                          extracted_fields = extracted_fields || $4::jsonb,
+                          urgency = COALESCE($5, urgency)
          WHERE id = $1`,
         [
           callId,
           EXTRACTION_FAILED_SUMMARY,
           ["extraction_failed", ...guardrailFlags],
           JSON.stringify({ guardrailHits }),
+          finalUrgency,
         ],
       );
     }

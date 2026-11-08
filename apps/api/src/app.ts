@@ -45,6 +45,9 @@ export interface AppOptions {
         enqueueOnboarding?: EnqueueOnboarding;
         alert?: AlertFn;
         now?: () => Date;
+        /** How long the voice platform gets to take a call, and routing to answer at all. */
+        registerTimeoutMs?: number;
+        deadlineMs?: number;
       }
     | undefined;
 }

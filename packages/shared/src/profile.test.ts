@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { agentProfileInputSchema, type AgentProfileInput } from "./profile.ts";
+import {
+  agentProfileInputSchema,
+  storedAgentProfileSchema,
+  type AgentProfileInput,
+} from "./profile.ts";
 
 const PROFILE: AgentProfileInput = {
   trade: "plumber",
@@ -41,6 +45,34 @@ describe("agentProfileInputSchema", () => {
     expect(problems({ ...PROFILE, faqs: [faq] })).toEqual({
       "faqs.0.answer": ["can't include prices: the assistant never quotes them"],
     });
+  });
+
+  it("checks FAQ questions and service areas too, and refuses safety advice of its own", () => {
+    const priced = {
+      question: "Is your call-out fee £60?",
+      answer: "Sam will talk you through costs.",
+    };
+    expect(problems({ ...PROFILE, faqs: [priced] })).toEqual({
+      "faqs.0.question": ["can't include prices: the assistant never quotes them"],
+    });
+    expect(problems({ ...PROFILE, serviceAreas: ["Leeds (£20 travel)"] })).toEqual({
+      "serviceAreas.0": ["can't include prices: the assistant never quotes them"],
+    });
+    const advice = {
+      question: "What should I do if I smell gas?",
+      answer: "Turn it off at the meter and open the windows.",
+    };
+    expect(problems({ ...PROFILE, faqs: [advice] })).toEqual({
+      "faqs.0.answer": [
+        "can't give safety advice: the assistant only gives the approved safety messages",
+      ],
+    });
+  });
+
+  it("reads a stored profile back without the wording checks, so an older one still syncs", () => {
+    const older = { ...PROFILE, serviceAreas: ["Leeds (£20 travel)"] };
+    expect(storedAgentProfileSchema.safeParse(older).success).toBe(true);
+    expect(agentProfileInputSchema.safeParse(older).success).toBe(false);
   });
 
   it("refuses promised times in an FAQ answer", () => {

@@ -18,7 +18,11 @@ export const VOICEMAIL_MAX_SECONDS = 120;
 /** Connects the caller to the registered agent. When the dial ends, Twilio asks `actionUrl` what next. */
 export function agentDial(sipUri: string, actionUrl: string): string {
   const response = new VoiceResponse();
-  response.dial({ action: actionUrl, method: "POST", answerOnBridge: true }).sip(sipUri);
+  // Ten seconds for the voice platform to answer (Twilio adds five): if it doesn't, the caller
+  // gets the voicemail instead of half a minute of ringing (Twilio's default is 30 s).
+  response
+    .dial({ action: actionUrl, method: "POST", answerOnBridge: true, timeout: 10 })
+    .sip(sipUri);
   return response.toString();
 }
 

@@ -1,4 +1,4 @@
-import { agentProfileInputSchema } from "@callmate/shared";
+import { storedAgentProfileSchema } from "@callmate/shared";
 import { z } from "zod";
 
 // What the prompt builder needs to know about a tenant. The sync job assembles it from the
@@ -16,7 +16,9 @@ export {
   type Weekday,
 } from "@callmate/shared";
 
-export const tenantProfileSchema = agentProfileInputSchema.extend({
+// Built from the stored shape, not the editor's checks: a profile saved before a check got
+// stricter must still sync (packages/shared/src/profile.ts).
+export const tenantProfileSchema = storedAgentProfileSchema.extend({
   tenantId: z.uuid(),
   profileVersion: z.number().int().positive(),
   businessName: z.string().min(1),

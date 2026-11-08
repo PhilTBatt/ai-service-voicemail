@@ -1,4 +1,4 @@
-import { Router, urlencoded, type RequestHandler } from "express";
+import { Router, urlencoded, type Request, type RequestHandler, type Response } from "express";
 import type { EnqueueOnboarding } from "../jobs/onboarding.ts";
 import type pg from "pg";
 import { z } from "zod";
@@ -44,6 +44,23 @@ export interface TwilioRouteOptions {
   enqueueOnboarding?: EnqueueOnboarding;
   alert?: AlertFn;
   now?: () => Date;
+  /** How long the voice platform gets to take a call before the caller gets the voicemail. */
+  registerTimeoutMs?: number;
+  /** How long routing has, all told, to answer Twilio: Twilio itself gives up at 15 s. */
+  deadlineMs?: number;
+}
+
+/** Rejects if `work` hasn't settled within `ms`: for steps that mustn't keep a caller waiting. */
+function within<T>(work: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`${what} took longer than ${ms} ms`));
+    }, ms);
+  });
+  return Promise.race([work, timeout]).finally(() => {
+    clearTimeout(timer);
+  });
 }
 
 // Twilio sends more fields than these; only what each route needs is read.
@@ -97,6 +114,8 @@ export function twilioRouter({
   enqueueOnboarding,
   alert = raiseAlert,
   now = () => new Date(),
+  registerTimeoutMs = 6_000,
+  deadlineMs = 10_000,
 }: TwilioRouteOptions) {
   const router = Router();
   router.use(urlencoded({ extended: false }));
@@ -128,6 +147,21 @@ export function twilioRouter({
     });
 
   router.post("/voice", verified, async (req, res) => {
+    // Whatever happens below, the caller hears something before Twilio gives up on us (15 s):
+    // at the deadline they get the voicemail, and anything later is dropped.
+    const deadline = setTimeout(() => {
+      if (res.headersSent) return;
+      logger.warn("Inbound call routing ran out of time: voicemail", { path: req.path });
+      res.type("text/xml").send(voicemail());
+    }, deadlineMs);
+    try {
+      await routeCall(req, res);
+    } finally {
+      clearTimeout(deadline);
+    }
+  });
+
+  const routeCall = async (req: Request, res: Response) => {
     const parsed = voiceWebhookSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: "Bad request" });
@@ -144,15 +178,19 @@ export function twilioRouter({
     switch (decision.kind) {
       case "agent":
         try {
-          const { sipUri } = await voice.registerInboundCall({
-            providerAgentId: decision.providerAgentId,
-            from,
-            to,
-            variables: decision.variables,
-          });
+          const { sipUri } = await within(
+            voice.registerInboundCall({
+              providerAgentId: decision.providerAgentId,
+              from,
+              to,
+              variables: decision.variables,
+            }),
+            registerTimeoutMs,
+            "Registering the call with the voice platform",
+          );
           twiml = agentDial(sipUri, `${publicBaseUrl}/webhooks/twilio/dial-status`);
         } catch (error) {
-          // The platform is unreachable: the caller still hears something.
+          // The platform is unreachable, or too slow: the caller still hears something.
           alert("voice-platform-unreachable", { tenantId, callSid, error });
           twiml = voicemail();
         }
@@ -177,8 +215,8 @@ export function twilioRouter({
       route: decision.kind,
       ...("reason" in decision && { reason: decision.reason }),
     });
-    res.type("text/xml").send(twiml);
-  });
+    if (!res.headersSent) res.type("text/xml").send(twiml);
+  };
 
   // After the agent leg ends. A normal end hangs up; anything else means the agent never
   // answered, so the caller gets the voicemail instead of silence.

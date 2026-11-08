@@ -6,7 +6,7 @@
 // agent's own rules: no prices and no promised times, checked with the same patterns the
 // post-call scan uses. The length limits keep the prompt a sensible size.
 import { z } from "zod";
-import { mentionsPrice, promisesTime } from "./guardrail-patterns.ts";
+import { givesSafetyAdvice, mentionsPrice, promisesTime } from "./guardrail-patterns.ts";
 import { TRADES } from "./trades.ts";
 
 export const WEEKDAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const;
@@ -25,42 +25,68 @@ export const openingHoursSchema = z.partialRecord(
 );
 export type OpeningHours = z.infer<typeof openingHoursSchema>;
 
-/** Text the agent may say to a caller, written by the tenant. */
-function spoken(maxLength: number) {
-  return z
+/**
+ * Text the agent may say to a caller, written by the tenant. Checked (the editor), it may not
+ * name a price, promise a time or give safety advice of its own. Unchecked (a stored profile
+ * read back to sync it), only its shape counts: a profile saved before a check got stricter
+ * still syncs, and meets the new check the next time it's saved.
+ */
+function spoken(maxLength: number, checked: boolean) {
+  const text = z
     .string()
     .trim()
     .min(1, "can't be empty")
-    .max(maxLength, `keep it under ${maxLength} characters`)
-    .refine((text) => !mentionsPrice(text), "can't include prices: the assistant never quotes them")
+    .max(maxLength, `keep it under ${maxLength} characters`);
+  if (!checked) return text;
+  return text
     .refine(
-      (text) => !promisesTime(text),
+      (value) => !mentionsPrice(value),
+      "can't include prices: the assistant never quotes them",
+    )
+    .refine(
+      (value) => !promisesTime(value),
       "can't promise a time: the assistant never commits to one",
+    )
+    .refine(
+      (value) => !givesSafetyAdvice(value),
+      "can't give safety advice: the assistant only gives the approved safety messages",
     );
 }
 
-export const faqSchema = z.object({
-  question: z.string().trim().min(1, "can't be empty").max(200, "keep it under 200 characters"),
-  answer: spoken(600),
-});
+/** A question and its answer. The agent can repeat the question too, so both are checked. */
+function faqSchemaFor(checked: boolean) {
+  return z.object({ question: spoken(200, checked), answer: spoken(600, checked) });
+}
+
+export const faqSchema = faqSchemaFor(true);
 export type Faq = z.infer<typeof faqSchema>;
 
 export const emergencyPolicySchema = z.object({ takesEmergencyCalls: z.boolean() });
 
 export const PROFILE_LIMITS = { services: 25, serviceAreas: 25, faqs: 15 } as const;
 
+function profileSchema(checked: boolean) {
+  return z.object({
+    trade: z.enum(TRADES),
+    services: z
+      .array(spoken(80, checked))
+      .max(PROFILE_LIMITS.services, `${PROFILE_LIMITS.services} at most`),
+    // The agent reads areas out too ("Leeds (£20 travel)" would quote a price).
+    serviceAreas: z
+      .array(spoken(60, checked))
+      .max(PROFILE_LIMITS.serviceAreas, `${PROFILE_LIMITS.serviceAreas} at most`),
+    openingHours: openingHoursSchema,
+    holidayMode: z.boolean(),
+    /** ISO date (YYYY-MM-DD), or null for "until further notice". */
+    holidayUntil: z.iso.date().nullable(),
+    faqs: z.array(faqSchemaFor(checked)).max(PROFILE_LIMITS.faqs, `${PROFILE_LIMITS.faqs} at most`),
+    emergencyPolicy: emergencyPolicySchema,
+  });
+}
+
 /** What a tenant (or admin) edits. Everything else on the profile comes from the tenant row. */
-export const agentProfileInputSchema = z.object({
-  trade: z.enum(TRADES),
-  services: z.array(spoken(80)).max(PROFILE_LIMITS.services, `${PROFILE_LIMITS.services} at most`),
-  serviceAreas: z
-    .array(z.string().trim().min(1, "can't be empty").max(60, "keep it under 60 characters"))
-    .max(PROFILE_LIMITS.serviceAreas, `${PROFILE_LIMITS.serviceAreas} at most`),
-  openingHours: openingHoursSchema,
-  holidayMode: z.boolean(),
-  /** ISO date (YYYY-MM-DD), or null for "until further notice". */
-  holidayUntil: z.iso.date().nullable(),
-  faqs: z.array(faqSchema).max(PROFILE_LIMITS.faqs, `${PROFILE_LIMITS.faqs} at most`),
-  emergencyPolicy: emergencyPolicySchema,
-});
+export const agentProfileInputSchema = profileSchema(true);
+
+/** A saved profile read back for syncing: the same shape, without the wording checks. */
+export const storedAgentProfileSchema = profileSchema(false);
 export type AgentProfileInput = z.infer<typeof agentProfileInputSchema>;

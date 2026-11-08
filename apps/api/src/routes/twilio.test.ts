@@ -46,6 +46,8 @@ beforeAll(async () => {
       enqueueNotifications,
       alert,
       now: NOW,
+      // Short, so the test for a voice platform that never answers is quick.
+      registerTimeoutMs: 300,
     },
   }).listen(0);
   await once(server, "listening");
@@ -205,6 +207,64 @@ describe("POST /webhooks/twilio/voice", () => {
       );
     } finally {
       voice.registerInboundCall = register;
+    }
+  });
+
+  it("falls back to the voicemail when the voice platform takes too long, and alerts", async () => {
+    const { tenantId, number } = await makeTenant("live");
+    const register = voice.registerInboundCall.bind(voice);
+    voice.registerInboundCall = () => new Promise(() => {}); // never answers
+    try {
+      const started = Date.now();
+      const xml = await (await post("/webhooks/twilio/voice", call(number))).text();
+      expect(xml).toContain("<Record");
+      expect(Date.now() - started).toBeLessThan(3_000);
+      expect(alert).toHaveBeenCalledWith(
+        "voice-platform-unreachable",
+        expect.objectContaining({ tenantId }),
+      );
+    } finally {
+      voice.registerInboundCall = register;
+    }
+  });
+
+  it("answers with the voicemail at its deadline, whatever is still running", async () => {
+    const { number } = await makeTenant("live");
+    const stuck = new FakeVoiceProvider();
+    stuck.registerInboundCall = () => new Promise(() => {});
+    const server = createApp({
+      pool: app,
+      telephony: {
+        provider: telephony,
+        voice: stuck,
+        publicBaseUrl: PUBLIC_BASE_URL,
+        outbound,
+        enqueueSync,
+        enqueueNotifications,
+        alert,
+        now: NOW,
+        deadlineMs: 200,
+        registerTimeoutMs: 1_000,
+      },
+    }).listen(0);
+    await once(server, "listening");
+    try {
+      const { port } = server.address() as AddressInfo;
+      const params = call(number);
+      const started = Date.now();
+      const response = await fetch(`http://127.0.0.1:${port}/webhooks/twilio/voice`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          "x-twilio-signature": telephony.sign(`${PUBLIC_BASE_URL}/webhooks/twilio/voice`, params),
+        },
+        body: new URLSearchParams(params).toString(),
+      });
+      expect(await response.text()).toContain("<Record");
+      expect(Date.now() - started).toBeLessThan(900); // the deadline, not the slower timeout
+    } finally {
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
     }
   });
 
