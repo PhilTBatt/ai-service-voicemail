@@ -8,3 +8,5 @@ logs/
 evals/reports/
 test-results/
 playwright-report/
+# Database backups hold call content: never commit one.
+*.dump

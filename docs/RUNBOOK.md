@@ -60,8 +60,7 @@ Text the notification number from the demo tenant's registered mobile: `OFF`, `O
 | Call ended but no "Voice call ended" line                             | Retell couldn't reach the webhook                                                                               | Wait 15 minutes for reconciliation, or check the tunnel                                        |
 | "SMS blocked by the outbound allowlist"                               | Your mobile isn't in `OUTBOUND_ALLOWLIST`                                                                       | Add it in E.164 (`+44...`) and restart the worker                                              |
 | "notification-no-mobile" alert                                        | The tenant has no notification mobile                                                                           | Set it on the demo tenant                                                                      |
-| Jobs piling up in `notify-email`                                      | Expected until the email adapter exists                                                                         | Nothing                                                                                        |
-| `ALERT dead-letter` in the worker log                                 | A job failed every retry                                                                                        | The alert names the queue and job; the row's `sync_error` or the job's error says why          |
+| `ALERT job-dead-lettered` in the worker log                           | A job failed every retry                                                                                        | Section 11                                                                                     |
 | Tests fail with "Couldn't migrate the test database"                  | Docker isn't running                                                                                            | `npm run db:up`                                                                                |
 
 Logs never contain phone numbers, emails, transcripts or summaries: look things up by the IDs they carry.
@@ -144,3 +143,93 @@ our automatic replies, which we don't keep Twilio's references for; copies in Tw
 ## 10. Spending
 
 Anything named `live-*` touches a paid service and asks for `--confirm`. Day to day the only money that moves is per call (Retell and Twilio per minute, Anthropic per extraction, Twilio per text segment). Evals (`npm run evals`) cost a few pence per run under their cap.
+
+## 11. Alerts
+
+An alert is an error line in the API's or the worker's log that starts `ALERT` and names it,
+with IDs to look things up by. Logs never hold phone numbers, emails or call content. Until
+Step 8 sends alerts to your phone, they're only in those logs.
+
+| Alert                                             | What it means                                                                                                                                                                  | First three checks                                                                                                                                                                                                                                                                 |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `job-dead-lettered`                               | A background job failed every retry and has stopped. The alert carries the job's data: which business and call                                                                 | 1. The worker log just before it, for the job's own error (same IDs). 2. Whether a provider was down, or a setting is missing from `.env`. 3. Once that's fixed, redo what made the job (save the profile again, say), or ask me                                                   |
+| `voice-platform-unreachable`                      | A call came in and Retell wouldn't take it, so the caller got the fallback voicemail                                                                                           | 1. The API log line before it, for Retell's answer (401: the key; 404: the agent). 2. Retell's dashboard: is the business's agent there? 3. If every call does it, whether Retell has an outage; meanwhile the kill switch (section 13) sends every caller to voicemail on purpose |
+| `agent-sync-failed`                               | A saved assistant profile couldn't be sent to Retell. The job retries, and the last synced agent keeps answering (a new business gets voicemail until its first sync)          | 1. The Admin page's failing syncs, with Retell's error. 2. An outage (it retries by itself) or a validation error. 3. If validation, fix the profile and save it again                                                                                                             |
+| `call-extraction-failed`                          | The AI couldn't summarise a call. The tradesperson still got a text, saying to read the transcript                                                                             | 1. The worker log before it, for Anthropic's error (key, credit, outage). 2. Credit and keys in the Claude Console. 3. The call in the dashboard: an empty or unusual transcript?                                                                                                  |
+| `summary-judge-failed`                            | The sampled quality check (`JUDGE_SAMPLE_RATE`) found a summary that doesn't match its call                                                                                    | 1. Read the call: summary against transcript. 2. If it misled, tell the tradesperson. 3. Keep the case for the evals (`npm run evals`)                                                                                                                                             |
+| `guardrail-hit`                                   | The transcript shows the agent saying something it mustn't: a price, a promised time, or safety advice beyond the scripts                                                      | 1. Read the transcript at the rule named. 2. Check the business's profile for wording that invited it. 3. Tell the tradesperson if the caller was told something wrong, and keep the case for the evals                                                                            |
+| `notification-no-mobile`, `notification-no-email` | A call's text or email couldn't go: the business has no mobile or email set                                                                                                    | 1. The business's Account tab. 2. Ask the tradesperson for it. 3. Tell them about the calls since: those messages aren't resent                                                                                                                                                    |
+| `sms-undelivered`                                 | Twilio says a text didn't reach the phone. The alert has Twilio's error code                                                                                                   | 1. The code in Twilio's error list (twilio.com/docs/api/errors). 2. The mobile on the Account tab. 3. Whether the phone is on, or its network has trouble                                                                                                                          |
+| `recipient-opted-out`                             | The tradesperson's phone replied STOP to our number, so texts to it fail (Twilio error 21610)                                                                                  | 1. Ask them to text START to the same number. 2. Email still reaches them meanwhile. 3. Check it's the right mobile                                                                                                                                                                |
+| `email-bounced`, `email-spam-complaint`           | Postmark couldn't deliver a summary email, or the person marked it as spam. If the alert says `addressDeactivated`, Postmark won't send to that address until it's reactivated | 1. The address on the Account tab. 2. Postmark's activity for the message, and the reason. 3. Once it's fixed, reactivate the address in Postmark                                                                                                                                  |
+| `number-bought-not-recorded`                      | A number was bought at Twilio but couldn't be saved here: it's costing money and isn't attached to the business                                                                | 1. Twilio's console, Phone Numbers: the SID in the alert. 2. The API log for the database error. 3. Ask me to attach it, or release it in Twilio's console                                                                                                                         |
+| `deletion-confirmation-not-sent`                  | A business's data was deleted, but neither email nor text could carry the written confirmation                                                                                 | 1. The business named in the alert. 2. Your own records for how to reach them. 3. Confirm the deletion to them in writing another way, and keep a copy                                                                                                                             |
+
+## 12. Pausing a business
+
+Paused, a business's callers get the fallback voicemail: no AI, but still recorded, and still
+texted to the tradesperson.
+
+- **From the dashboard:** the business's page has an on/off switch. The tradesperson can use it,
+  and so can you as admin. It works for a business that's live or paused.
+- **By text:** the tradesperson texts `OFF` or `PAUSE` from their registered mobile to the
+  AnswerMate number, and `ON` or `RESUME` to switch back (section 4).
+
+## 13. The kill switch
+
+For when the AI itself is the problem: it's saying something it mustn't, or Retell is down. On
+the Admin page, turn on the kill switch: from the next call, every number for every business
+goes straight to the fallback voicemail. Voicemails are still recorded and texted. Turning it on
+or off is audited. Turn it off on the same page; nothing needs restarting.
+
+## 14. Rotating a secret
+
+The order is always the same: make the new one, put it where the app reads it, restart, check
+it works, then delete the old one. In development the settings live in `.env`, which you edit.
+In production they'll live in Azure Key Vault (Step 8). The API and the worker read them when
+they start, so restart both.
+
+| Setting                                | How                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `TWILIO_AUTH_TOKEN`                    | Twilio lets an account have a secondary auth token. Create one, then promote it to primary, which deletes the old primary (Twilio's docs). Each change emails the account's owners. Put the new token in `.env` and restart straight after promoting. I believe Twilio signs its webhooks with the primary token: if so, they fail our check until the restart, and callers in that minute get the fallback voicemail. Do it at a quiet time |
+| `RETELL_API_KEY`, `RETELL_WEBHOOK_KEY` | Retell allows several keys. Add one, and for webhooks select it and "Set as Webhook Key" (one key at a time can be). Update `.env`, restart, then delete the old key. Webhooks signed with the new key fail until the restart; reconciliation picks up those calls within 15 minutes                                                                                                                                                         |
+| `ANTHROPIC_API_KEY`                    | Claude Console, API keys, Create key. A key's expiry is set when it's made and can't be changed later. Update `.env`, restart the worker, then disable the old key (that can be undone), and delete it when you're sure                                                                                                                                                                                                                      |
+| `POSTMARK_SERVER_TOKEN`                | A Postmark server can have up to 3 API tokens at once (its API Tokens tab). Add one, update `.env`, restart the worker, then remove the old one                                                                                                                                                                                                                                                                                              |
+| `CLERK_SECRET_KEY`                     | Clerk shows a secret key's full value only when it's added. Add one on the dashboard's API keys page and copy it then, update `.env`, restart the API and the worker, then delete the old one                                                                                                                                                                                                                                                |
+| `SIGNING_SECRET` (ours)                | Signs the call links in texts and emails. Changing it stops every link already sent from working, so only change it if it has leaked. Make one with `node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"`                                                                                                                                                                                                    |
+| `POSTMARK_WEBHOOK_SECRET` (ours)       | The password on Postmark's bounce webhook. Change it in `.env` and in the webhook's settings at Postmark together                                                                                                                                                                                                                                                                                                                            |
+
+## 15. Restoring from a backup
+
+**Production** (Azure Database for PostgreSQL flexible server, decision 011). Azure backs it up
+by itself and keeps the backups 7 days by default (up to 35). A restore never overwrites the
+server: it makes a new one, as the old one was at the moment you choose, and you then point the
+app at it.
+
+1. In the Azure portal, open the server, Overview, Restore. Choose "Latest restore point (Now)"
+   or a "Custom restore point" (in UTC), name the new server, then Review + create. Or with the
+   Azure CLI: `az postgres flexible-server restore --resource-group <group> --name <new-server> --source-server <server> --restore-time 2026-11-07T02:10:00+00:00`.
+2. Microsoft says it takes from a few minutes to a few hours. The restore drill (Step 14) will
+   time ours once production exists.
+3. Firewall and network rules and server parameters don't come across: set them again on the
+   new server, and check our roles (`callmate_app`, `callmate_admin`) can log in.
+4. Point `DATABASE_URL` and `ADMIN_DATABASE_URL` (in Key Vault) at the new server, restart the
+   API and the worker, and check `/readyz` answers.
+5. Keep the old server until you're sure, then delete it: it's charged until you do.
+
+**Development** (your PC). The dev data lives in a Docker volume, with no backup unless you
+make one. From the repo root:
+
+```powershell
+docker compose exec -T db pg_dump -U callmate -d callmate -Fc -f /tmp/dev.dump
+docker compose cp db:/tmp/dev.dump .\dev.dump
+```
+
+To put it back, stop the API and the worker first (the database is dropped and made again):
+
+```powershell
+docker compose cp .\dev.dump db:/tmp/dev.dump
+docker compose exec -T db pg_restore -U callmate -d postgres --clean --create /tmp/dev.dump
+```
+
+A backup holds call content: git ignores `*.dump` files, and don't share one.
