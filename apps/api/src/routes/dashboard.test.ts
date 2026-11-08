@@ -426,6 +426,14 @@ describe("tenant isolation through the API", () => {
     expect(tenants.map((tenant) => tenant.id)).toEqual([tenantA]);
   });
 
+  // The owner's list is read inside their own business's row-level security, the admin's
+  // across every business: the same business must come out the same either way.
+  it("gives an owner the same summary of their business as the admin sees", async () => {
+    const mine = (await json<TenantList>(get("/tenants", tokens.ownerA))).tenants;
+    const all = (await json<TenantList>(get("/tenants", tokens.admin))).tenants;
+    expect(mine).toEqual([all.find((tenant) => tenant.id === tenantA)]);
+  });
+
   it("refuses another tenant's call even by its exact ID", async () => {
     expect((await get(`/tenants/${tenantB}/calls/${callB}`, tokens.ownerA)).status).toBe(403);
     // And the row-level security behind the middleware: tenant A's scope can't see call B.

@@ -37,6 +37,7 @@ import {
   type AdminPool,
   type TenantWithCallCounts,
 } from "../db/cross-tenant.ts";
+import { listOwnTenants } from "../db/own-tenants.ts";
 import { withTenant } from "../db/tenant.ts";
 import {
   exportTenant,
@@ -146,14 +147,14 @@ export function dashboardRouter({
   });
 
   // The tenant list. Admin and reseller see every tenant; an owner sees the ones they belong
-  // to. The reseller's view is this list and nothing below it: counts, never content.
+  // to, each read inside its own row-level security (db/own-tenants.ts). The reseller's view
+  // is this list and nothing below it: counts, never content.
   router.get("/tenants", requireRole("owner", "admin", "reseller"), async (_req, res) => {
     const principal = principalOf(res);
-    const all = await listTenantsWithCallCounts(admin);
     const visible =
       principal.role === "owner"
-        ? all.filter((tenant) => principal.tenantIds.includes(tenant.id))
-        : all;
+        ? await listOwnTenants(pool, principal.tenantIds)
+        : await listTenantsWithCallCounts(admin);
     res.json({ tenants: visible.map(presentTenantSummary) } satisfies TenantListView);
   });
 
