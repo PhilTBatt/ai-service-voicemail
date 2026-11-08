@@ -1,13 +1,14 @@
 // Runs the eval personas against the current prompt with the real model, under a cost cap.
 // Run from the repo root: npm run evals [-- --persona gas-smell --cap-pence 50 --no-judge]
 // Spends Anthropic credit (a few pence per run at the default cap); needs ANTHROPIC_API_KEY.
+// A full run takes several minutes; a line prints as each persona finishes.
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { loadConfig } from "../config.ts";
 import { evalAgents } from "../evals/businesses.ts";
 import { loadPersonas, PERSONAS_DIR } from "../evals/persona.ts";
-import { renderReport } from "../evals/report.ts";
+import { renderProgress, renderReport } from "../evals/report.ts";
 import { runEvals } from "../evals/runner.ts";
 import { AnthropicLlmProvider } from "../providers/anthropic.ts";
 
@@ -38,14 +39,21 @@ if (selected.length === 0) {
   process.exit(2);
 }
 
+const llm = new AnthropicLlmProvider(config.llm);
+// A full run takes several minutes: say so, then a line as each persona finishes.
+console.log(
+  `Running ${selected.length} persona${selected.length === 1 ? "" : "s"} with ${llm.model}, stopping if the cost passes ${capPence}p. Each takes about 20 seconds; results print as they finish.\n`,
+);
+
 // Each persona rings a fictional business of its trade; the plumber is the demo tenant's profile,
 // the one Phil's test calls use (evals/businesses.ts).
 const report = await runEvals({
   agentFor: evalAgents(),
   personas: selected,
-  llm: new AnthropicLlmProvider(config.llm),
+  llm,
   capPence,
   judge: !values["no-judge"],
+  onResult: (progress) => console.log(renderProgress(progress)),
 });
 
 mkdirSync(values.out, { recursive: true });
@@ -54,11 +62,7 @@ const base = path.join(values.out, `evals-${stamp}`);
 writeFileSync(`${base}.md`, renderReport(report));
 writeFileSync(`${base}.json`, JSON.stringify(report, null, 2));
 
-console.log(
-  renderReport(report)
-    .split("\n")
-    .slice(0, 8 + report.results.length + report.skipped.length)
-    .join("\n"),
-);
+// The headline (result, cost, counts); the per-persona lines are already above.
+console.log(`\n${renderReport(report).split("\n").slice(0, 6).join("\n")}`);
 console.log(`\nFull report: ${base}.md`);
 process.exitCode = report.failed === 0 && !report.abortedByCostCap ? 0 : 1;

@@ -8,6 +8,57 @@ import { withTenant } from "./tenant.ts";
 // dashboard checks a profile exactly as the API does.
 export { agentProfileInputSchema, type AgentProfileInput };
 
+/** Where a saved version has got to at the voice platform, as the sync job records it. */
+export type SyncOutcome =
+  { state: "synced"; syncedAt: Date } | { state: "failed"; error: string } | { state: "waiting" };
+
+export async function syncOutcome(
+  pool: pg.Pool,
+  tenantId: string,
+  version: number,
+): Promise<SyncOutcome> {
+  const row = await withTenant(pool, tenantId, async (client) => {
+    const { rows } = await client.query<{ synced_at: Date | null; sync_error: string | null }>(
+      "SELECT synced_at, sync_error FROM agent_profiles WHERE tenant_id = $1 AND version = $2",
+      [tenantId, version],
+    );
+    return rows[0];
+  });
+  if (!row) throw new Error(`No profile version ${version} for tenant ${tenantId}`);
+  if (row.synced_at) return { state: "synced", syncedAt: row.synced_at };
+  if (row.sync_error) return { state: "failed", error: row.sync_error };
+  return { state: "waiting" };
+}
+
+/**
+ * Checks every `intervalMs` until the version has synced or `timeoutMs` has passed. A failed
+ * attempt isn't the end (the queue retries it), so the error is only the answer if it still
+ * hasn't synced by the deadline.
+ */
+export async function waitForSync(
+  pool: pg.Pool,
+  tenantId: string,
+  version: number,
+  {
+    timeoutMs,
+    intervalMs = 2_000,
+    sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+    now = () => Date.now(),
+  }: {
+    timeoutMs: number;
+    intervalMs?: number;
+    sleep?: (ms: number) => Promise<void>;
+    now?: () => number;
+  },
+): Promise<SyncOutcome> {
+  const deadline = now() + timeoutMs;
+  for (;;) {
+    const outcome = await syncOutcome(pool, tenantId, version);
+    if (outcome.state === "synced" || now() >= deadline) return outcome;
+    await sleep(Math.min(intervalMs, deadline - now()));
+  }
+}
+
 /**
  * Saves a new profile version and queues its sync. Every save is a new version, so the
  * history is kept and the sync job is idempotent on tenant + version. Given an actor (a

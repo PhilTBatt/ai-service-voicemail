@@ -1,5 +1,19 @@
-// The eval report as Markdown, for the PR and for reading after a run.
-import type { EvalReport } from "./runner.ts";
+// The eval report as Markdown, for the PR and for reading after a run, and the one-line
+// progress a run prints as each persona finishes.
+import type { EvalProgress, EvalReport } from "./runner.ts";
+
+/** "[ 3/24] pass  Gas smell (2p so far)", or with the failed checks or the error after it. */
+export function renderProgress({ result, done, total, spentPence }: EvalProgress): string {
+  const outcome = result.error ? "ERROR" : result.passed ? "pass" : "FAIL";
+  const why =
+    result.error ??
+    result.verdicts
+      .filter((v) => !v.pass)
+      .map((v) => v.check)
+      .join(", ");
+  const counter = `[${String(done).padStart(String(total).length)}/${total}]`;
+  return `${counter} ${outcome.padEnd(5)} ${result.name}${why ? `: ${why}` : ""} (${spentPence}p so far)`;
+}
 
 export function renderReport(report: EvalReport): string {
   const lines: string[] = [];

@@ -10,7 +10,7 @@ npm run evals -- --persona gas-smell --no-judge  # one persona, cheaper
 npm run evals -- --cap-pence 20                  # a tighter cap
 ```
 
-Needs `ANTHROPIC_API_KEY` in `.env`. Each run costs a few pence; the report lands in `evals/reports/` (not committed). The exit code is 1 if any persona fails, so CI can use it.
+Needs `ANTHROPIC_API_KEY` in `.env`. Each run costs a few pence. A full run takes about eight minutes (about 20 seconds a persona): a line prints as each persona finishes, then the headline and where the report is. The report lands in `evals/reports/` (not committed). The exit code is 1 if any persona fails, so CI can use it.
 
 Against the real platform, once the demo agent has synced:
 

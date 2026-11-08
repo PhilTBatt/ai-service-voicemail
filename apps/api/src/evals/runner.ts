@@ -30,6 +30,20 @@ export interface EvalRunOptions {
   judge?: boolean;
   gbpPerUsd?: number;
   now?: () => Date;
+  /**
+   * Called as each persona finishes, so a run of several minutes shows it's alive (a full run
+   * printed nothing for about seven minutes, and looked stuck).
+   */
+  onResult?: (progress: EvalProgress) => void;
+}
+
+export interface EvalProgress {
+  result: PersonaResult;
+  /** Personas finished so far, this one included. */
+  done: number;
+  total: number;
+  /** The estimated cost so far, in whole pence. */
+  spentPence: number;
 }
 
 export interface PersonaResult {
@@ -76,6 +90,7 @@ export async function runEvals({
   judge = true,
   gbpPerUsd,
   now = () => new Date(),
+  onResult,
 }: EvalRunOptions): Promise<EvalReport> {
   const startedAt = now().toISOString();
   const meter = new CostMeter({
@@ -88,29 +103,14 @@ export async function runEvals({
   let abortedByCostCap = false;
 
   for (const [index, persona] of personas.entries()) {
-    if (abortedByCostCap) {
-      skipped.push(persona.id);
-      continue;
-    }
+    let result: PersonaResult;
     try {
-      results.push(await runPersona(persona));
+      result = await runPersona(persona);
     } catch (error) {
-      if (error instanceof CostCapExceededError) {
-        abortedByCostCap = true;
-        results.push({
-          id: persona.id,
-          name: persona.name,
-          passed: false,
-          verdicts: [],
-          simulation: null,
-          extraction: null,
-          judge: null,
-          error: error.message,
-        });
-        skipped.push(...personas.slice(index + 1).map((p) => p.id));
-        break;
-      }
-      results.push({
+      // A model error is recorded against the persona, and the run carries on; the cost cap
+      // stops it.
+      abortedByCostCap = error instanceof CostCapExceededError;
+      result = {
         id: persona.id,
         name: persona.name,
         passed: false,
@@ -119,7 +119,18 @@ export async function runEvals({
         extraction: null,
         judge: null,
         error: error instanceof Error ? error.message : String(error),
-      });
+      };
+    }
+    results.push(result);
+    onResult?.({
+      result,
+      done: index + 1,
+      total: personas.length,
+      spentPence: meter.estimatedPence,
+    });
+    if (abortedByCostCap) {
+      skipped.push(...personas.slice(index + 1).map((p) => p.id));
+      break;
     }
   }
 

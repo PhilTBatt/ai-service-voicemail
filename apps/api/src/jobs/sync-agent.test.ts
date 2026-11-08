@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { PgBoss } from "pg-boss";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { saveAgentProfile, type AgentProfileInput } from "../db/agent-profiles.ts";
+import { saveAgentProfile, waitForSync, type AgentProfileInput } from "../db/agent-profiles.ts";
 import { assignPhoneNumber, createAdminPool, createTenant } from "../db/cross-tenant.ts";
 import { createPool } from "../db/pool.ts";
 import { withTenant } from "../db/tenant.ts";
@@ -158,6 +158,56 @@ describe("runSyncAgent", () => {
       "agent-sync-failed",
       expect.objectContaining({ tenantId, profileVersion: version }),
     );
+  });
+
+  describe("waitForSync (what npm run demo:profile reports)", () => {
+    // A clock that moves only when the wait sleeps, so the tests take no real time.
+    const clock = () => {
+      let at = 0;
+      return { now: () => at, sleep: (ms: number) => ((at += ms), Promise.resolve()) };
+    };
+
+    it("answers synced once the job has run", async () => {
+      const { tenantId } = await makeTenant();
+      const version = await saveAgentProfile(app, boss, tenantId, PROFILE);
+      await runSyncAgent(
+        { pool: app, voice: new FakeVoiceProvider(), alert: vi.fn() },
+        { tenantId, profileVersion: version },
+      );
+      expect(await waitForSync(app, tenantId, version, { timeoutMs: 0, ...clock() })).toMatchObject(
+        { state: "synced", syncedAt: expect.any(Date) as unknown },
+      );
+    });
+
+    it("keeps waiting through a failed attempt, which the queue retries, and gives the error at the deadline", async () => {
+      const { tenantId } = await makeTenant();
+      const version = await saveAgentProfile(app, boss, tenantId, PROFILE);
+      const voice = new FakeVoiceProvider();
+      voice.upsertAgent = () => Promise.reject(new Error("Retell is down"));
+      await expect(
+        runSyncAgent({ pool: app, voice, alert: vi.fn() }, { tenantId, profileVersion: version }),
+      ).rejects.toThrow();
+      const time = clock();
+      expect(
+        await waitForSync(app, tenantId, version, { timeoutMs: 6_000, intervalMs: 2_000, ...time }),
+      ).toEqual({ state: "failed", error: "Retell is down" });
+      expect(time.now()).toBe(6_000); // it waited the whole time, checking every 2 seconds
+    });
+
+    it("answers waiting when nothing has run the job (no worker)", async () => {
+      const { tenantId } = await makeTenant();
+      const version = await saveAgentProfile(app, boss, tenantId, PROFILE);
+      expect(await waitForSync(app, tenantId, version, { timeoutMs: 4_000, ...clock() })).toEqual({
+        state: "waiting",
+      });
+    });
+
+    it("says so when the version doesn't exist", async () => {
+      const { tenantId } = await makeTenant();
+      await expect(waitForSync(app, tenantId, 99, { timeoutMs: 0, ...clock() })).rejects.toThrow(
+        /No profile version 99/,
+      );
+    });
   });
 
   it("refuses to sync a tenant that has no contact name yet", async () => {

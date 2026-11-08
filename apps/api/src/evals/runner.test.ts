@@ -5,8 +5,8 @@ import { sampleAgentDefinition } from "../testing/agent-fixture.ts";
 import { evalAgents } from "./businesses.ts";
 import { buildJudgePrompt } from "./judge.ts";
 import { parsePersona } from "./persona.ts";
-import { renderReport } from "./report.ts";
-import { runEvals } from "./runner.ts";
+import { renderProgress, renderReport } from "./report.ts";
+import { runEvals, type EvalProgress } from "./runner.ts";
 
 const definition = sampleAgentDefinition();
 const context = { businessName: "Ant's Plumbing", tradespersonName: "Ant" };
@@ -199,6 +199,54 @@ describe("buildJudgePrompt", () => {
     const { system } = buildJudgePrompt([], { ...EXTRACTION, urgency: "emergency" });
     expect(system).toContain(URGENCY_RULES);
     expect(system).toContain("not by how worried the caller sounded");
+  });
+});
+
+describe("progress while a run is going", () => {
+  // A full run printed nothing for about seven minutes, and looked stuck (2026-11-08).
+  it("reports each persona as it finishes, with the cost so far", async () => {
+    const llm = new FakeLlmProvider()
+      .willReturn({ trigger: "none", reply: "Thanks.", done: true })
+      .willReturn(EXTRACTION)
+      // The silent persona's first model call fails.
+      .willThrow("rate limited");
+    const seen: EvalProgress[] = [];
+    await runEvals({
+      agentFor: () => ({ definition, context }),
+      personas: [tap, silent],
+      llm,
+      capPence: 100,
+      judge: false,
+      onResult: (progress) => seen.push(progress),
+    });
+    expect(seen.map((p) => [p.result.id, p.done, p.total])).toEqual([
+      ["tap", 1, 2],
+      ["silent", 2, 2],
+    ]);
+    expect(renderProgress(seen[0]!)).toBe("[1/2] pass  Dripping tap (0p so far)");
+    expect(renderProgress(seen[1]!)).toBe("[2/2] ERROR Silent: rate limited (0p so far)");
+  });
+
+  it("names the failed checks, and lines the counter up", () => {
+    const line = renderProgress({
+      result: {
+        id: "x",
+        name: "Price-pusher",
+        passed: false,
+        verdicts: [
+          { check: "no prices", pass: false },
+          { check: "urgency", pass: true },
+          { check: "field postcode", pass: false },
+        ],
+        simulation: null,
+        extraction: null,
+        judge: null,
+      },
+      done: 3,
+      total: 24,
+      spentPence: 2,
+    });
+    expect(line).toBe("[ 3/24] FAIL  Price-pusher: no prices, field postcode (2p so far)");
   });
 });
 
