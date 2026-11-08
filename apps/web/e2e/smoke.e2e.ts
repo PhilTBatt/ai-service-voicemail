@@ -16,6 +16,22 @@ test("the admin signs in and sees every business", async ({ page }) => {
   await expect(page.getByRole("link", { name: "Admin" })).toBeVisible();
 });
 
+test("the admin marks a flagged call reviewed, and it leaves the queue", async ({ page }) => {
+  await signIn(page, "admin@example.com");
+  await page.getByRole("link", { name: "Admin" }).click();
+  await expect(page.getByRole("heading", { name: "Calls to review" })).toBeVisible();
+  // The pipeline's flag, in words, on the seeded call.
+  await expect(page.getByText("Named a price", { exact: true })).toBeVisible();
+  await expect(page.getByText("Fuse box tripping.")).toBeVisible();
+
+  await page.getByRole("button", { name: "Mark reviewed" }).click();
+  await expect(page.getByText("Nothing to review.")).toBeVisible();
+  await expect(page.getByText("Fuse box tripping.")).toHaveCount(0);
+  // Still gone after a reload: it was the server that took it out.
+  await page.reload();
+  await expect(page.getByText("Nothing to review.")).toBeVisible();
+});
+
 test("a tradesperson goes straight to their calls and opens one", async ({ page }) => {
   await signIn(page, "owner@example.com");
   await expect(page.getByRole("heading", { name: "Fern Lane Plumbing" })).toBeVisible();

@@ -1,6 +1,7 @@
 // Phil's view of the whole service: is it healthy, which calls need a look, how much each
 // business is using, and what that costs us. The API answers these only for the admin role; this page is just a view.
 import type {
+  CallReviewedView,
   CancellationsView,
   CostRowView,
   CostsView,
@@ -111,23 +112,77 @@ function Stat({ label, value }: { label: string; value: number }) {
   );
 }
 
+/** Why the pipeline put a call in the queue, in words. Other flags are the summary's own notes. */
+const REVIEW_REASONS: Record<string, string> = {
+  "guardrail:price": "Named a price",
+  "guardrail:commitment": "Promised a time",
+  "guardrail:safety": "Gave safety advice",
+  "judge:failed": "Summary doubted",
+  extraction_failed: "No summary",
+};
+
 function ReviewQueue() {
   const { api } = useApi();
   const queue = useLoad(() => api<ReviewQueueView>("/admin/review-queue"), "review");
+  // Pages loaded after the first, and calls marked reviewed since the first loaded. The pages
+  // follow on from the last call shown, not a count, so marking calls doesn't shift them.
+  const [more, setMore] = useState<ReviewQueueView | null>(null);
+  const [reviewed, setReviewed] = useState<ReadonlySet<string>>(new Set());
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<Error | null>(null);
 
   if (queue.status === "loading") return <p className="muted">Loading flagged calls…</p>;
   if (queue.status === "error") return <ErrorNote error={queue.error} retry={queue.reload} />;
+
+  const calls = [...queue.data.calls, ...(more?.calls ?? [])].filter(
+    (call) => !reviewed.has(call.callId),
+  );
+  const nextBefore = more ? more.nextBefore : queue.data.nextBefore;
+
+  const markReviewed = async (callId: string) => {
+    setBusy(callId);
+    setError(null);
+    try {
+      await api<CallReviewedView>(`/admin/calls/${callId}/reviewed`, { method: "POST", body: {} });
+      setReviewed((done) => new Set(done).add(callId));
+    } catch (caught) {
+      setError(asError(caught));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const loadMore = async () => {
+    if (!nextBefore) return;
+    setBusy("more");
+    setError(null);
+    try {
+      const next = await api<ReviewQueueView>(
+        `/admin/review-queue?before=${encodeURIComponent(nextBefore)}`,
+      );
+      setMore((list) => ({
+        calls: [...(list?.calls ?? []), ...next.calls],
+        nextBefore: next.nextBefore,
+      }));
+    } catch (caught) {
+      setError(asError(caught));
+    } finally {
+      setBusy(null);
+    }
+  };
 
   return (
     <section>
       <h2>Calls to review</h2>
       <p className="muted">
-        Calls where the assistant may have quoted a price, promised a time, or summarised something
-        the caller didn't say. Newest first.
+        Calls where the assistant may have named a price, promised a time or given safety advice of
+        its own, or whose summary was doubted or failed. Newest first; mark each one reviewed once
+        you've read it.
       </p>
-      {queue.data.calls.length === 0 && <p className="muted">Nothing flagged.</p>}
+      {error && <ErrorNote error={error} />}
+      {calls.length === 0 && <p className="muted">Nothing to review.</p>}
       <ul className="list">
-        {queue.data.calls.map((call) => (
+        {calls.map((call) => (
           <li key={call.callId} className="card">
             <Link to={`/tenants/${call.tenant.id}/calls/${call.callId}`} className="call-link">
               <div className="row">
@@ -138,16 +193,28 @@ function ReviewQueue() {
               </div>
               <p>
                 {call.flags.map((flag) => (
-                  <span key={flag} className="badge flag">
-                    {flag}
+                  <span key={flag} className={`badge ${REVIEW_REASONS[flag] ? "error" : "flag"}`}>
+                    {REVIEW_REASONS[flag] ?? flag}
                   </span>
                 ))}
               </p>
               <p className="summary">{call.summary ?? "No summary."}</p>
             </Link>
+            <button
+              type="button"
+              disabled={busy !== null}
+              onClick={() => void markReviewed(call.callId)}
+            >
+              {busy === call.callId ? "Marking…" : "Mark reviewed"}
+            </button>
           </li>
         ))}
       </ul>
+      {nextBefore && (
+        <button type="button" disabled={busy !== null} onClick={() => void loadMore()}>
+          {busy === "more" ? "Loading…" : "Load more"}
+        </button>
+      )}
     </section>
   );
 }

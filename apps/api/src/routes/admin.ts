@@ -3,6 +3,7 @@
 // an owner or the reseller. Cross-tenant reads go through the admin pool, as decision 006 says.
 import type {
   AvailableNumbersView,
+  CallReviewedView,
   CancellationsView,
   CostsView,
   DataDeletionView,
@@ -33,6 +34,7 @@ import {
   listCurrentUsage,
   listCancellingTenants,
   listFlaggedCalls,
+  markCallReviewed,
   recordNumberReleased,
   setKillSwitch,
   type AdminPool,
@@ -79,8 +81,20 @@ const deleteDataBody = z.object({ confirm: z.literal(true), businessName: z.stri
 /** Releasing a number can't be undone: the page sends this only after a confirmation dialog. */
 const releaseBody = z.object({ confirm: z.literal(true) });
 const isTenantId = (value: unknown): value is string => z.uuid().safeParse(value).success;
+/** The review queue's page cursor: "<started at, ISO>|<call id>", as nextBefore gave it. */
+const reviewCursor = z.string().transform((value, ctx) => {
+  const parts = value.split("|");
+  const at = z.iso.datetime({ offset: true }).safeParse(parts[0]);
+  const id = z.uuid().safeParse(parts[1]);
+  if (parts.length !== 2 || !at.success || !id.success) {
+    ctx.addIssue({ code: "custom", message: "not a cursor from this list" });
+    return z.NEVER;
+  }
+  return { startedAt: at.data, id: id.data };
+});
 const reviewQuery = z.object({
   limit: z.coerce.number().int().min(1).max(200).default(50),
+  before: reviewCursor.optional(),
 });
 const numberSearchQuery = z.object({
   /** Digits the number should contain, such as an area code: "0113". */
@@ -130,7 +144,9 @@ export function adminRouter({
     res.json({ killSwitchOn: body.data.on } satisfies KillSwitchView);
   });
 
-  // Calls the pipeline flagged (price mentions, guardrail hits, judge failures), newest first.
+  // Calls the pipeline flagged for a person to check (a price, a time or safety advice in the
+  // agent's words, a summary the judge doubted, a summary that failed), not yet reviewed, newest
+  // first, a page at a time.
   router.get("/review-queue", async (req, res) => {
     const query = reviewQuery.safeParse(req.query);
     if (!query.success) {
@@ -139,10 +155,29 @@ export function adminRouter({
         .json({ error: "Invalid query", issues: z.flattenError(query.error).fieldErrors });
       return;
     }
-    const flagged = await listFlaggedCalls(admin, query.data.limit);
+    const { calls, next } = await listFlaggedCalls(admin, {
+      limit: query.data.limit,
+      after: query.data.before,
+    });
     res.json({
-      calls: flagged.map(({ tenant, ...call }) => ({ ...presentCallSummary(call), tenant })),
+      calls: calls.map(({ tenant, ...call }) => ({ ...presentCallSummary(call), tenant })),
+      nextBefore: next ? `${next.startedAt}|${next.id}` : null,
     } satisfies ReviewQueueView);
+  });
+
+  // Takes a call out of the queue once it's been looked at. Marking it twice is harmless.
+  router.post("/calls/:callId/reviewed", async (req, res) => {
+    const { callId } = req.params;
+    if (!z.uuid().safeParse(callId).success) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    const marked = await markCallReviewed(admin, callId, principalOf(res).userId);
+    if (!marked) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    res.json({ callId, reviewedAt: marked.reviewedAt.toISOString() } satisfies CallReviewedView);
   });
 
   // Billable seconds per tenant for the period that contains today. Prices come with Step 12.

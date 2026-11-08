@@ -5,10 +5,12 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   CSV_EXPORTS,
   type AvailableNumbersView,
+  type CallReviewedView,
   type CancellationsView,
   type OnboardingView,
   type ProfileView,
   type ProvisionedNumberView,
+  type ReviewQueueView,
   type TenantView,
 } from "@callmate/shared";
 import type { PgBoss } from "pg-boss";
@@ -279,6 +281,13 @@ describe("authorisation matrix", () => {
     { name: "GET /admin/health", path: "/admin/health" },
     { name: "PUT /admin/kill-switch", path: "/admin/kill-switch", body: {} },
     { name: "GET /admin/review-queue", path: "/admin/review-queue" },
+    // A call that doesn't exist: 404 even for the admin, so the matrix marks nothing reviewed.
+    {
+      name: "POST /admin/calls/:id/reviewed",
+      path: `/admin/calls/${randomUUID()}/reviewed`,
+      body: {},
+      method: "POST",
+    },
     { name: "GET /admin/usage", path: "/admin/usage" },
     { name: "GET /admin/costs", path: "/admin/costs" },
     { name: "GET /admin/numbers/available", path: "/admin/numbers/available" },
@@ -332,6 +341,7 @@ describe("authorisation matrix", () => {
       "GET /admin/health": 403,
       "PUT /admin/kill-switch": 403,
       "GET /admin/review-queue": 403,
+      "POST /admin/calls/:id/reviewed": 403,
       "GET /admin/usage": 403,
       "GET /admin/costs": 403,
       "GET /admin/numbers/available": 403,
@@ -1064,24 +1074,112 @@ describe("admin screens", () => {
     ).toBe(false);
   });
 
-  it("queues flagged calls for review, naming the tenant", async () => {
+  /** Every page of the review queue: other tests' flagged calls share the database. */
+  async function wholeQueue() {
+    const calls: ReviewQueueView["calls"] = [];
+    let before: string | null = null;
+    do {
+      const query: string = before ? `&before=${encodeURIComponent(before)}` : "";
+      const page: ReviewQueueView = await json<ReviewQueueView>(
+        get(`/admin/review-queue?limit=200${query}`, tokens.admin),
+      );
+      calls.push(...page.calls);
+      before = page.nextBefore;
+    } while (before);
+    return calls;
+  }
+
+  it("queues the pipeline's flags for review, naming the tenant, but not the extraction's notes", async () => {
     const tenant = await createTenant(admin, {
       businessName: "Flagged Heating",
       trade: "heating_engineer",
     });
-    const flagged = await insertCall(tenant, "Quoted a price.", "routine", "2026-11-06T09:00:00Z");
-    await admin.query("UPDATE calls SET flags = '{\"price mentioned\"}' WHERE id = $1", [flagged]);
-    const { calls } = await json<{ calls: { callId: string; flags: string[]; tenant: object }[] }>(
-      get("/admin/review-queue", tokens.admin),
-    );
-    const mine = calls.find((call) => call.callId === flagged);
-    expect(mine).toMatchObject({
-      flags: ["price mentioned"],
+    const flag = async (flags: string[], summary: string) => {
+      const id = await insertCall(tenant, summary, "routine", "2026-11-06T09:00:00Z");
+      await admin.query("UPDATE calls SET flags = $2 WHERE id = $1", [id, flags]);
+      return id;
+    };
+    const price = await flag(["guardrail:price"], "Quoted a price.");
+    const judged = await flag(["caller abusive", "judge:failed"], "Summary doubted.");
+    const noted = await flag(["mentioned gas smell", "caller abusive"], "Just notes.");
+
+    const queue = await wholeQueue();
+    const ids = queue.map((call) => call.callId);
+    expect(ids).toEqual(expect.arrayContaining([price, judged]));
+    // The extraction's notes are for the tradesperson: they used to fill the queue.
+    expect(ids).not.toContain(noted);
+    expect(ids).not.toContain(callA);
+    expect(queue.find((call) => call.callId === price)).toMatchObject({
+      flags: ["guardrail:price"],
       summary: "Quoted a price.",
       tenant: { id: tenant, businessName: "Flagged Heating" },
     });
-    expect(calls.map((call) => call.callId)).not.toContain(callA);
     expect((await get("/admin/review-queue?limit=0", tokens.admin)).status).toBe(400);
+    expect((await get("/admin/review-queue?before=yesterday", tokens.admin)).status).toBe(400);
+  });
+
+  it("takes a call out of the queue once it's marked reviewed, auditing it once", async () => {
+    const tenant = await createTenant(admin, { businessName: "Reviewed Roofing", trade: "roofer" });
+    const call = await insertCall(tenant, "Promised a time.", "routine", "2026-11-06T10:00:00Z");
+    await admin.query("UPDATE calls SET flags = '{guardrail:commitment}' WHERE id = $1", [call]);
+    expect((await wholeQueue()).map((c) => c.callId)).toContain(call);
+
+    const marked = await send("POST", `/admin/calls/${call}/reviewed`, {}, tokens.admin);
+    expect(marked.status).toBe(200);
+    const { reviewedAt } = (await marked.json()) as CallReviewedView;
+    expect((await wholeQueue()).map((c) => c.callId)).not.toContain(call);
+
+    // A second mark is harmless: same time, no second audit row.
+    const again = await json<CallReviewedView>(
+      send("POST", `/admin/calls/${call}/reviewed`, {}, tokens.admin),
+    );
+    expect(again).toEqual({ callId: call, reviewedAt });
+    const audit = await admin.query<{ tenant_id: string; actor_user_id: string | null }>(
+      "SELECT tenant_id, actor_user_id FROM audit_log WHERE action = 'call.reviewed' AND details->>'callId' = $1",
+      [call],
+    );
+    expect(audit.rows).toHaveLength(1);
+    expect(audit.rows[0]).toMatchObject({ tenant_id: tenant });
+    expect(audit.rows[0]!.actor_user_id).not.toBeNull();
+    const row = await admin.query<{ reviewed_by: string | null }>(
+      "SELECT reviewed_by FROM calls WHERE id = $1",
+      [call],
+    );
+    expect(row.rows[0]!.reviewed_by).toBe(audit.rows[0]!.actor_user_id);
+
+    for (const missing of [randomUUID(), "not-a-call"]) {
+      expect(
+        (await send("POST", `/admin/calls/${missing}/reviewed`, {}, tokens.admin)).status,
+      ).toBe(404);
+    }
+  });
+
+  it("pages by start time and call ID, so calls that started together are neither skipped nor repeated", async () => {
+    const tenant = await createTenant(admin, { businessName: "Paged Plumbing", trade: "plumber" });
+    // An instant no other test uses, so the first page is these calls alone.
+    const at = new Date(Date.UTC(2090, 0, 1) + Math.floor(Math.random() * 1e9) * 1000);
+    const together: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const id = await insertCall(tenant, `Same instant ${i}.`, "routine", at.toISOString());
+      await admin.query("UPDATE calls SET flags = '{guardrail:safety}' WHERE id = $1", [id]);
+      together.push(id);
+    }
+    const start = `${new Date(at.getTime() + 1000).toISOString()}|ffffffff-ffff-4fff-bfff-ffffffffffff`;
+    const first = await json<ReviewQueueView>(
+      get(`/admin/review-queue?limit=2&before=${encodeURIComponent(start)}`, tokens.admin),
+    );
+    expect(first.calls).toHaveLength(2);
+    expect(first.nextBefore).not.toBeNull();
+    const second = await json<ReviewQueueView>(
+      get(
+        `/admin/review-queue?limit=2&before=${encodeURIComponent(first.nextBefore!)}`,
+        tokens.admin,
+      ),
+    );
+    const seen = [...first.calls, ...second.calls].map((c) => c.callId);
+    expect(new Set(seen).size).toBe(seen.length); // nothing twice
+    expect(seen).toEqual(expect.arrayContaining(together)); // nothing skipped
+    expect(first.calls.map((c) => c.callId).every((id) => together.includes(id))).toBe(true);
   });
 
   it("finds numbers to buy and what one costs a month", async () => {

@@ -143,8 +143,16 @@ export interface FlaggedCallView extends CallSummaryView {
   tenant: { id: string; businessName: string };
 }
 
+/** GET /api/admin/review-queue. `nextBefore` is the cursor for the next page, or null at the end. */
 export interface ReviewQueueView {
   calls: FlaggedCallView[];
+  nextBefore: string | null;
+}
+
+/** POST /api/admin/calls/:callId/reviewed: the call has left the review queue. */
+export interface CallReviewedView {
+  callId: string;
+  reviewedAt: string;
 }
 
 /** One business in GET /api/admin/usage: billable time in the period containing today. */

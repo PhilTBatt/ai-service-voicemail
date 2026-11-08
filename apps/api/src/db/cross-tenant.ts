@@ -11,6 +11,7 @@ import {
 } from "@callmate/shared";
 import type pg from "pg";
 import type { CostPrices } from "../core/prices.ts";
+import { REVIEW_FLAGS } from "../core/review.ts";
 import { startOfUkDate, usagePeriodFor } from "../core/usage.ts";
 import { createPool } from "./pool.ts";
 
@@ -270,23 +271,91 @@ export type FlaggedCall = import("../routes/call-view.ts").CallRow & {
   tenant: { id: string; businessName: string };
 };
 
-export async function listFlaggedCalls(admin: AdminPool, limit: number): Promise<FlaggedCall[]> {
+/** Where a page of the review queue starts: after this call, in newest-first order. */
+export interface ReviewCursor {
+  /** ISO 8601 at the database's full precision (microseconds), so no call is skipped. */
+  startedAt: string;
+  id: string;
+}
+
+/**
+ * Calls still to review, newest first: the pipeline's own flags (core/review.ts), not yet
+ * marked reviewed. Pages by (started_at, id), so two calls that started in the same instant
+ * are neither skipped nor shown twice. `next` is null on the last page.
+ */
+export async function listFlaggedCalls(
+  admin: AdminPool,
+  { limit, after }: { limit: number; after?: ReviewCursor | undefined },
+): Promise<{ calls: FlaggedCall[]; next: ReviewCursor | null }> {
+  // One more than asked for says whether there's another page, without a COUNT.
   const { rows } = await admin.query<
-    import("../routes/call-view.ts").CallRow & { tenant_id: string; business_name: string }
+    import("../routes/call-view.ts").CallRow & {
+      tenant_id: string;
+      business_name: string;
+      cursor_at: string;
+    }
   >(
     `SELECT c.id, c.provider_call_id, c.started_at, c.ended_at, c.billable_seconds, c.caller_number,
             c.urgency, c.summary, c.flags, c.extracted_fields, c.transcript, c.recording_ref,
-            c.via_fallback, c.tenant_id, t.business_name
+            c.via_fallback, c.tenant_id, t.business_name,
+            to_json(c.started_at) #>> '{}' AS cursor_at
      FROM calls c JOIN tenants t ON t.id = c.tenant_id
-     WHERE cardinality(c.flags) > 0
+     WHERE c.flags && $1::text[] AND c.reviewed_at IS NULL
+       AND ($2::timestamptz IS NULL OR (c.started_at, c.id) < ($2::timestamptz, $3::uuid))
      ORDER BY c.started_at DESC, c.id DESC
-     LIMIT $1`,
-    [limit],
+     LIMIT $4`,
+    [REVIEW_FLAGS, after?.startedAt ?? null, after?.id ?? null, limit + 1],
   );
-  return rows.map(({ tenant_id, business_name, ...call }) => ({
-    ...call,
-    tenant: { id: tenant_id, businessName: business_name },
-  }));
+  const page = rows.slice(0, limit);
+  const last = page.at(-1);
+  return {
+    calls: page.map(({ tenant_id, business_name, cursor_at: _cursor, ...call }) => ({
+      ...call,
+      tenant: { id: tenant_id, businessName: business_name },
+    })),
+    next: rows.length > limit && last ? { startedAt: last.cursor_at, id: last.id } : null,
+  };
+}
+
+/**
+ * Takes a call out of the review queue and records who did it (decision 006: every admin
+ * action). Marking it again changes nothing and adds no second audit row. Null when there's no
+ * such call.
+ */
+export async function markCallReviewed(
+  admin: AdminPool,
+  callId: string,
+  actorUserId: string,
+): Promise<{ reviewedAt: Date } | null> {
+  const client = await admin.connect();
+  try {
+    await client.query("BEGIN");
+    // The row lock makes two admins marking the same call at once take turns.
+    const { rows } = await client.query<{ tenant_id: string; reviewed_at: Date | null }>(
+      "SELECT tenant_id, reviewed_at FROM calls WHERE id = $1 FOR UPDATE",
+      [callId],
+    );
+    const call = rows[0];
+    if (!call || call.reviewed_at) {
+      await client.query("COMMIT");
+      return call?.reviewed_at ? { reviewedAt: call.reviewed_at } : null;
+    }
+    const updated = await client.query<{ reviewed_at: Date }>(
+      "UPDATE calls SET reviewed_at = now(), reviewed_by = $2 WHERE id = $1 RETURNING reviewed_at",
+      [callId, actorUserId],
+    );
+    await client.query(
+      "INSERT INTO audit_log (tenant_id, actor_user_id, action, details) VALUES ($1, $2, $3, $4)",
+      [call.tenant_id, actorUserId, "call.reviewed", { callId }],
+    );
+    await client.query("COMMIT");
+    return { reviewedAt: updated.rows[0]!.reviewed_at };
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export interface TenantUsage {

@@ -10,6 +10,7 @@ import {
   type CallExtraction,
 } from "../core/extraction.ts";
 import { scanAgentTurns } from "../core/guardrails.ts";
+import { EXTRACTION_FAILED_FLAG, JUDGE_FAILED_FLAG, guardrailFlag } from "../core/review.ts";
 import { judgeSummary, type JudgeVerdict } from "../evals/judge.ts";
 import type { EnqueueNotifications } from "./enqueue-notifications.ts";
 import { withTenant } from "../db/tenant.ts";
@@ -87,7 +88,7 @@ export async function runProcessCall(
   // The agent must never quote prices or commit to times. A match flags the call for
   // review; the excerpts stay in the tenant's row, never in the alert.
   const guardrailHits = scanAgentTurns(transcript);
-  const guardrailFlags = [...new Set(guardrailHits.map((hit) => `guardrail:${hit.rule}`))];
+  const guardrailFlags = [...new Set(guardrailHits.map((hit) => guardrailFlag(hit.rule)))];
 
   const prompt = buildExtractionPrompt(transcript, {
     businessName: loaded.tenant.business_name,
@@ -115,7 +116,7 @@ export async function runProcessCall(
     usages.push(usage);
     judgeVerdict = verdict;
   }
-  const judgeFlags = judgeVerdict && !judgeVerdict.pass ? ["judge:failed"] : [];
+  const judgeFlags = judgeVerdict && !judgeVerdict.pass ? [JUDGE_FAILED_FLAG] : [];
 
   // A mid-call emergency function already marked the call (db/calls.ts), or the agent spoke an
   // emergency script (a caller told to ring 999 often hangs up before that function fires).
@@ -160,7 +161,7 @@ export async function runProcessCall(
         [
           callId,
           EXTRACTION_FAILED_SUMMARY,
-          ["extraction_failed", ...guardrailFlags],
+          [EXTRACTION_FAILED_FLAG, ...guardrailFlags],
           JSON.stringify({ guardrailHits }),
           finalUrgency,
         ],
