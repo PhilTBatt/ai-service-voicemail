@@ -3,7 +3,11 @@
 #   image                     build the one image the service runs and publish it to GitHub's
 #                             registry, tagged with the commit (decision 016)
 #   infrastructure-what-if    show what infra/main.bicep would create or change; changes nothing
-#   infrastructure-apply      create or update it in rg-callmate-prod
+#   infrastructure-apply      create or update it in rg-callmate-prod (not the apps or jobs)
+#   database-setup            once, before the first release: build the image, then run the
+#                             job that creates the database's three logins
+#   release                   build the image, run the migrations with it, then move the API
+#                             and the worker to it
 # The Azure steps run in the "production" environment, so GitHub waits for Phil's approval
 # first, and sign in to Azure with OIDC: no Azure password is stored in GitHub.
 name: Deploy
@@ -18,6 +22,8 @@ on:
           - image
           - infrastructure-what-if
           - infrastructure-apply
+          - database-setup
+          - release
         default: infrastructure-what-if
 
 permissions:
@@ -30,7 +36,7 @@ env:
 
 jobs:
   image:
-    if: inputs.step == 'image'
+    if: inputs.step == 'image' || inputs.step == 'database-setup' || inputs.step == 'release'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -120,3 +126,79 @@ jobs:
             --parameters postgresAdminPassword="$POSTGRES_ADMIN_PASSWORD" \
                          keyVaultAdminObjectId="$KEY_VAULT_ADMIN_OBJECT_ID" \
             --query properties.outputs
+
+  # Puts a built image to work: the jobs first, then (for a release) the migrations, then the
+  # apps. Waits for the image job, so it never runs an image that wasn't published.
+  release:
+    if: inputs.step == 'database-setup' || inputs.step == 'release'
+    needs: image
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      IMAGE_TAG: ${{ github.sha }}
+      POSTGRES_ADMIN_PASSWORD: ${{ secrets.POSTGRES_ADMIN_PASSWORD }}
+      KEY_VAULT_ADMIN_OBJECT_ID: ${{ vars.KEY_VAULT_ADMIN_OBJECT_ID }}
+      # Optional Key Vault settings, as a JSON list: ["retell-webhook-key"]. Empty: none.
+      OPTIONAL_SECRET_NAMES: ${{ vars.OPTIONAL_SECRET_NAMES || '[]' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Point the jobs at the new image
+        run: |
+          az config set extension.use_dynamic_install=yes_without_prompt
+          az deployment group create \
+            --name "jobs-${GITHUB_RUN_NUMBER}" \
+            --resource-group "$RESOURCE_GROUP" \
+            --template-file infra/main.bicep \
+            --parameters postgresAdminPassword="$POSTGRES_ADMIN_PASSWORD" \
+                         keyVaultAdminObjectId="$KEY_VAULT_ADMIN_OBJECT_ID" \
+                         image="$IMAGE:$IMAGE_TAG" \
+                         optionalSecretNames="$OPTIONAL_SECRET_NAMES" \
+                         deployApps=false \
+            --output none
+
+      - name: Set up the database's logins
+        if: inputs.step == 'database-setup'
+        run: bash .github/scripts/run-azure-job.sh callmate-db-setup
+
+      - name: Run the migrations
+        if: inputs.step == 'release'
+        run: bash .github/scripts/run-azure-job.sh callmate-migrate
+
+      - name: Move the API and the worker to the new image
+        if: inputs.step == 'release'
+        run: |
+          az deployment group create \
+            --name "release-${GITHUB_RUN_NUMBER}" \
+            --resource-group "$RESOURCE_GROUP" \
+            --template-file infra/main.bicep \
+            --parameters postgresAdminPassword="$POSTGRES_ADMIN_PASSWORD" \
+                         keyVaultAdminObjectId="$KEY_VAULT_ADMIN_OBJECT_ID" \
+                         image="$IMAGE:$IMAGE_TAG" \
+                         optionalSecretNames="$OPTIONAL_SECRET_NAMES" \
+                         deployApps=true \
+            --query properties.outputs.publicBaseUrl.value --output tsv
+
+      # Step 8's smoke check: the new API answers, and reaches the database.
+      - name: Check the API is ready
+        if: inputs.step == 'release'
+        run: |
+          url="$(az containerapp show --name callmate-api --resource-group "$RESOURCE_GROUP" --query properties.configuration.ingress.fqdn --output tsv)"
+          for attempt in $(seq 1 30); do
+            if curl --silent --fail "https://$url/readyz"; then echo; echo "Ready: https://$url"; exit 0; fi
+            sleep 10
+          done
+          echo "::error::https://$url/readyz didn't answer 200 within 5 minutes"
+          exit 1

@@ -1,10 +1,10 @@
-// The base of the Azure setup (BUILD_PLAN Step 8; decisions 011, 016, 017): logs, the Container
-// Apps environment, the identity the apps read their secrets with, Key Vault, and the database.
-// Production only, in the resource group's region (UK South). The apps themselves, the
-// migration job and the alerts come next, once Key Vault holds the secrets they read.
+// The Azure setup (BUILD_PLAN Step 8; decisions 011, 016, 017): logs, the Container Apps
+// environment, the identity the apps read their secrets with, Key Vault and the database (the
+// base), then the API, the worker and the two jobs (database setup, migrations). Production
+// only, in the resource group's region (UK South). The alerts come next.
 //
-// Applied by the Deploy workflow (Actions > Deploy > "infrastructure-apply"), never by hand.
-// "infrastructure-what-if" shows what would change and changes nothing.
+// Applied by the Deploy workflow (Actions > Deploy), never by hand: "infrastructure-what-if"
+// shows what would change and changes nothing.
 
 @description('Where everything runs: the resource group\'s region.')
 param location string = resourceGroup().location
@@ -18,6 +18,15 @@ param postgresAdminPassword string
 
 @description('Phil\'s Entra user object ID: allowed to add and change the secrets in Key Vault.')
 param keyVaultAdminObjectId string
+
+@description('The image the apps and jobs run, as the Deploy workflow just built it. Empty: no jobs or apps.')
+param image string = ''
+
+@description('Create or update the API and the worker as well: only once Key Vault holds every secret they read, or they can\'t start.')
+param deployApps bool = false
+
+@description('Settings in Key Vault beyond the required ones, by Key Vault name (for example "retell-webhook-key").')
+param optionalSecretNames array = []
 
 // Key Vault and database names are global across Azure: a short suffix from the resource
 // group's ID keeps ours unique and the same on every run.
@@ -163,3 +172,207 @@ output keyVaultName string = vault.name
 output postgresHost string = postgres.properties.fullyQualifiedDomainName
 output environmentDomain string = environment.properties.defaultDomain
 output appIdentityClientId string = appIdentity.properties.clientId
+
+// ─── Settings the apps read from Key Vault ────────────────────────────────────────────────
+// One rule maps each Key Vault secret to the setting the code reads: "database-url" is
+// DATABASE_URL (Key Vault names can't have underscores). Phil adds them (RUNBOOK section 16).
+// An app can't start while a secret it names is missing, so this list is what must be there.
+var requiredSecretNames = [
+  'database-url'
+  'admin-database-url'
+  'retell-api-key'
+  'twilio-account-sid'
+  'twilio-auth-token'
+  'fallback-voicemail-url'
+  'anthropic-api-key'
+  'twilio-sms-from'
+  'signing-secret'
+  'postmark-server-token'
+  'postmark-webhook-secret'
+  'email-from'
+  'clerk-secret-key'
+]
+var appSecretNames = concat(requiredSecretNames, optionalSecretNames)
+
+// Each list twice over: as the app's secrets (read from Key Vault with the apps' identity),
+// and as its settings (each pointing at one of those secrets).
+var appSecrets = map(appSecretNames, secretName => {
+  name: secretName
+  keyVaultUrl: '${vault.properties.vaultUri}secrets/${secretName}'
+  identity: appIdentity.id
+})
+var appSecretEnv = map(appSecretNames, secretName => {
+  name: toUpper(replace(secretName, '-', '_'))
+  secretRef: secretName
+})
+
+// The database-setup job: the server's admin login, and the three logins it sets up.
+var setupSecretNames = ['postgres-admin-url', 'migration-database-url', 'database-url', 'admin-database-url']
+var setupSecrets = map(setupSecretNames, secretName => {
+  name: secretName
+  keyVaultUrl: '${vault.properties.vaultUri}secrets/${secretName}'
+  identity: appIdentity.id
+})
+var setupEnv = map(setupSecretNames, secretName => {
+  name: toUpper(replace(secretName, '-', '_'))
+  secretRef: secretName
+})
+
+// Container Apps names its default address after the app: known before the app exists.
+var apiName = '${name}-api'
+var publicBaseUrl = 'https://${apiName}.${environment.properties.defaultDomain}'
+
+var plainEnv = [
+  { name: 'NODE_ENV', value: 'production' }
+  { name: 'PORT', value: '3000' }
+  // Twilio's signatures are checked against this, and texts link to call pages under it.
+  { name: 'PUBLIC_BASE_URL', value: publicBaseUrl }
+  // The API serves the dashboard itself, at the same address.
+  { name: 'DASHBOARD_ORIGIN', value: publicBaseUrl }
+]
+
+var identity = {
+  type: 'UserAssigned'
+  userAssignedIdentities: { '${appIdentity.id}': {} }
+}
+
+// ─── The API ──────────────────────────────────────────────────────────────────────────────
+// Always one replica: a call's webhook must never wait for a cold start (BUILD_PLAN Step 8).
+resource api 'Microsoft.App/containerApps@2024-03-01' = if (deployApps && image != '') {
+  name: apiName
+  location: location
+  identity: identity
+  dependsOn: [appsReadSecrets]
+  properties: {
+    managedEnvironmentId: environment.id
+    configuration: {
+      ingress: {
+        external: true
+        targetPort: 3000
+        transport: 'auto'
+        allowInsecure: false
+      }
+      secrets: appSecrets
+    }
+    template: {
+      containers: [
+        {
+          name: 'api'
+          image: image
+          env: concat(plainEnv, appSecretEnv)
+          resources: { cpu: json('0.25'), memory: '0.5Gi' }
+          probes: [
+            // Alive: answers at all. Ready: the database answers too.
+            { type: 'Liveness', httpGet: { path: '/healthz', port: 3000 }, periodSeconds: 10 }
+            { type: 'Readiness', httpGet: { path: '/readyz', port: 3000 }, periodSeconds: 10 }
+          ]
+        }
+      ]
+      scale: { minReplicas: 1, maxReplicas: 2 }
+    }
+  }
+}
+
+// ─── The worker ───────────────────────────────────────────────────────────────────────────
+// The same image with the worker's command. One replica: its jobs are idempotent, but one is
+// all the load needs, and it checks in every 30 seconds (GET /healthz/worker).
+resource worker 'Microsoft.App/containerApps@2024-03-01' = if (deployApps && image != '') {
+  name: '${name}-worker'
+  location: location
+  identity: identity
+  dependsOn: [appsReadSecrets]
+  properties: {
+    managedEnvironmentId: environment.id
+    configuration: {
+      secrets: appSecrets
+    }
+    template: {
+      containers: [
+        {
+          name: 'worker'
+          image: image
+          command: ['node', 'apps/api/src/worker.ts']
+          env: concat(plainEnv, appSecretEnv)
+          resources: { cpu: json('0.25'), memory: '0.5Gi' }
+        }
+      ]
+      scale: { minReplicas: 1, maxReplicas: 1 }
+    }
+  }
+}
+
+// ─── The jobs, run by the Deploy workflow ─────────────────────────────────────────────────
+// Database setup, once: the three logins with their passwords (what roles.sql does locally),
+// as the server's admin (scripts/setup-database-roles.ts).
+resource databaseSetup 'Microsoft.App/jobs@2024-03-01' = if (image != '') {
+  name: '${name}-db-setup'
+  location: location
+  identity: identity
+  dependsOn: [appsReadSecrets]
+  properties: {
+    environmentId: environment.id
+    configuration: {
+      triggerType: 'Manual'
+      replicaTimeout: 300
+      replicaRetryLimit: 0
+      manualTriggerConfig: { parallelism: 1, replicaCompletionCount: 1 }
+      secrets: setupSecrets
+    }
+    template: {
+      containers: [
+        {
+          name: 'db-setup'
+          image: image
+          command: ['node', 'apps/api/src/scripts/setup-database-roles.ts']
+          env: setupEnv
+          resources: { cpu: json('0.25'), memory: '0.5Gi' }
+        }
+      ]
+    }
+  }
+}
+
+// Migrations, before every release: as the owner role, with dbmate (decision 004).
+resource migrate 'Microsoft.App/jobs@2024-03-01' = if (image != '') {
+  name: '${name}-migrate'
+  location: location
+  identity: identity
+  dependsOn: [appsReadSecrets]
+  properties: {
+    environmentId: environment.id
+    configuration: {
+      triggerType: 'Manual'
+      replicaTimeout: 600
+      replicaRetryLimit: 0
+      manualTriggerConfig: { parallelism: 1, replicaCompletionCount: 1 }
+      secrets: [
+        {
+          name: 'migration-database-url'
+          keyVaultUrl: '${vault.properties.vaultUri}secrets/migration-database-url'
+          identity: appIdentity.id
+        }
+      ]
+    }
+    template: {
+      containers: [
+        {
+          name: 'migrate'
+          image: image
+          command: [
+            'dbmate'
+            '--env'
+            'MIGRATION_DATABASE_URL'
+            '--migrations-dir'
+            'apps/api/src/db/migrations'
+            '--no-dump-schema'
+            'up'
+          ]
+          env: [{ name: 'MIGRATION_DATABASE_URL', secretRef: 'migration-database-url' }]
+          resources: { cpu: json('0.25'), memory: '0.5Gi' }
+        }
+      ]
+    }
+  }
+}
+
+output publicBaseUrl string = publicBaseUrl

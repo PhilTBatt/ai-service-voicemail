@@ -267,3 +267,30 @@ Before the first infrastructure run, once:
    - variable `KEY_VAULT_ADMIN_OBJECT_ID`: your own **Object ID** (Entra admin center, **Users**, you, **Overview**). It lets you add the secrets to Key Vault.
 
 After `infrastructure-apply`, the run's log ends with the Key Vault's name and the database's address: the next step's secrets go there.
+
+### The secrets the apps read (Key Vault `kv-callmate-dalbkqkh`)
+
+Azure portal, **Key vaults**, `kv-callmate-dalbkqkh`, **Objects**, **Secrets**, **Generate/Import**. Each Key Vault name is the setting's name in lower case with hyphens: `database-url` is `DATABASE_URL`. The apps can't start until every required one is there.
+
+**The four database URLs.** Make three new passwords first, one per login, **letters and digits only**, at least 24 characters (no symbols, so they're safe inside a URL). The host is `psql-callmate-dalbkqkh.postgres.database.azure.com`.
+
+| Key Vault name           | Value                                                                                                                                     |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `postgres-admin-url`     | `postgres://callmateadmin:<POSTGRES_ADMIN_PASSWORD>@<host>:5432/callmate?sslmode=require` (if that password has symbols, URL-encode them) |
+| `migration-database-url` | `postgres://callmate_owner:<password 1>@<host>:5432/callmate?sslmode=require`                                                             |
+| `database-url`           | `postgres://callmate_app:<password 2>@<host>:5432/callmate?sslmode=require`                                                               |
+| `admin-database-url`     | `postgres://callmate_admin:<password 3>@<host>:5432/callmate?sslmode=require`                                                             |
+
+**The rest, copied from your `.env`** (same values, or the live ones):
+
+`retell-api-key`, `twilio-account-sid`, `twilio-auth-token`, `fallback-voicemail-url`, `anthropic-api-key`, `twilio-sms-from`, `signing-secret`, `postmark-server-token`, `postmark-webhook-secret`, `email-from`, `clerk-secret-key`.
+
+**Optional ones** (only if you use them): `retell-webhook-key`, `clerk-jwt-key`, `twilio-bundle-sid`, `twilio-address-sid`, `email-reply-to`. Add each one you use to the `production` environment variable `OPTIONAL_SECRET_NAMES` as a JSON list, for example `["retell-webhook-key"]`, so the apps read it.
+
+### The first release, in order
+
+1. All the secrets above in Key Vault.
+2. **Deploy**, `database-setup`: builds the image, then creates the three database logins with those passwords. Once only (running it again just sets the passwords again).
+3. **Deploy**, `release`: builds the image, runs the migrations, starts the API and the worker, and checks the API answers. The log ends with its address: `https://callmate-api.greengrass-a4449d88.uksouth.azurecontainerapps.io`.
+
+After that, every release is just step 3.
