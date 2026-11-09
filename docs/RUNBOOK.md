@@ -248,3 +248,22 @@ docker compose exec -T db pg_restore -U callmate -d postgres --clean --create /t
 ```
 
 A backup holds call content: git ignores `*.dump` files, and don't share one.
+
+## 16. Deploying to Azure (Step 8)
+
+Everything goes through GitHub: repo, **Actions**, **Deploy**, **Run workflow**, then pick a step. The Azure steps wait for your approval (the `production` environment's required reviewer), and sign in with OIDC, so no Azure password is stored anywhere.
+
+| Step                     | What it does                                                                                    | Costs money?                                                          |
+| ------------------------ | ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `image`                  | Builds the image and publishes it to GitHub's registry                                          | No                                                                    |
+| `infrastructure-what-if` | Shows what `infra/main.bicep` would create or change in `rg-callmate-prod`, and changes nothing | No                                                                    |
+| `infrastructure-apply`   | Creates or updates it                                                                           | Yes, from the first run: the database is about £14 a month on its own |
+
+Before the first infrastructure run, once:
+
+1. **Resource providers.** A new subscription may not have them, and the deploy identity can't add them (it only has rights on the resource group). Azure portal, **Subscriptions**, your subscription, **Settings**, **Resource providers**: register `Microsoft.App`, `Microsoft.DBforPostgreSQL`, `Microsoft.OperationalInsights`, `Microsoft.KeyVault` and `Microsoft.ManagedIdentity`.
+2. **The `production` environment** (GitHub, Settings, Environments), besides its three Azure IDs:
+   - secret `POSTGRES_ADMIN_PASSWORD`: a long random password from a password manager; keep a copy there too.
+   - variable `KEY_VAULT_ADMIN_OBJECT_ID`: your own **Object ID** (Entra admin center, **Users**, you, **Overview**). It lets you add the secrets to Key Vault.
+
+After `infrastructure-apply`, the run's log ends with the Key Vault's name and the database's address: the next step's secrets go there.

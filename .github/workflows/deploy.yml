@@ -1,11 +1,24 @@
-# Builds the one image the service runs (Dockerfile: the API with its dashboard, the worker and
-# the migrations) and publishes it to GitHub's container registry, tagged with the commit
-# (decision 016). Only when Phil runs it: Actions > Deploy > Run workflow. The jobs that put
-# the image on Azure come with the infrastructure (BUILD_PLAN Step 8).
+# Deploys to Azure (BUILD_PLAN Step 8). Only when Phil runs it: Actions > Deploy > Run workflow,
+# then pick a step:
+#   image                     build the one image the service runs and publish it to GitHub's
+#                             registry, tagged with the commit (decision 016)
+#   infrastructure-what-if    show what infra/main.bicep would create or change; changes nothing
+#   infrastructure-apply      create or update it in rg-callmate-prod
+# The Azure steps run in the "production" environment, so GitHub waits for Phil's approval
+# first, and sign in to Azure with OIDC: no Azure password is stored in GitHub.
 name: Deploy
 
 on:
   workflow_dispatch:
+    inputs:
+      step:
+        description: "What to do"
+        type: choice
+        options:
+          - image
+          - infrastructure-what-if
+          - infrastructure-apply
+        default: infrastructure-what-if
 
 permissions:
   contents: read
@@ -13,16 +26,16 @@ permissions:
 env:
   # Registry names must be lower case.
   IMAGE: ghcr.io/philtbatt/ai-service-voicemail
+  RESOURCE_GROUP: rg-callmate-prod
 
 jobs:
   image:
+    if: inputs.step == 'image'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
       contents: read
       packages: write # publish to ghcr.io with the workflow's own token
-    outputs:
-      image: ${{ env.IMAGE }}:${{ github.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -47,3 +60,63 @@ jobs:
           build-args: CLERK_PUBLISHABLE_KEY=${{ vars.CLERK_PUBLISHABLE_KEY }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  infrastructure:
+    if: startsWith(inputs.step, 'infrastructure')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Phil approves each run (required reviewer), and only this environment's federated
+    # credential lets the workflow sign in to Azure.
+    environment: production
+    permissions:
+      contents: read
+      id-token: write # the OIDC token Azure exchanges for a sign-in
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Check the environment's settings
+        env:
+          POSTGRES_ADMIN_PASSWORD: ${{ secrets.POSTGRES_ADMIN_PASSWORD }}
+          KEY_VAULT_ADMIN_OBJECT_ID: ${{ vars.KEY_VAULT_ADMIN_OBJECT_ID }}
+        run: |
+          missing=""
+          [ -n "$POSTGRES_ADMIN_PASSWORD" ] || missing="$missing POSTGRES_ADMIN_PASSWORD (secret)"
+          [ -n "$KEY_VAULT_ADMIN_OBJECT_ID" ] || missing="$missing KEY_VAULT_ADMIN_OBJECT_ID (variable)"
+          if [ -n "$missing" ]; then
+            echo "::error::Add to the production environment:$missing"
+            exit 1
+          fi
+
+      - name: What would change
+        if: inputs.step == 'infrastructure-what-if'
+        env:
+          POSTGRES_ADMIN_PASSWORD: ${{ secrets.POSTGRES_ADMIN_PASSWORD }}
+          KEY_VAULT_ADMIN_OBJECT_ID: ${{ vars.KEY_VAULT_ADMIN_OBJECT_ID }}
+        run: |
+          az deployment group what-if \
+            --resource-group "$RESOURCE_GROUP" \
+            --template-file infra/main.bicep \
+            --parameters postgresAdminPassword="$POSTGRES_ADMIN_PASSWORD" \
+                         keyVaultAdminObjectId="$KEY_VAULT_ADMIN_OBJECT_ID"
+
+      - name: Apply
+        if: inputs.step == 'infrastructure-apply'
+        env:
+          POSTGRES_ADMIN_PASSWORD: ${{ secrets.POSTGRES_ADMIN_PASSWORD }}
+          KEY_VAULT_ADMIN_OBJECT_ID: ${{ vars.KEY_VAULT_ADMIN_OBJECT_ID }}
+        run: |
+          az deployment group create \
+            --name "infrastructure-${GITHUB_RUN_NUMBER}" \
+            --resource-group "$RESOURCE_GROUP" \
+            --template-file infra/main.bicep \
+            --parameters postgresAdminPassword="$POSTGRES_ADMIN_PASSWORD" \
+                         keyVaultAdminObjectId="$KEY_VAULT_ADMIN_OBJECT_ID" \
+            --query properties.outputs
