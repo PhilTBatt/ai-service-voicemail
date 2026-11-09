@@ -80,6 +80,9 @@ const envSchema = z
     // The site the dashboard is served from. Login tokens made for any other site are refused.
     // Defaults to the local dev server (npm run dev:web).
     DASHBOARD_ORIGIN: z.url().optional(),
+    // The built dashboard (apps/web/dist), served by the API at /. Set in the container image
+    // only: in development the dashboard comes from its own dev server (npm run dev:web).
+    DASHBOARD_DIST: z.string().min(1).optional(),
     LLM_MODEL: z.string().min(1).default("claude-haiku-5-5"),
     // Share of processed calls whose summary is checked by the hallucination judge (Step 7):
     // 0 (off) to 1 (every call). Off by default; each check is one more model call.
@@ -130,6 +133,7 @@ const envSchema = z
     clerkJwtKey: env.CLERK_JWT_KEY,
     // An origin is scheme, host and port: a trailing slash or path would never match a token.
     dashboardOrigin: new URL(env.DASHBOARD_ORIGIN ?? "http://localhost:5173").origin,
+    dashboardDist: env.DASHBOARD_DIST,
     email:
       env.POSTMARK_SERVER_TOKEN !== undefined && env.EMAIL_FROM !== undefined
         ? {

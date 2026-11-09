@@ -1,3 +1,4 @@
+import path from "node:path";
 import express, { type ErrorRequestHandler } from "express";
 import type pg from "pg";
 import type { AlertFn } from "./alerts.ts";
@@ -30,6 +31,11 @@ export interface AppOptions {
         now?: () => Date;
       }
     | undefined;
+  /**
+   * The built dashboard (apps/web/dist), served at / in production so the dashboard and /api
+   * share one address (BUILD_PLAN Step 8). Absent in development, where Vite serves it.
+   */
+  dashboardDist?: string | undefined;
   voiceProviders?: Record<string, VoiceProvider>;
   onCallEnded?: (event: CallEndedEvent) => Promise<void>;
   /** A mid-call emergency function fired (Step 6). */
@@ -55,6 +61,7 @@ export interface AppOptions {
 
 export function createApp({
   pool,
+  dashboardDist,
   voiceProviders = {},
   onCallEnded = () => Promise.resolve(),
   onFunctionCall,
@@ -131,6 +138,8 @@ export function createApp({
     app.use("/api", dashboardRouter({ pool, ...dashboard }));
   }
 
+  if (dashboardDist) serveDashboard(app, dashboardDist);
+
   // Last: Express's own handler prints the stack with console.error, unredacted, and shows
   // it to the client outside production. Log through the redacting logger instead, and
   // give the client nothing.
@@ -149,4 +158,36 @@ export function createApp({
   app.use(onError);
 
   return app;
+}
+
+/** Paths that belong to the API, never to the dashboard: an unknown one stays a 404. */
+const API_PATHS = /^\/(?:api|webhooks|c|healthz|readyz)(?:\/|$)/;
+
+/**
+ * The dashboard's files, and its page for every other GET (its own routes, such as
+ * /tenants/:id, are handled in the browser). The page itself is never cached, so a deploy
+ * shows at once; Vite gives every other file a name that changes with its contents, so those
+ * can be cached for a year.
+ */
+function serveDashboard(app: express.Express, dist: string): void {
+  const page = path.join(dist, "index.html");
+  app.use(
+    express.static(dist, {
+      index: false,
+      setHeaders: (res, file) => {
+        res.setHeader(
+          "Cache-Control",
+          file.endsWith(".html") ? "no-cache" : "public, max-age=31536000, immutable",
+        );
+      },
+    }),
+  );
+  app.use((req, res, next) => {
+    if ((req.method !== "GET" && req.method !== "HEAD") || API_PATHS.test(req.path)) {
+      next();
+      return;
+    }
+    res.setHeader("Cache-Control", "no-cache");
+    res.sendFile(page);
+  });
 }

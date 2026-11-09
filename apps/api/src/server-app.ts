@@ -82,6 +82,7 @@ export function buildServerApp(
 
   return createApp({
     pool,
+    dashboardDist: config.dashboardDist,
     voiceProviders,
     telephony,
     dashboard,

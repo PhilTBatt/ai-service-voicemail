@@ -1,0 +1,49 @@
+# Builds the one image the service runs (Dockerfile: the API with its dashboard, the worker and
+# the migrations) and publishes it to GitHub's container registry, tagged with the commit
+# (decision 016). Only when Phil runs it: Actions > Deploy > Run workflow. The jobs that put
+# the image on Azure come with the infrastructure (BUILD_PLAN Step 8).
+name: Deploy
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Registry names must be lower case.
+  IMAGE: ghcr.io/philtbatt/ai-service-voicemail
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write # publish to ghcr.io with the workflow's own token
+    outputs:
+      image: ${{ env.IMAGE }}:${{ github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          push: true
+          tags: ${{ env.IMAGE }}:${{ github.sha }}
+          # Clerk's publishable key is public by design (decision 012); it's a repository
+          # variable, not a secret. The build fails without it.
+          build-args: CLERK_PUBLISHABLE_KEY=${{ vars.CLERK_PUBLISHABLE_KEY }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

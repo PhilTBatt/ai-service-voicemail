@@ -11,3 +11,10 @@ docs
 .claude
 CLAUDE.md
 .vscode
+# Built or generated locally: the image builds its own dashboard.
+**/dist
+coverage
+**/test-results
+**/playwright-report
+evals/reports
+spike
