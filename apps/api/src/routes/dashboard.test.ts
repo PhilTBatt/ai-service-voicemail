@@ -34,6 +34,10 @@ import { FakeTelephonyProvider } from "../providers/telephony.fake.ts";
 import { ONBOARDING_QUEUE, startQueue } from "../jobs/queue.ts";
 import { FakeVoiceProvider } from "../providers/voice.fake.ts";
 import { TEST_ADMIN_DATABASE_URL, TEST_DATABASE_URL } from "../testing/databases.ts";
+import {
+  GLOBAL_SETTINGS_LOCK_TIMEOUT_MS,
+  holdGlobalSettings,
+} from "../testing/global-settings-lock.ts";
 
 /** Where a bought number sends its calls, in these tests. */
 const NUMBER_URLS = {
@@ -82,6 +86,16 @@ interface TenantList {
 const json = async <T>(response: Promise<Response>): Promise<T> =>
   (await response).json() as Promise<T>;
 const summaries = (list: CallList) => list.calls.map((call) => call.summary);
+
+// The kill switch is one setting for the whole service: this file takes its turn with the
+// others that change or check it (testing/global-settings-lock.ts).
+let releaseGlobalSettings: () => Promise<void>;
+beforeAll(async () => {
+  releaseGlobalSettings = await holdGlobalSettings();
+}, GLOBAL_SETTINGS_LOCK_TIMEOUT_MS);
+afterAll(async () => {
+  await releaseGlobalSettings();
+});
 
 beforeAll(async () => {
   boss = await startQueue(TEST_DATABASE_URL);

@@ -13,6 +13,10 @@ import { TEST_ADMIN_DATABASE_URL, TEST_DATABASE_URL } from "../testing/databases
 import { MOBILE_BANDS, bandMobile } from "../testing/drama-mobiles.ts";
 import { AGENT_DROPPED_UNDER_SECONDS } from "./twilio.ts";
 import { DEMO_DAILY_CALLS_PER_CALLER } from "../core/routing.ts";
+import {
+  GLOBAL_SETTINGS_LOCK_TIMEOUT_MS,
+  holdGlobalSettings,
+} from "../testing/global-settings-lock.ts";
 
 // The public URL Twilio signs for, which is not where the test server listens: the route
 // must verify against PUBLIC_BASE_URL, never the request's own host.
@@ -36,6 +40,16 @@ let post: (
 ) => Promise<Response>;
 let stop: () => Promise<void>;
 let baseUrl: string;
+
+// The kill switch is one setting for the whole service: this file takes its turn with the
+// others that change or check it (testing/global-settings-lock.ts).
+let releaseGlobalSettings: () => Promise<void>;
+beforeAll(async () => {
+  releaseGlobalSettings = await holdGlobalSettings();
+}, GLOBAL_SETTINGS_LOCK_TIMEOUT_MS);
+afterAll(async () => {
+  await releaseGlobalSettings();
+});
 
 beforeAll(async () => {
   const server = createApp({
@@ -444,7 +458,10 @@ describe("POST /webhooks/twilio/sms", () => {
       tenantId,
       mobile,
     ]);
+    // The mobile is drawn at random from the band, and an earlier test may have allowed the
+    // same one: say both ways, or a "blocked" texter can turn out allowed (CI caught it).
     if (allowed) allowlist.add(mobile);
+    else allowlist.delete(mobile);
     return { tenantId, mobile };
   }
 

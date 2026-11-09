@@ -1,9 +1,23 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createPool } from "./pool.ts";
 import { TEST_DATABASE_URL } from "../testing/databases.ts";
+import {
+  GLOBAL_SETTINGS_LOCK_TIMEOUT_MS,
+  holdGlobalSettings,
+} from "../testing/global-settings-lock.ts";
 
 // Connected as the app role, exactly as the API is.
 const app = createPool(TEST_DATABASE_URL);
+
+// The kill switch is one setting for the whole service: this file takes its turn with the
+// others that change or check it (testing/global-settings-lock.ts).
+let releaseGlobalSettings: () => Promise<void>;
+beforeAll(async () => {
+  releaseGlobalSettings = await holdGlobalSettings();
+}, GLOBAL_SETTINGS_LOCK_TIMEOUT_MS);
+afterAll(async () => {
+  await releaseGlobalSettings();
+});
 
 afterAll(async () => {
   await app.end();
