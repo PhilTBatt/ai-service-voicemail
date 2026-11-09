@@ -546,6 +546,22 @@ describe("the demo line (POST /webhooks/twilio/voice)", () => {
     expect(other).toContain("<Dial");
   });
 
+  it("doesn't count fallback voicemails: the assistant wasn't there, which isn't the caller's fault", async () => {
+    const { tenantId, number } = await makeTenant("demo");
+    const caller = "+447700900323";
+    // A day's allowance of calls, every one of them a fallback voicemail.
+    for (const startedAt of callsThisMorning(DEMO_DAILY_CALLS_PER_CALLER)) {
+      await admin.query(
+        `INSERT INTO calls (tenant_id, provider_call_id, caller_number, started_at, ended_at, via_fallback)
+         VALUES ($1, $2, $3, $4, $4, true)`,
+        [tenantId, `call_${randomUUID()}`, caller, startedAt],
+      );
+    }
+    const xml = await (await post("/webhooks/twilio/voice", call(number, caller))).text();
+    expect(xml).toContain("<Dial");
+    expect(xml).not.toContain(DEMO_LIMIT_LINE);
+  });
+
   it("doesn't count a caller with two calls today as over the limit", async () => {
     const { tenantId, number } = await makeTenant("demo");
     const caller = "+447700900323";

@@ -76,14 +76,16 @@ export async function loadInboundCallContext(
 
     // Demo tenants cap each caller at a few calls a day (BUILD_PLAN Step 9); nobody else is
     // counted. Withheld callers count as one caller between them: otherwise dialling 141 first
-    // would get round the cap, and each call costs money.
+    // would get round the cap, and each call costs money. A fallback voicemail doesn't count:
+    // the assistant wasn't there, which is our failure, not the caller's (Phil, 2026-11-09).
     const callerCallsToday =
       tenant.status === "demo"
         ? Number(
             (
               await client.query<{ n: string }>(
                 `SELECT count(*) AS n FROM calls
-                 WHERE tenant_id = $1 AND caller_number IS NOT DISTINCT FROM $2 AND started_at >= $3`,
+                 WHERE tenant_id = $1 AND caller_number IS NOT DISTINCT FROM $2 AND started_at >= $3
+                   AND NOT via_fallback`,
                 [tenantId, from, startOfUkDay(now)],
               )
             ).rows[0]!.n,
