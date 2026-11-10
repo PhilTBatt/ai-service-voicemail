@@ -82,6 +82,16 @@ describe("buildExtractionPrompt", () => {
     expect(system).toContain("Write it even if you don't recognise the area");
   });
 
+  // Phil's live call of 2026-11-10: the transcript had "Alice fifteen seven q y" for his
+  // postcode and "Oh, four" for his name, and the summary said nothing about either.
+  it("has a mangled name or postcode named in the summary, never guessed into the field", () => {
+    const { system } = buildExtractionPrompt([], { businessName: "B", tradespersonName: "Ant" });
+    expect(system).toContain("Speech recognition mangles names and postcodes");
+    expect(system).toContain("leave that field null, never a guess, and say so in jobSummary");
+    expect(system).toContain("Postcode not caught: sounded like");
+    expect(system).toContain("still not in the field");
+  });
+
   it("calls a silent call 'other', so the judge and the extraction agree", () => {
     expect(URGENCY_RULES).toContain(
       '"other" if the call wasn\'t about a job at all, or the caller said nothing',

@@ -214,9 +214,12 @@ describe("call-back number instructions", () => {
   it("tells the agent to offer the number the caller is ringing from before asking for one", () => {
     const definition = buildAgentDefinition(sampleProfile());
     expect(definition.instructions).toContain(
-      'If {{caller_number}} is not "unknown", offer that first',
+      'If {{caller_number}} is not "unknown", don\'t ask for a number: offer theirs, saying it',
     );
     expect(definition.instructions).toContain("read it back to them digit by digit");
+    // Names and postcodes are read back to the caller; nothing else is (Phil, 2026-11-10).
+    expect(definition.instructions).toContain("read each back once as soon as you have it");
+    expect(definition.instructions).toContain("Don't read back the job or anything else.");
     expect(definition.perCallVariables.map((v) => v.name)).toEqual([
       "open_now",
       "holiday_mode",

@@ -142,10 +142,11 @@ function buildInstructions(profile: TenantProfile, template: TradeTemplate): str
 ## Your job
 Take a message for ${name}. Always collect, in a natural order:
 1. the caller's name
-2. a call-back number. If {{caller_number}} is not "unknown", offer that first: ask whether the number they're calling from is the best one to ring them back on, and only take a different number if they want one. If it is "unknown", or they want a different number, take it and read it back to them digit by digit to confirm it
+2. a call-back number. If {{caller_number}} is not "unknown", don't ask for a number: offer theirs, saying it, for example "I've got your number as {{caller_number}}, is that the best one to call you back on?", and only take a different number if they want one. If it is "unknown", or they want a different number, take it and read it back to them digit by digit to confirm it
 3. their postcode
 4. what the job is
 5. how urgent it is
+Names and postcodes are easy to mishear, so read each back once as soon as you have it ("Is that Sam Patel?", "That's L S 1, 4 A P?"), spelling the postcode out letter by letter and digit by digit, and take any correction. Don't read back the job or anything else.
 Then, when relevant, ask:
 ${bullets(template.questions)}
 When you have everything, or the caller wants to go, end the call. The system speaks the closing line.

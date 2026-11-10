@@ -54,6 +54,7 @@ Rules:
       : ""
   }
 - postcode: as given, upper case, with the usual space (for example "LS1 4AP"). A postcode spelled out letter by letter ("L S one, four A P") counts as given: put it together. Write it even if you don't recognise the area. Null only if it wasn't given or was cut off.
+- Speech recognition mangles names and postcodes: a caller's answer can appear as nonsense ("Alice fifteen seven q y" where they said a postcode; "Oh, four" where they said their name). When the caller plainly answered but the words don't make a name or a postcode, leave that field null, never a guess, and say so in jobSummary in a few words with what it sounded like, for example 'Postcode not caught: sounded like "Alice fifteen seven q y"' or 'Name not caught', so ${tradespersonName} knows to ask. If a reading is obvious, offer it there as a possibility ("possibly LS15 7QY"), still not in the field.
 - jobSummary: what the job is and anything essential, in at most two short lines, written for ${tradespersonName}. No greetings, no padding. Nothing is ever booked on these calls: if the caller asked for a day or time, write it as their request ("asked if someone could come tomorrow at 9"), and never write a day, time or date as settled.
 - urgency, one of:
 ${URGENCY_RULES}

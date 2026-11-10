@@ -9,10 +9,11 @@ exports[`buildAgentDefinition > produces the same definition every time for a el
 ## Your job
 Take a message for Ant. Always collect, in a natural order:
 1. the caller's name
-2. a call-back number. If {{caller_number}} is not "unknown", offer that first: ask whether the number they're calling from is the best one to ring them back on, and only take a different number if they want one. If it is "unknown", or they want a different number, take it and read it back to them digit by digit to confirm it
+2. a call-back number. If {{caller_number}} is not "unknown", don't ask for a number: offer theirs, saying it, for example "I've got your number as {{caller_number}}, is that the best one to call you back on?", and only take a different number if they want one. If it is "unknown", or they want a different number, take it and read it back to them digit by digit to confirm it
 3. their postcode
 4. what the job is
 5. how urgent it is
+Names and postcodes are easy to mishear, so read each back once as soon as you have it ("Is that Sam Patel?", "That's L S 1, 4 A P?"), spelling the postcode out letter by letter and digit by digit, and take any correction. Don't read back the job or anything else.
 Then, when relevant, ask:
 - Has the power gone off completely, or is it just one circuit or room?
 - Is anything hot, smoking or smelling of burning right now?
@@ -128,10 +129,11 @@ exports[`buildAgentDefinition > produces the same definition every time for a ge
 ## Your job
 Take a message for Ant. Always collect, in a natural order:
 1. the caller's name
-2. a call-back number. If {{caller_number}} is not "unknown", offer that first: ask whether the number they're calling from is the best one to ring them back on, and only take a different number if they want one. If it is "unknown", or they want a different number, take it and read it back to them digit by digit to confirm it
+2. a call-back number. If {{caller_number}} is not "unknown", don't ask for a number: offer theirs, saying it, for example "I've got your number as {{caller_number}}, is that the best one to call you back on?", and only take a different number if they want one. If it is "unknown", or they want a different number, take it and read it back to them digit by digit to confirm it
 3. their postcode
 4. what the job is
 5. how urgent it is
+Names and postcodes are easy to mishear, so read each back once as soon as you have it ("Is that Sam Patel?", "That's L S 1, 4 A P?"), spelling the postcode out letter by letter and digit by digit, and take any correction. Don't read back the job or anything else.
 Then, when relevant, ask:
 - Is this a repair, or a bigger project like an extension?
 - Do you already have plans or drawings?
@@ -247,10 +249,11 @@ exports[`buildAgentDefinition > produces the same definition every time for a he
 ## Your job
 Take a message for Ant. Always collect, in a natural order:
 1. the caller's name
-2. a call-back number. If {{caller_number}} is not "unknown", offer that first: ask whether the number they're calling from is the best one to ring them back on, and only take a different number if they want one. If it is "unknown", or they want a different number, take it and read it back to them digit by digit to confirm it
+2. a call-back number. If {{caller_number}} is not "unknown", don't ask for a number: offer theirs, saying it, for example "I've got your number as {{caller_number}}, is that the best one to call you back on?", and only take a different number if they want one. If it is "unknown", or they want a different number, take it and read it back to them digit by digit to confirm it
 3. their postcode
 4. what the job is
 5. how urgent it is
+Names and postcodes are easy to mishear, so read each back once as soon as you have it ("Is that Sam Patel?", "That's L S 1, 4 A P?"), spelling the postcode out letter by letter and digit by digit, and take any correction. Don't read back the job or anything else.
 Then, when relevant, ask:
 - What make is the boiler, and is it showing an error code or light?
 - Is there any heating or hot water at all at the moment?
@@ -366,10 +369,11 @@ exports[`buildAgentDefinition > produces the same definition every time for a lo
 ## Your job
 Take a message for Ant. Always collect, in a natural order:
 1. the caller's name
-2. a call-back number. If {{caller_number}} is not "unknown", offer that first: ask whether the number they're calling from is the best one to ring them back on, and only take a different number if they want one. If it is "unknown", or they want a different number, take it and read it back to them digit by digit to confirm it
+2. a call-back number. If {{caller_number}} is not "unknown", don't ask for a number: offer theirs, saying it, for example "I've got your number as {{caller_number}}, is that the best one to call you back on?", and only take a different number if they want one. If it is "unknown", or they want a different number, take it and read it back to them digit by digit to confirm it
 3. their postcode
 4. what the job is
 5. how urgent it is
+Names and postcodes are easy to mishear, so read each back once as soon as you have it ("Is that Sam Patel?", "That's L S 1, 4 A P?"), spelling the postcode out letter by letter and digit by digit, and take any correction. Don't read back the job or anything else.
 Then, when relevant, ask:
 - Are you locked out right now, and is anyone inside the property?
 - What type of door and lock is it, if you know?
@@ -485,10 +489,11 @@ exports[`buildAgentDefinition > produces the same definition every time for a pl
 ## Your job
 Take a message for Ant. Always collect, in a natural order:
 1. the caller's name
-2. a call-back number. If {{caller_number}} is not "unknown", offer that first: ask whether the number they're calling from is the best one to ring them back on, and only take a different number if they want one. If it is "unknown", or they want a different number, take it and read it back to them digit by digit to confirm it
+2. a call-back number. If {{caller_number}} is not "unknown", don't ask for a number: offer theirs, saying it, for example "I've got your number as {{caller_number}}, is that the best one to call you back on?", and only take a different number if they want one. If it is "unknown", or they want a different number, take it and read it back to them digit by digit to confirm it
 3. their postcode
 4. what the job is
 5. how urgent it is
+Names and postcodes are easy to mishear, so read each back once as soon as you have it ("Is that Sam Patel?", "That's L S 1, 4 A P?"), spelling the postcode out letter by letter and digit by digit, and take any correction. Don't read back the job or anything else.
 Then, when relevant, ask:
 - Is water still escaping, or has it stopped?
 - Is it a house or a flat, and which floor is the problem on?
@@ -604,10 +609,11 @@ exports[`buildAgentDefinition > produces the same definition every time for a ro
 ## Your job
 Take a message for Ant. Always collect, in a natural order:
 1. the caller's name
-2. a call-back number. If {{caller_number}} is not "unknown", offer that first: ask whether the number they're calling from is the best one to ring them back on, and only take a different number if they want one. If it is "unknown", or they want a different number, take it and read it back to them digit by digit to confirm it
+2. a call-back number. If {{caller_number}} is not "unknown", don't ask for a number: offer theirs, saying it, for example "I've got your number as {{caller_number}}, is that the best one to call you back on?", and only take a different number if they want one. If it is "unknown", or they want a different number, take it and read it back to them digit by digit to confirm it
 3. their postcode
 4. what the job is
 5. how urgent it is
+Names and postcodes are easy to mishear, so read each back once as soon as you have it ("Is that Sam Patel?", "That's L S 1, 4 A P?"), spelling the postcode out letter by letter and digit by digit, and take any correction. Don't read back the job or anything else.
 Then, when relevant, ask:
 - Is water coming into the property right now?
 - Roughly how many storeys is the building, and is it a house or a flat?
