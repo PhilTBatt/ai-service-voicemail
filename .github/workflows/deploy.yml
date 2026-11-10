@@ -195,13 +195,15 @@ jobs:
                          deployApps=true \
             --query properties.outputs.publicBaseUrl.value --output tsv
 
-      # Step 8's smoke check: the new API answers, and reaches the database.
+      # Step 8's smoke check: the new API answers, and reaches the database. Each try gives up
+      # after 15 seconds: with no replica ready, Azure's ingress holds a request open for
+      # minutes rather than refusing it, which once kept this loop going for half an hour.
       - name: Check the API is ready
         if: inputs.step == 'release'
         run: |
           url="$(az containerapp show --name callmate-api --resource-group "$RESOURCE_GROUP" --query properties.configuration.ingress.fqdn --output tsv)"
           for attempt in $(seq 1 30); do
-            if curl --silent --fail "https://$url/readyz"; then echo; echo "Ready: https://$url"; exit 0; fi
+            if curl --silent --fail --max-time 15 "https://$url/readyz"; then echo; echo "Ready: https://$url"; exit 0; fi
             sleep 10
           done
           echo "::error::https://$url/readyz didn't answer 200 within 5 minutes"
