@@ -15,18 +15,20 @@ container="$2"
 shift 2
 timeout_seconds=600
 
+# A command is set on the job itself, then the job is started plainly. Overriding it at start
+# instead makes Azure treat the container as described from scratch: it then asks for an
+# image too (ContainerAppImageRequired), and the job's settings would go the same way.
 if [ "$#" -gt 1 ]; then
-  echo "Starting $job with: $*"
-  az containerapp job start --name "$job" --resource-group "$RESOURCE_GROUP" \
-    --container-name "$container" --command "$1" --args "${@:2}" --output none
+  echo "Setting $job's command to: $*"
+  az containerapp job update --name "$job" --resource-group "$RESOURCE_GROUP" \
+    --command "$1" --args "${@:2}" --output none
 elif [ "$#" -eq 1 ]; then
-  echo "Starting $job with: $1"
-  az containerapp job start --name "$job" --resource-group "$RESOURCE_GROUP" \
-    --container-name "$container" --command "$1" --output none
-else
-  az containerapp job start --name "$job" --resource-group "$RESOURCE_GROUP" --output none
-  echo "Started $job"
+  echo "Setting $job's command to: $1"
+  az containerapp job update --name "$job" --resource-group "$RESOURCE_GROUP" \
+    --command "$1" --output none
 fi
+az containerapp job start --name "$job" --resource-group "$RESOURCE_GROUP" --output none
+echo "Started $job"
 sleep 5
 
 # The execution just started is the newest one.

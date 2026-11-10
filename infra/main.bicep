@@ -375,10 +375,10 @@ resource migrate 'Microsoft.App/jobs@2024-03-01' = if (image != '') {
   }
 }
 
-// A script against production, by hand: the Deploy workflow's "task" step starts this job
-// with the command overridden (invite-user, create-demo-business, live-configure-number...).
-// Same image and settings as the apps, so a script sees exactly what they see. Its own
-// command only says which image it is, for an execution started without an override.
+// A script against production, by hand: the Deploy workflow's "task" step sets this job's
+// command to the script named (invite-user, create-demo-business, live-configure-number...)
+// and starts it. Same image and settings as the apps, so a script sees exactly what they
+// see. The command here is the runner with no script: started untouched, it says so and stops.
 resource task 'Microsoft.App/jobs@2024-03-01' = if (image != '') {
   name: '${name}-task'
   location: location
@@ -398,7 +398,7 @@ resource task 'Microsoft.App/jobs@2024-03-01' = if (image != '') {
         {
           name: 'task'
           image: image
-          command: ['node', '--version']
+          command: ['node', 'apps/api/src/scripts/run-task.ts']
           env: concat(appSecretEnv, plainEnv)
           resources: { cpu: json('0.25'), memory: '0.5Gi' }
         }
