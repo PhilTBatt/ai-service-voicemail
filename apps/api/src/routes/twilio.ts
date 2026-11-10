@@ -24,6 +24,11 @@ import { withTenant } from "../db/tenant.ts";
 import { applySmsCommand } from "../db/tenant-commands.ts";
 import type { EnqueueNotifications } from "../jobs/enqueue-notifications.ts";
 import { storeFallbackVoicemail } from "../db/voicemails.ts";
+import {
+  FALLBACK_VOICEMAILS_PER_WINDOW,
+  SIGNATURE_FAILURES_PER_WINDOW,
+  Spike,
+} from "../core/spike.ts";
 import { logger } from "../logger.ts";
 import type { TelephonyProvider } from "../providers/telephony.ts";
 import type { VoiceProvider } from "../providers/voice.ts";
@@ -130,6 +135,12 @@ export function twilioRouter({
   const router = Router();
   router.use(urlencoded({ extended: false }));
 
+  // Two of Step 8's alerts: more fallback voicemails than a healthy service gives (the voice
+  // platform down, or a bad sync), and a run of refused signatures (a forger, or a changed
+  // auth token on one side only).
+  const fallbacks = new Spike({ limit: FALLBACK_VOICEMAILS_PER_WINDOW });
+  const refusals = new Spike({ limit: SIGNATURE_FAILURES_PER_WINDOW });
+
   const verified: RequestHandler = (req, res, next) => {
     // The URL is rebuilt from the configured public origin, never from the request: behind a
     // proxy, req.host would be the internal address, and Twilio signed the public one.
@@ -144,17 +155,25 @@ export function twilioRouter({
     });
     if (!ok) {
       logger.warn("Rejected Twilio webhook", { path: req.path });
+      if (refusals.record(now())) {
+        alert("webhook-signature-spike", { source: "twilio", inWindow: refusals.count });
+      }
       res.status(403).json({ error: "Forbidden" });
       return;
     }
     next();
   };
 
-  const voicemail = () =>
-    fallbackVoicemail({
+  /** The fallback voicemail, whatever the reason: every play counts towards the spike alert. */
+  const voicemail = () => {
+    if (fallbacks.record(now())) {
+      alert("fallback-voicemail-spike", { inWindow: fallbacks.count });
+    }
+    return fallbackVoicemail({
       actionUrl: `${publicBaseUrl}/webhooks/twilio/voicemail-done`,
       recordingStatusCallbackUrl: `${publicBaseUrl}/webhooks/twilio/recording`,
     });
+  };
 
   router.post("/voice", verified, async (req, res) => {
     // Whatever happens below, the caller hears something before Twilio gives up on us (15 s):

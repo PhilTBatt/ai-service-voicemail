@@ -162,8 +162,12 @@ Anything named `live-*` touches a paid service and asks for `--confirm`. Day to 
 ## 11. Alerts
 
 An alert is an error line in the API's or the worker's log that starts `ALERT` and names it,
-with IDs to look things up by. Logs never hold phone numbers, emails or call content. Until
-Step 8 sends alerts to your phone, they're only in those logs.
+with IDs to look things up by. Logs never hold phone numbers, emails or call content. With
+`ALERT_EMAIL` set (Key Vault `alert-email`, in `OPTIONAL_SECRET_NAMES`), each one is also
+emailed there, with the same redacted details: at most one email per alert per 15 minutes,
+the next one saying how many it stood in for. Outside production the address must be in
+`OUTBOUND_ALLOWLIST`. The email is best effort: if Postmark is down, the log line still exists.
+What the service can't email about is itself being down: that's the uptime check's job.
 
 | Alert                                             | What it means                                                                                                                                                                  | First three checks                                                                                                                                                                                                                                                                 |
 | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -179,6 +183,9 @@ Step 8 sends alerts to your phone, they're only in those logs.
 | `email-bounced`, `email-spam-complaint`           | Postmark couldn't deliver a summary email, or the person marked it as spam. If the alert says `addressDeactivated`, Postmark won't send to that address until it's reactivated | 1. The address on the Account tab. 2. Postmark's activity for the message, and the reason. 3. Once it's fixed, reactivate the address in Postmark                                                                                                                                  |
 | `number-bought-not-recorded`                      | A number was bought at Twilio but couldn't be saved here: it's costing money and isn't attached to the business                                                                | 1. Twilio's console, Phone Numbers: the SID in the alert. 2. The API log for the database error. 3. Ask me to attach it, or release it in Twilio's console                                                                                                                         |
 | `deletion-confirmation-not-sent`                  | A business's data was deleted, but neither email nor text could carry the written confirmation                                                                                 | 1. The business named in the alert. 2. Your own records for how to reach them. 3. Confirm the deletion to them in writing another way, and keep a copy                                                                                                                             |
+| `fallback-voicemail-spike`                        | More than 2 callers in 15 minutes got the fallback voicemail, for any reason: Retell down or slow, agents not synced, or businesses paused. Once per burst, per API copy       | 1. The API log just before: `voice-platform-unreachable` means Retell; "ran out of time" means something slow; otherwise the routing reason. 2. Retell's status page. 3. If Retell is down and stays down, the kill switch (section 13) is the honest version of the same thing    |
+| `webhook-signature-spike`                         | More than 10 webhooks in 15 minutes had a bad signature (`source` says Twilio or the voice platform). Someone is probing, or a key changed on one side only                    | 1. Whether the auth token or webhook key was rotated (section 14) without the other side. 2. The log lines' paths: real routes or random ones (a scanner)? 3. If it's one address hammering, Azure's ingress can block it; otherwise nothing to do, forgeries are refused          |
+| `server-error-spike`                              | More than 5 requests in 15 minutes ended in a 500. The alert names the last path                                                                                               | 1. The API log's "Unhandled request error" lines, for the error itself. 2. `/readyz` (the database) and the worker's check-in on the Admin page. 3. If it started with a release, release the previous commit                                                                      |
 
 ## 12. Pausing a business
 
@@ -289,7 +296,7 @@ Azure portal, **Key vaults**, `kv-callmate-dalbkqkh`, **Objects**, **Secrets**, 
 
 **`postmark-webhook-secret`** isn't in `.env` until Postmark's bounce webhook is set up: make one up (`node -e "console.log(require('node:crypto').randomBytes(24).toString('hex'))"`), and keep a copy to paste into Postmark's webhook URL later (section 14).
 
-**Optional ones** (only if you use them): `retell-webhook-key`, `clerk-jwt-key`, `twilio-bundle-sid`, `twilio-address-sid`, `email-reply-to`. Add each one you use to the `production` environment variable `OPTIONAL_SECRET_NAMES` as a JSON list, for example `["retell-webhook-key"]`, so the apps read it.
+**Optional ones** (only if you use them): `alert-email` (where alerts are emailed, section 11), `retell-webhook-key`, `clerk-jwt-key`, `twilio-bundle-sid`, `twilio-address-sid`, `email-reply-to`. Add each one you use to the `production` environment variable `OPTIONAL_SECRET_NAMES` as a JSON list, for example `["retell-webhook-key"]`, so the apps read it.
 
 ### The first release, in order
 

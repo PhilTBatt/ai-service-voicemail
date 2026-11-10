@@ -1,7 +1,9 @@
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { AlertFn } from "../alerts.ts";
 import { createApp } from "../app.ts";
+import { SERVER_ERRORS_PER_WINDOW, SIGNATURE_FAILURES_PER_WINDOW } from "../core/spike.ts";
 import { createPool } from "../db/pool.ts";
 import { FakeVoiceProvider } from "../providers/voice.fake.ts";
 import type { CallEndedEvent, FunctionCallEvent, WebhookHeaders } from "../providers/voice.ts";
@@ -19,6 +21,7 @@ afterEach(async () => {
 async function startApp(
   onCallEnded?: (event: CallEndedEvent) => Promise<void>,
   onFunctionCall?: (event: FunctionCallEvent) => Promise<unknown>,
+  options: { alert?: AlertFn } = {},
 ) {
   const fake = new FakeVoiceProvider();
   const received: CallEndedEvent[] = [];
@@ -26,6 +29,7 @@ async function startApp(
   const pool = createPool(UNUSED_DATABASE_URL);
   const server = createApp({
     pool,
+    ...options,
     voiceProviders: { fake },
     onCallEnded:
       onCallEnded ??
@@ -75,6 +79,41 @@ describe("POST /webhooks/voice/:provider", () => {
 
     expect((await post("/webhooks/voice/fake", pretty, headers)).status).toBe(204);
     expect(received).toHaveLength(1);
+  });
+
+  it("alerts on a run of refused signatures (BUILD_PLAN Step 8)", async () => {
+    const alert = vi.fn();
+    const { fake, post } = await startApp(undefined, undefined, { alert });
+    const { rawBody, headers } = fake.webhookFor(sampleCallEndedEvent());
+    const tampered = Buffer.from(
+      rawBody.toString("utf8").replace("+447700900123", "+447700900999"),
+    );
+    for (let i = 0; i <= SIGNATURE_FAILURES_PER_WINDOW; i++) {
+      expect((await post("/webhooks/voice/fake", tampered, headers)).status).toBe(401);
+    }
+    expect(alert).toHaveBeenCalledTimes(1);
+    expect(alert).toHaveBeenCalledWith("webhook-signature-spike", {
+      source: "fake",
+      inWindow: SIGNATURE_FAILURES_PER_WINDOW + 1,
+    });
+  });
+
+  it("alerts on a run of server errors (BUILD_PLAN Step 8)", async () => {
+    const alert = vi.fn();
+    const { fake, post } = await startApp(() => Promise.reject(new Error("boom")), undefined, {
+      alert,
+    });
+    const { rawBody, headers } = fake.webhookFor(sampleCallEndedEvent());
+    for (let i = 0; i <= SERVER_ERRORS_PER_WINDOW; i++) {
+      const response = await post("/webhooks/voice/fake", rawBody, headers);
+      expect(response.status).toBe(500);
+      expect(await response.json()).toEqual({ error: "Internal server error" });
+    }
+    expect(alert).toHaveBeenCalledTimes(1);
+    expect(alert).toHaveBeenCalledWith("server-error-spike", {
+      inWindow: SERVER_ERRORS_PER_WINDOW + 1,
+      lastPath: "/webhooks/voice/fake",
+    });
   });
 
   it("rejects a body changed after signing with 401 and no detail", async () => {

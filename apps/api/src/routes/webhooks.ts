@@ -1,4 +1,6 @@
 import { Router, raw } from "express";
+import { raiseAlert, type AlertFn } from "../alerts.ts";
+import { SIGNATURE_FAILURES_PER_WINDOW, Spike } from "../core/spike.ts";
 import { logger } from "../logger.ts";
 import {
   WebhookVerificationError,
@@ -14,6 +16,8 @@ export interface VoiceWebhookOptions {
   onCallEnded: (event: CallEndedEvent) => Promise<void>;
   /** Step 6: a mid-call emergency function fired. */
   onFunctionCall?: (event: FunctionCallEvent) => Promise<unknown>;
+  alert?: AlertFn;
+  now?: () => Date;
 }
 
 /**
@@ -26,8 +30,18 @@ export function voiceWebhookRouter({
   providers,
   onCallEnded,
   onFunctionCall = () => Promise.resolve(),
+  alert = raiseAlert,
+  now = () => new Date(),
 }: VoiceWebhookOptions) {
   const router = Router();
+  // A run of refused signatures is a forger at work, or a key that changed on one side only.
+  const refusals = new Spike({ limit: SIGNATURE_FAILURES_PER_WINDOW });
+  const refused = (what: string, providerName: string, reason: string) => {
+    logger.warn(what, { provider: providerName, reason });
+    if (refusals.record(now())) {
+      alert("webhook-signature-spike", { source: providerName, inWindow: refusals.count });
+    }
+  };
 
   // Any content type: the signature, not the header, decides whether the request is genuine.
   router.post("/voice/:provider", raw({ type: () => true, limit: "2mb" }), async (req, res) => {
@@ -45,7 +59,7 @@ export function voiceWebhookRouter({
     } catch (error) {
       if (!(error instanceof WebhookVerificationError)) throw error;
       // No detail to the caller: a forger learns nothing from the response.
-      logger.warn("Rejected voice webhook", { provider: providerName, reason: error.message });
+      refused("Rejected voice webhook", providerName, error.message);
       res.status(401).json({ error: "Unauthorized" });
       return;
     }
@@ -73,10 +87,7 @@ export function voiceWebhookRouter({
         event = provider.verifyAndParseFunctionCall(rawBody, req.headers);
       } catch (error) {
         if (!(error instanceof WebhookVerificationError)) throw error;
-        logger.warn("Rejected voice function call", {
-          provider: providerName,
-          reason: error.message,
-        });
+        refused("Rejected voice function call", providerName, error.message);
         res.status(401).json({ error: "Unauthorized" });
         return;
       }

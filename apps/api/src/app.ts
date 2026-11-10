@@ -1,8 +1,9 @@
 import path from "node:path";
 import express, { type ErrorRequestHandler, type RequestHandler } from "express";
 import type pg from "pg";
-import type { AlertFn } from "./alerts.ts";
+import { raiseAlert, type AlertFn } from "./alerts.ts";
 import type { OutboundPolicy } from "./core/outbound-allowlist.ts";
+import { SERVER_ERRORS_PER_WINDOW, Spike } from "./core/spike.ts";
 import { lastHeartbeat, workerState } from "./db/worker-heartbeat.ts";
 import type { EnqueueNotifications } from "./jobs/enqueue-notifications.ts";
 import type { EnqueueOnboarding } from "./jobs/onboarding.ts";
@@ -40,6 +41,9 @@ export interface AppOptions {
   onCallEnded?: (event: CallEndedEvent) => Promise<void>;
   /** A mid-call emergency function fired (Step 6). */
   onFunctionCall?: (event: FunctionCallEvent) => Promise<unknown>;
+  /** For the app's own alerts: a run of 500s, and the voice webhook's refused signatures. */
+  alert?: AlertFn;
+  now?: () => Date;
   /** Call routing. Absent until Twilio and PUBLIC_BASE_URL are configured. */
   telephony?:
     | {
@@ -65,6 +69,8 @@ export function createApp({
   voiceProviders = {},
   onCallEnded = () => Promise.resolve(),
   onFunctionCall,
+  alert = raiseAlert,
+  now = () => new Date(),
   telephony,
   callPages,
   postmark,
@@ -114,6 +120,8 @@ export function createApp({
       providers: voiceProviders,
       onCallEnded,
       ...(onFunctionCall && { onFunctionCall }),
+      alert,
+      now,
     }),
   );
   if (telephony) {
@@ -144,6 +152,8 @@ export function createApp({
   // Last: Express's own handler prints the stack with console.error, unredacted, and shows
   // it to the client outside production. Log through the redacting logger instead, and
   // give the client nothing.
+  // A 500 is always a bug or an outage; a run of them within a window is worth an alert.
+  const serverErrors = new Spike({ limit: SERVER_ERRORS_PER_WINDOW });
   const onError: ErrorRequestHandler = (error: unknown, req, res, next) => {
     // A response already on its way (the voice route answers from a timer while its work may
     // still fail) can't carry an error; writing to it would only raise a second one that
@@ -166,6 +176,9 @@ export function createApp({
       return;
     }
     logger.error("Unhandled request error", { error, method: req.method, path: req.path });
+    if (serverErrors.record(now())) {
+      alert("server-error-spike", { inWindow: serverErrors.count, lastPath: req.path });
+    }
     res.status(500).json({ error: "Internal server error" });
   };
   app.use(onError);

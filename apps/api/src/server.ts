@@ -1,5 +1,6 @@
 // The API process. Its routes and providers are set up in server-app.ts; this starts the
 // process and stops it cleanly.
+import { installAlertEmail } from "./alert-email.ts";
 import { ConfigError, loadConfig, type Config } from "./config.ts";
 import { createAdminPool } from "./db/cross-tenant.ts";
 import { createPool } from "./db/pool.ts";
@@ -9,6 +10,7 @@ import { buildServerApp } from "./server-app.ts";
 
 async function start(config: Config): Promise<void> {
   logger.level = config.logLevel;
+  installAlertEmail(config);
   const pool = createPool(config.databaseUrl);
   // The API only enqueues; the worker process runs the jobs.
   const boss = await startQueue(config.databaseUrl);

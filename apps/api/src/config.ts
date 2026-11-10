@@ -56,6 +56,8 @@ const envSchema = z
     POSTMARK_SERVER_TOKEN: z.string().min(1).optional(),
     EMAIL_FROM: z.email().optional(),
     EMAIL_REPLY_TO: z.email().optional(),
+    // Where alerts are emailed (alert-email.ts), besides the log. Needs the email settings.
+    ALERT_EMAIL: z.email().optional(),
     // The password in the Basic-auth webhook URL registered at Postmark (username "postmark"):
     // https://postmark:<secret>@<public host>/webhooks/postmark. Postmark doesn't sign webhooks.
     POSTMARK_WEBHOOK_SECRET: z.string().min(16).optional(),
@@ -143,6 +145,7 @@ const envSchema = z
           }
         : undefined,
     postmarkWebhookSecret: env.POSTMARK_WEBHOOK_SECRET,
+    alertEmail: env.ALERT_EMAIL,
     outbound: { nodeEnv: env.NODE_ENV, allowlist: parseAllowlist(env.OUTBOUND_ALLOWLIST) },
     sms:
       env.TWILIO_ACCOUNT_SID !== undefined &&

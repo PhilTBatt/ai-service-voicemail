@@ -5,6 +5,11 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { createApp } from "../app.ts";
 import { parseAllowlist } from "../core/outbound-allowlist.ts";
 import { DEMO_LIMIT_LINE, openingLine } from "../core/scripts.ts";
+import {
+  FALLBACK_VOICEMAILS_PER_WINDOW,
+  SIGNATURE_FAILURES_PER_WINDOW,
+  SPIKE_WINDOW_MS,
+} from "../core/spike.ts";
 import { assignPhoneNumber, createAdminPool, createTenant } from "../db/cross-tenant.ts";
 import { createPool } from "../db/pool.ts";
 import { FakeTelephonyProvider } from "../providers/telephony.fake.ts";
@@ -134,6 +139,90 @@ const call = (to: string, from = "+447700900123") => ({
   CallSid: `CA${randomUUID().replace(/-/g, "")}`,
   To: to,
   From: from,
+});
+
+describe("spike alerts (BUILD_PLAN Step 8)", () => {
+  /** Its own app, so the counts start at zero and the clock is this test's to move. */
+  async function ownApp() {
+    const ownAlert = vi.fn();
+    let now = NOW();
+    const server = createApp({
+      pool: app,
+      telephony: {
+        provider: telephony,
+        voice,
+        publicBaseUrl: PUBLIC_BASE_URL,
+        outbound,
+        enqueueSync,
+        enqueueNotifications,
+        alert: ownAlert,
+        now: () => now,
+      },
+    }).listen(0);
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+    return {
+      alert: ownAlert,
+      post: (path: string, params: Record<string, string>, signatureFor?: string) =>
+        fetch(`http://127.0.0.1:${port}${path}`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/x-www-form-urlencoded",
+            "x-twilio-signature": telephony.sign(
+              signatureFor ?? `${PUBLIC_BASE_URL}${path}`,
+              params,
+            ),
+          },
+          body: new URLSearchParams(params).toString(),
+        }),
+      advance: (ms: number) => (now = new Date(now.getTime() + ms)),
+      stop: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    };
+  }
+
+  it("alerts once when fallback voicemails pass the plan's limit, and again a window later", async () => {
+    const own = await ownApp();
+    try {
+      const { number } = await makeTenant("paused");
+      for (let i = 0; i <= FALLBACK_VOICEMAILS_PER_WINDOW; i++) {
+        expect((await own.post("/webhooks/twilio/voice", call(number))).status).toBe(200);
+      }
+      expect(own.alert).toHaveBeenCalledTimes(1);
+      expect(own.alert).toHaveBeenCalledWith("fallback-voicemail-spike", {
+        inWindow: FALLBACK_VOICEMAILS_PER_WINDOW + 1,
+      });
+      await own.post("/webhooks/twilio/voice", call(number));
+      expect(own.alert).toHaveBeenCalledTimes(1);
+      own.advance(SPIKE_WINDOW_MS);
+      for (let i = 0; i <= FALLBACK_VOICEMAILS_PER_WINDOW; i++) {
+        await own.post("/webhooks/twilio/voice", call(number));
+      }
+      expect(own.alert).toHaveBeenCalledTimes(2);
+    } finally {
+      await own.stop();
+    }
+  });
+
+  it("alerts on a run of refused signatures", async () => {
+    const own = await ownApp();
+    try {
+      for (let i = 0; i <= SIGNATURE_FAILURES_PER_WINDOW; i++) {
+        const response = await own.post(
+          "/webhooks/twilio/voice",
+          call("+442079460990"),
+          "https://forged.example.com/webhooks/twilio/voice",
+        );
+        expect(response.status).toBe(403);
+      }
+      expect(own.alert).toHaveBeenCalledTimes(1);
+      expect(own.alert).toHaveBeenCalledWith("webhook-signature-spike", {
+        source: "twilio",
+        inWindow: SIGNATURE_FAILURES_PER_WINDOW + 1,
+      });
+    } finally {
+      await own.stop();
+    }
+  });
 });
 
 describe("POST /webhooks/twilio/voice", () => {

@@ -1,5 +1,6 @@
 // The worker process: runs background jobs. Same image as the API, different command. What it
 // runs is set up in worker-jobs.ts; this starts the process and stops it cleanly.
+import { installAlertEmail } from "./alert-email.ts";
 import { ConfigError, loadConfig } from "./config.ts";
 import { createAdminPool } from "./db/cross-tenant.ts";
 import { createPool } from "./db/pool.ts";
@@ -11,6 +12,7 @@ import { registerJobs } from "./worker-jobs.ts";
 try {
   const config = loadConfig(process.env);
   logger.level = config.logLevel;
+  installAlertEmail(config);
   if (!config.retellApiKey)
     throw new ConfigError(["RETELL_API_KEY is missing (the worker syncs agents to Retell)"]);
 

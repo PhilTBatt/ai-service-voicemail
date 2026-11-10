@@ -308,6 +308,18 @@ describe("loadConfig: RETELL_WEBHOOK_KEY", () => {
   });
 });
 
+describe("loadConfig: ALERT_EMAIL", () => {
+  it("is an address when set, and absent otherwise", () => {
+    expect(loadConfig({ ...valid, ALERT_EMAIL: "phil@example.com" }).alertEmail).toBe(
+      "phil@example.com",
+    );
+    expect(loadConfig(valid).alertEmail).toBeUndefined();
+    expect(configErrorFor({ ...valid, ALERT_EMAIL: "not an address" }).problems[0]).toMatch(
+      /^ALERT_EMAIL is invalid/,
+    );
+  });
+});
+
 describe("loadConfig: POSTMARK_WEBHOOK_SECRET", () => {
   it("must be at least 16 characters when set", () => {
     expect(
