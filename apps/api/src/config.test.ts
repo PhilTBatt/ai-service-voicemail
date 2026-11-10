@@ -308,6 +308,28 @@ describe("loadConfig: RETELL_WEBHOOK_KEY", () => {
   });
 });
 
+describe("loadConfig: GoCardless", () => {
+  it("is off without a token, sandbox by default with one, and live only when said", () => {
+    expect(loadConfig(valid).payments).toBeUndefined();
+    expect(loadConfig({ ...valid, GOCARDLESS_ACCESS_TOKEN: "sandbox_x" }).payments).toEqual({
+      accessToken: "sandbox_x",
+      environment: "sandbox",
+      webhookSecret: undefined,
+    });
+    expect(
+      loadConfig({
+        ...valid,
+        GOCARDLESS_ACCESS_TOKEN: "live_x",
+        GOCARDLESS_ENVIRONMENT: "live",
+        GOCARDLESS_WEBHOOK_SECRET: "s".repeat(16),
+      }).payments,
+    ).toMatchObject({ environment: "live", webhookSecret: "s".repeat(16) });
+    expect(configErrorFor({ ...valid, GOCARDLESS_ENVIRONMENT: "production" }).problems[0]).toMatch(
+      /^GOCARDLESS_ENVIRONMENT is invalid/,
+    );
+  });
+});
+
 describe("loadConfig: ALERT_EMAIL", () => {
   it("is an address when set, and absent otherwise", () => {
     expect(loadConfig({ ...valid, ALERT_EMAIL: "phil@example.com" }).alertEmail).toBe(

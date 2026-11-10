@@ -297,7 +297,7 @@ Azure portal, **Key vaults**, `kv-callmate-dalbkqkh`, **Objects**, **Secrets**, 
 
 **`postmark-webhook-secret`** isn't in `.env` until Postmark's bounce webhook is set up: make one up (`node -e "console.log(require('node:crypto').randomBytes(24).toString('hex'))"`), and keep a copy to paste into Postmark's webhook URL later (section 14).
 
-**Optional ones** (only if you use them): `alert-email` (where alerts are emailed, section 11), `retell-webhook-key`, `clerk-jwt-key`, `twilio-bundle-sid`, `twilio-address-sid`, `email-reply-to`. Add each one you use to the `production` environment variable `OPTIONAL_SECRET_NAMES` as a JSON list, for example `["retell-webhook-key"]`, so the apps read it.
+**Optional ones** (only if you use them): `alert-email` (where alerts are emailed, section 11), `gocardless-access-token`, `gocardless-environment` (`live`, once there's a live GoCardless account; the sandbox otherwise) and `gocardless-webhook-secret` (billing, decision 019), `retell-webhook-key`, `clerk-jwt-key`, `twilio-bundle-sid`, `twilio-address-sid`, `email-reply-to`. Add each one you use to the `production` environment variable `OPTIONAL_SECRET_NAMES` as a JSON list, for example `["retell-webhook-key"]`, so the apps read it.
 
 ### The first release, in order
 

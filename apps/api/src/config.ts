@@ -58,6 +58,13 @@ const envSchema = z
     EMAIL_REPLY_TO: z.email().optional(),
     // Where alerts are emailed (alert-email.ts), besides the log. Needs the email settings.
     ALERT_EMAIL: z.email().optional(),
+    // Payments (decision 019: GoCardless Direct Debit). The access token is a secret from the
+    // dashboard's Developers page; a sandbox token only works against the sandbox and vice
+    // versa, so the environment says which. The webhook secret is the endpoint's, from
+    // Developers > Webhooks; without it, payment webhooks are refused.
+    GOCARDLESS_ACCESS_TOKEN: z.string().min(1).optional(),
+    GOCARDLESS_ENVIRONMENT: z.enum(["sandbox", "live"]).default("sandbox"),
+    GOCARDLESS_WEBHOOK_SECRET: z.string().min(16).optional(),
     // The password in the Basic-auth webhook URL registered at Postmark (username "postmark"):
     // https://postmark:<secret>@<public host>/webhooks/postmark. Postmark doesn't sign webhooks.
     POSTMARK_WEBHOOK_SECRET: z.string().min(16).optional(),
@@ -146,6 +153,14 @@ const envSchema = z
         : undefined,
     postmarkWebhookSecret: env.POSTMARK_WEBHOOK_SECRET,
     alertEmail: env.ALERT_EMAIL,
+    payments:
+      env.GOCARDLESS_ACCESS_TOKEN !== undefined
+        ? {
+            accessToken: env.GOCARDLESS_ACCESS_TOKEN,
+            environment: env.GOCARDLESS_ENVIRONMENT,
+            webhookSecret: env.GOCARDLESS_WEBHOOK_SECRET,
+          }
+        : undefined,
     outbound: { nodeEnv: env.NODE_ENV, allowlist: parseAllowlist(env.OUTBOUND_ALLOWLIST) },
     sms:
       env.TWILIO_ACCOUNT_SID !== undefined &&
