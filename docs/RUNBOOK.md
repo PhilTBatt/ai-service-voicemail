@@ -305,3 +305,19 @@ Azure portal, **Key vaults**, `kv-callmate-dalbkqkh`, **Objects**, **Secrets**, 
 3. **Deploy**, `release`: builds the image, runs the migrations, starts the API and the worker, and checks the API answers. The log ends with its address: `https://callmate-api.greengrass-a4449d88.uksouth.azurecontainerapps.io`.
 
 After that, every release is just step 3.
+
+### Running a script against production (the `task` step)
+
+**Deploy**, `task`, with the script's name and arguments in the **command** box, for example `invite-user --email you@example.com --role admin`. It runs that script from `apps/api/src/scripts` in the `callmate-task` job, which has the apps' image and every setting they have, and prints the script's output in the Actions log. The job is created by a release, so the first `task` needs a release before it. Whatever is typed in the box is visible in this public repository's run log, so a script that needs contact details reads them from Key Vault instead: add the optional secrets `demo-mobile` and `demo-email` and list them in `OPTIONAL_SECRET_NAMES` before the demo business step below.
+
+### The demo business in production, in order
+
+The live database starts empty: no businesses, no logins. The demo line (the number Ant and prospects call) is the seed's first business, "Ant's Plumbing", with the same fixed ID as on a laptop, so every script that knows the demo business finds it.
+
+1. Key Vault: `demo-mobile` (where the demo line's texts go, `+44...`) and `demo-email`; add both to `OPTIONAL_SECRET_NAMES` (`["alert-email","demo-mobile","demo-email"]`, say) and **Deploy**, `release`, so the apps and the task job read them.
+2. **Deploy**, `task`: `invite-user --email <your login email> --role admin`. Your first login to the live dashboard then claims it.
+3. **Deploy**, `task`: `create-demo-business --number +44... --sid PN...`, the demo line's number and its SID from Twilio's console (Phone Numbers, the number, its SID). It creates the business, records the number and saves the agent profile; the worker syncs the profile to Retell (a new agent there, separate from the laptop's).
+4. **Deploy**, `task`: `live-configure-number --confirm`. Points the number at the live API, so calls stop going to the laptop. The number's fallback stays the TwiML Bin voicemail.
+5. Call the number. The call shows on the live dashboard; the text and the email arrive at `demo-mobile` and `demo-email`.
+
+To hand the number back to a laptop for a day, run `npm run live-configure-number -- --confirm` locally (with ngrok up); step 4 takes it back.

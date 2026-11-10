@@ -8,6 +8,8 @@
 #                             job that creates the database's three logins
 #   release                   build the image, run the migrations with it, then move the API
 #                             and the worker to it
+#   task                      run one script against production, in the callmate-task job
+#                             (the "command" box: e.g. invite-user --email a@b.c --role admin)
 # The Azure steps run in the "production" environment, so GitHub waits for Phil's approval
 # first, and sign in to Azure with OIDC: no Azure password is stored in GitHub.
 name: Deploy
@@ -24,7 +26,12 @@ on:
           - infrastructure-apply
           - database-setup
           - release
+          - task
         default: infrastructure-what-if
+      command:
+        description: "task only: the script and its arguments, e.g. invite-user --email a@b.c --role admin"
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -208,3 +215,39 @@ jobs:
           done
           echo "::error::https://$url/readyz didn't answer 200 within 5 minutes"
           exit 1
+
+  # One script against production: the callmate-task job (made by the last release, with the
+  # apps' image and settings) started with its command replaced by the script named in the
+  # "command" box. Anything typed there is in this public repository's run log, so contact
+  # details go in Key Vault, not here (create-demo-business reads DEMO_MOBILE and DEMO_EMAIL).
+  task:
+    if: inputs.step == 'task'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      COMMAND: ${{ inputs.command }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Run the script
+        run: |
+          az config set extension.use_dynamic_install=yes_without_prompt
+          read -r -a words <<< "$COMMAND"
+          script="${words[0]:-}"
+          if [ -z "$script" ] || [ ! -f "apps/api/src/scripts/$script.ts" ]; then
+            echo "::error::The command must start with a script from apps/api/src/scripts (without .ts): $(ls apps/api/src/scripts | sed 's/\.ts$//' | tr '\n' ' ')"
+            exit 1
+          fi
+          bash .github/scripts/run-azure-job.sh callmate-task task node "apps/api/src/scripts/$script.ts" "${words[@]:1}"

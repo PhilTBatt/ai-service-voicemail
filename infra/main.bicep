@@ -375,4 +375,36 @@ resource migrate 'Microsoft.App/jobs@2024-03-01' = if (image != '') {
   }
 }
 
+// A script against production, by hand: the Deploy workflow's "task" step starts this job
+// with the command overridden (invite-user, create-demo-business, live-configure-number...).
+// Same image and settings as the apps, so a script sees exactly what they see. Its own
+// command only says which image it is, for an execution started without an override.
+resource task 'Microsoft.App/jobs@2024-03-01' = if (image != '') {
+  name: '${name}-task'
+  location: location
+  identity: identity
+  dependsOn: [appsReadSecrets]
+  properties: {
+    environmentId: environment.id
+    configuration: {
+      triggerType: 'Manual'
+      replicaTimeout: 600
+      replicaRetryLimit: 0
+      manualTriggerConfig: { parallelism: 1, replicaCompletionCount: 1 }
+      secrets: appSecrets
+    }
+    template: {
+      containers: [
+        {
+          name: 'task'
+          image: image
+          command: ['node', '--version']
+          env: concat(appSecretEnv, plainEnv)
+          resources: { cpu: json('0.25'), memory: '0.5Gi' }
+        }
+      ]
+    }
+  }
+}
+
 output publicBaseUrl string = publicBaseUrl

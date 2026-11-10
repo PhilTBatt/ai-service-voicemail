@@ -5,15 +5,28 @@
 # an execution can have, so this reads the newest execution from the job's own list, and treats
 # anything but "Succeeded" at the end as a failure. On a failure it prints the job's own output
 # here, so the cause is in the Actions log and not only in the Azure portal.
-#   run-azure-job.sh <job name> <container name>
+#   run-azure-job.sh <job name> <container name> [command and arguments...]
+# With a command, that execution runs it instead of the job's own (the callmate-task job exists
+# for this: any script in the image, against production).
 set -euo pipefail
 
 job="$1"
 container="$2"
+shift 2
 timeout_seconds=600
 
-az containerapp job start --name "$job" --resource-group "$RESOURCE_GROUP" --output none
-echo "Started $job"
+if [ "$#" -gt 1 ]; then
+  echo "Starting $job with: $*"
+  az containerapp job start --name "$job" --resource-group "$RESOURCE_GROUP" \
+    --container-name "$container" --command "$1" --args "${@:2}" --output none
+elif [ "$#" -eq 1 ]; then
+  echo "Starting $job with: $1"
+  az containerapp job start --name "$job" --resource-group "$RESOURCE_GROUP" \
+    --container-name "$container" --command "$1" --output none
+else
+  az containerapp job start --name "$job" --resource-group "$RESOURCE_GROUP" --output none
+  echo "Started $job"
+fi
 sleep 5
 
 # The execution just started is the newest one.
@@ -30,7 +43,14 @@ while [ "$waited" -lt "$timeout_seconds" ]; do
     --job-execution-name "$execution" --query properties.status --output tsv)"
   echo "$job ($execution): $status"
   case "$status" in
-    Succeeded) exit 0 ;;
+    Succeeded)
+      echo "::group::$job output"
+      az containerapp job logs show --name "$job" --resource-group "$RESOURCE_GROUP" \
+        --execution "$execution" --container "$container" --format text --tail 300 \
+        || echo "(couldn't fetch the output here)"
+      echo "::endgroup::"
+      exit 0
+      ;;
     Failed | Stopped | Degraded)
       echo "::error::$job ended as $status. Its output follows, if Azure still has it; otherwise it's in the Azure portal: $job, Execution history, Console."
       echo "::group::$job output"
