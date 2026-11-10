@@ -31,6 +31,7 @@ import {
   withAdvisoryLock,
   estimateCosts,
   healthSnapshot,
+  recentFailedNotifications,
   listCurrentUsage,
   listCancellingTenants,
   listFlaggedCalls,
@@ -45,7 +46,7 @@ import { ukDateTime } from "../core/uk-time.ts";
 import { withTenant } from "../db/tenant.ts";
 import type { EnqueueOffboarding } from "../jobs/offboarding.ts";
 import type { EnqueueOnboarding } from "../jobs/onboarding.ts";
-import { countDeadLettered } from "../jobs/queue.ts";
+import { countDeadLettered, recentDeadLetters } from "../jobs/queue.ts";
 import { PurchaseNotAllowedError, type TelephonyProvider } from "../providers/telephony.ts";
 import { presentCallSummary } from "./call-view.ts";
 import { principalOf, requireRole } from "./dashboard-auth.ts";
@@ -126,12 +127,14 @@ export function adminRouter({
   router.get("/health", async (_req, res) => {
     const at = now();
     const since = new Date(at.getTime() - DAY_MS);
-    const [snapshot, deadLettered] = await Promise.all([
+    const [snapshot, deadLettered, failedRecent, deadLettersRecent] = await Promise.all([
       healthSnapshot(admin, {
         since,
         waitingBefore: new Date(at.getTime() - SYNC_WAITING_AFTER_MS),
       }),
       countDeadLettered(pool, since),
+      recentFailedNotifications(admin, since),
+      recentDeadLetters(pool, since),
     ]);
     const { workerSeenAt, waitingSyncs, ...counts } = snapshot;
     // Is anything running the jobs? A stopped worker used to be silent here.
@@ -144,6 +147,20 @@ export function adminRouter({
         lastSeen: worker.state === "never" ? null : worker.seenAt.toISOString(),
       },
       waitingSyncs: waitingSyncs.map((sync) => ({ ...sync, savedAt: sync.savedAt.toISOString() })),
+      // The reasons behind the two counts, so a failed send or job can be understood here
+      // rather than in the worker's log. A job's data is whatever was queued: only the IDs
+      // are passed on, never the rest.
+      failedNotificationsRecent: failedRecent.map((failed) => ({
+        ...failed,
+        at: failed.at.toISOString(),
+      })),
+      deadLetteredJobsRecent: deadLettersRecent.map((job) => ({
+        queue: job.queue,
+        tenantId: typeof job.data["tenantId"] === "string" ? job.data["tenantId"] : null,
+        callId: typeof job.data["callId"] === "string" ? job.data["callId"] : null,
+        error: job.error,
+        at: job.at.toISOString(),
+      })),
     } satisfies HealthView);
   });
 

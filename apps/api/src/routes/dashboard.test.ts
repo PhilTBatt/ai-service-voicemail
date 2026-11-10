@@ -1172,13 +1172,23 @@ describe("admin screens", () => {
               ($1, $3, now() - interval '3 days', now() - interval '3 days', 'voicemail', true)`,
       [tenant, `CA${randomUUID()}`, `CA${randomUUID()}`],
     );
-    const health = await json<{
-      killSwitchOn: boolean;
-      fallbackCalls: number;
-      failedNotifications: number;
-      failedSyncs: { tenantId: string; version: number; error: string }[];
-      deadLetteredJobs24h: number;
-    }>(get("/admin/health", tokens.admin));
+    // A text the provider refused, with its reason, and the job that gave up on it.
+    const { rows: failedCalls } = await admin.query<{ id: string }>(
+      "SELECT id FROM calls WHERE tenant_id = $1 AND started_at > now() - interval '2 hours'",
+      [tenant],
+    );
+    const failedCall = failedCalls[0]!.id;
+    await admin.query(
+      `INSERT INTO notifications (tenant_id, call_id, channel, status, attempts, failure_reason)
+       VALUES ($1, $2, 'sms', 'failed', 3, 'TwilioApiError: Twilio /Messages.json failed: HTTP 400 [phone] is not a valid number')`,
+      [tenant, failedCall],
+    );
+    await app.query(
+      `INSERT INTO pgboss.job (name, data, source_name, source_output)
+       VALUES ('dead-letter', $1, 'notify-sms', '{"message": "Twilio /Messages.json failed: HTTP 400"}')`,
+      [{ tenantId: tenant, callId: failedCall }],
+    );
+    const health = await json<HealthView>(get("/admin/health", tokens.admin));
     expect(health.killSwitchOn).toBe(false);
     expect(health.fallbackCalls).toBeGreaterThanOrEqual(1);
     expect(health.failedSyncs).toContainEqual({
@@ -1187,7 +1197,29 @@ describe("admin screens", () => {
       version: 2,
       error: "Retell refused the prompt",
     });
-    expect(typeof health.deadLetteredJobs24h).toBe("number");
+    expect(health.deadLetteredJobs24h).toBeGreaterThanOrEqual(1);
+    expect(health.failedNotifications).toBeGreaterThanOrEqual(1);
+    expect(health.failedNotificationsRecent).toContainEqual(
+      expect.objectContaining({
+        tenantId: tenant,
+        businessName: "Broken Sync",
+        callId: failedCall,
+        channel: "sms",
+        status: "failed",
+        attempts: 3,
+        failureCode: null,
+        failureReason:
+          "TwilioApiError: Twilio /Messages.json failed: HTTP 400 [phone] is not a valid number",
+      }),
+    );
+    expect(health.deadLetteredJobsRecent).toContainEqual(
+      expect.objectContaining({
+        queue: "notify-sms",
+        tenantId: tenant,
+        callId: failedCall,
+        error: "Twilio /Messages.json failed: HTTP 400",
+      }),
+    );
   });
 
   it("names the syncs nothing has run, and says whether the worker is checking in", async () => {

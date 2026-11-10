@@ -251,6 +251,38 @@ export async function auditAdminAction(
  * logged in, so there's no person, and the details say "script". BUILD_PLAN Step 10: every
  * admin action is recorded, and granting admin is the one most worth having on record.
  */
+export interface FailedNotification {
+  tenantId: string;
+  businessName: string;
+  callId: string;
+  channel: string;
+  /** 'failed': the send threw (failureReason says what); 'undelivered': the carrier's verdict (failureCode). */
+  status: string;
+  attempts: number;
+  failureCode: string | null;
+  failureReason: string | null;
+  at: Date;
+}
+
+/** The latest texts and emails that couldn't be sent, newest first, for the admin's health screen. */
+export async function recentFailedNotifications(
+  admin: AdminPool,
+  since: Date,
+  limit = 10,
+): Promise<FailedNotification[]> {
+  const { rows } = await admin.query<FailedNotification>(
+    `SELECT n.tenant_id AS "tenantId", t.business_name AS "businessName", n.call_id AS "callId",
+            n.channel, n.status, n.attempts, n.failure_code AS "failureCode",
+            n.failure_reason AS "failureReason", n.updated_at AS at
+     FROM notifications n JOIN tenants t ON t.id = n.tenant_id
+     WHERE n.status IN ('failed', 'undelivered') AND n.updated_at >= $1
+     ORDER BY n.updated_at DESC
+     LIMIT $2`,
+    [since, limit],
+  );
+  return rows;
+}
+
 /**
  * Makes an account claimable again by its email: the next sign-in with that verified address
  * takes it, as a first sign-in would. For when the login provider changes (Clerk's production

@@ -6,6 +6,13 @@ import type pg from "pg";
 import { checkOutbound, type OutboundPolicy } from "../core/outbound-allowlist.ts";
 import { withTenant } from "../db/tenant.ts";
 import { logger } from "../logger.ts";
+import { redactText } from "../redact.ts";
+
+/** A failed send's reason as stored: the error's own words, redacted, and kept short. */
+export function failureReasonOf(error: unknown): string {
+  const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+  return redactText(message).slice(0, 300);
+}
 
 /** 'sms' and 'email' are the call summaries; the other two are the emergency texts. */
 export type NotificationChannel = "sms" | "sms_emergency" | "sms_caller" | "email";
@@ -67,17 +74,22 @@ export async function deliverNotification(
 
   // One row per call and channel. Creating the row counts as the first attempt; after that
   // only a new 'pending' adds one, and the other statuses record how an attempt ended.
-  const setStatus = (status: NotificationStatus, providerRef: string | null = null) =>
+  const setStatus = (
+    status: NotificationStatus,
+    providerRef: string | null = null,
+    failureReason: string | null = null,
+  ) =>
     withTenant(pool, tenantId, (client) =>
       client.query(
-        `INSERT INTO notifications (tenant_id, call_id, channel, status, attempts, provider_ref)
-         VALUES ($1, $2, $3, $4, 1, $5)
+        `INSERT INTO notifications (tenant_id, call_id, channel, status, attempts, provider_ref, failure_reason)
+         VALUES ($1, $2, $3, $4, 1, $5, $6)
          ON CONFLICT (call_id, channel) DO UPDATE
            SET status = EXCLUDED.status,
                provider_ref = COALESCE(EXCLUDED.provider_ref, notifications.provider_ref),
+               failure_reason = EXCLUDED.failure_reason,
                attempts = notifications.attempts
                  + CASE WHEN EXCLUDED.status = 'pending' THEN 1 ELSE 0 END`,
-        [tenantId, callId, channel, status, providerRef],
+        [tenantId, callId, channel, status, providerRef, failureReason],
       ),
     );
 
@@ -98,7 +110,9 @@ export async function deliverNotification(
   try {
     result = await send();
   } catch (error) {
-    await setStatus("failed");
+    // The provider's words, for the admin's health screen. Provider errors are redacted
+    // where they're made (providers/*.ts); this redacts again in case one isn't.
+    await setStatus("failed", null, failureReasonOf(error));
     throw error; // the queue retries with backoff; the row shows how many times
   }
   await withTenant(pool, tenantId, async (client) => {

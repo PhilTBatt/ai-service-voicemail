@@ -166,3 +166,51 @@ export async function countDeadLettered(pool: pg.Pool, since: Date): Promise<num
   );
   return rows[0]!.n;
 }
+
+export interface DeadLetteredJob {
+  /** The queue the job failed on: "notify-sms", "process-call"... */
+  queue: string;
+  /** What the job was about, as it was queued: usually a tenant and a call. */
+  data: Record<string, unknown>;
+  /** The error that failed the last attempt, as pg-boss recorded it (already redacted by the providers). */
+  error: string | null;
+  at: Date;
+}
+
+/**
+ * The latest jobs that failed every retry, newest first, for the admin's health screen. A
+ * dead-lettered job is a copy in the dead-letter queue carrying the original's queue name
+ * and last error (pg-boss's source_* columns).
+ */
+export async function recentDeadLetters(
+  pool: pg.Pool,
+  since: Date,
+  limit = 10,
+): Promise<DeadLetteredJob[]> {
+  const { rows } = await pool.query<{
+    queue: string | null;
+    data: Record<string, unknown> | null;
+    output: unknown;
+    at: Date;
+  }>(
+    `SELECT source_name AS queue, data, source_output AS output, created_on AS at
+     FROM pgboss.job WHERE name = $1 AND created_on >= $2
+     ORDER BY created_on DESC LIMIT $3`,
+    [DEAD_LETTER_QUEUE, since, limit],
+  );
+  return rows.map((row) => ({
+    queue: row.queue ?? "unknown",
+    data: row.data ?? {},
+    error: errorText(row.output),
+    at: row.at,
+  }));
+}
+
+/** pg-boss stores a thrown Error's fields as JSON; the message is the part a person needs. */
+function errorText(output: unknown): string | null {
+  if (output === null || output === undefined) return null;
+  if (typeof output === "object" && "message" in output && typeof output.message === "string") {
+    return output.message.slice(0, 300);
+  }
+  return JSON.stringify(output).slice(0, 300);
+}

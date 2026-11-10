@@ -163,6 +163,26 @@ export interface HealthView {
   worker: { state: "running" | "down" | "never"; lastSeen: string | null };
   /** Businesses whose latest profile has waited over 5 minutes, neither synced nor failed. */
   waitingSyncs: { tenantId: string; businessName: string; version: number; savedAt: string }[];
+  /** The latest texts and emails that couldn't be sent, newest first, with the provider's reason. */
+  failedNotificationsRecent: {
+    tenantId: string;
+    businessName: string;
+    callId: string;
+    channel: string;
+    status: string;
+    attempts: number;
+    failureCode: string | null;
+    failureReason: string | null;
+    at: string;
+  }[];
+  /** The latest jobs that failed every retry, newest first, with the error that ended them. */
+  deadLetteredJobsRecent: {
+    queue: string;
+    tenantId: string | null;
+    callId: string | null;
+    error: string | null;
+    at: string;
+  }[];
 }
 
 /** PUT /api/admin/kill-switch */

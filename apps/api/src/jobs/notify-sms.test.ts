@@ -164,6 +164,19 @@ describe("runNotifySms", () => {
     expect((await rows(tenantId, callId)).notifications).toEqual([
       { channel: "sms", status: "failed", attempts: 1, provider_ref: null },
     ]);
+    // The reason is kept for the admin's health screen, redacted like a log line would be.
+    const reason = await withTenant(
+      app,
+      tenantId,
+      async (client) =>
+        (
+          await client.query<{ failure_reason: string | null }>(
+            "SELECT failure_reason FROM notifications WHERE call_id = $1",
+            [callId],
+          )
+        ).rows[0]?.failure_reason,
+    );
+    expect(reason).toBe("Error: Twilio down");
     expect(await runNotifySms(d, { tenantId, callId })).toBe("sent");
     expect((await rows(tenantId, callId)).notifications[0]).toMatchObject({
       status: "sent",

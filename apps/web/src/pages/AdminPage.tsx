@@ -87,6 +87,54 @@ function Health() {
         <Stat label="Jobs that failed every retry" value={data.deadLetteredJobs24h} />
       </div>
       <p className="muted">Counts cover the last 24 hours.</p>
+      {data.failedNotificationsRecent.length > 0 && (
+        <div className="card error">
+          <h3>Texts and emails that couldn't be sent</h3>
+          <p className="muted">
+            Newest first. "Failed" is the provider refusing the send, with its reason; "undelivered"
+            is the carrier's verdict afterwards, with its code.
+          </p>
+          <ul>
+            {data.failedNotificationsRecent.map((failed) => (
+              <li key={`${failed.callId}:${failed.channel}`}>
+                {formatUkDateTime(failed.at)}:{" "}
+                <Link to={`/tenants/${failed.tenantId}/calls/${failed.callId}`}>
+                  {failed.businessName}
+                </Link>
+                , {failed.channel}, {failed.status} after {failed.attempts}{" "}
+                {failed.attempts === 1 ? "attempt" : "attempts"}
+                {failed.failureReason ? `: ${failed.failureReason}` : ""}
+                {failed.failureCode ? ` (code ${failed.failureCode})` : ""}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {data.deadLetteredJobsRecent.length > 0 && (
+        <div className="card error">
+          <h3>Jobs that failed every retry</h3>
+          <p className="muted">Newest first, with the error that ended the last attempt.</p>
+          <ul>
+            {data.deadLetteredJobsRecent.map((job, index) => (
+              <li key={`${job.at}:${index}`}>
+                {formatUkDateTime(job.at)}: {job.queue}
+                {job.tenantId && job.callId ? (
+                  <>
+                    {" "}
+                    for <Link to={`/tenants/${job.tenantId}/calls/${job.callId}`}>this call</Link>
+                  </>
+                ) : job.tenantId ? (
+                  <>
+                    {" "}
+                    for <Link to={`/tenants/${job.tenantId}`}>this business</Link>
+                  </>
+                ) : null}
+                {job.error ? `: ${job.error}` : ""}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {data.waitingSyncs.length > 0 && (
         <div className="card error">
           <h3>Assistants waiting to be updated</h3>
