@@ -251,6 +251,20 @@ export async function auditAdminAction(
  * logged in, so there's no person, and the details say "script". BUILD_PLAN Step 10: every
  * admin action is recorded, and granting admin is the one most worth having on record.
  */
+/**
+ * Makes an account claimable again by its email: the next sign-in with that verified address
+ * takes it, as a first sign-in would. For when the login provider changes (Clerk's production
+ * instance gives everyone a new subject) or someone has lost their old login. True if there
+ * was a claimed account to reset.
+ */
+export async function resetLogin(admin: AdminPool, email: string): Promise<boolean> {
+  const { rowCount } = await admin.query(
+    "UPDATE users SET auth_subject = NULL WHERE lower(email) = lower($1) AND auth_subject IS NOT NULL",
+    [email],
+  );
+  return (rowCount ?? 0) > 0;
+}
+
 export async function auditScriptAction(
   admin: AdminPool,
   entry: { tenantId: string | null; action: string; details: object },

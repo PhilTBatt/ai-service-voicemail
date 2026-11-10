@@ -28,6 +28,13 @@ param deployApps bool = false
 @description('Settings in Key Vault beyond the required ones, by Key Vault name (for example "retell-webhook-key").')
 param optionalSecretNames array = []
 
+@description('The service\'s own address, such as "app.brockersby.co.uk" (RUNBOOK section 16, the domain). Empty: Azure\'s generated address only.')
+param customDomain string = ''
+
+@allowed(['add', 'bind', 'live'])
+@description('How far along the custom domain is. "add": the hostname is on the API with no certificate, so the DNS records can be validated. "bind": Azure\'s free certificate is issued and bound, so HTTPS works there. "live": the apps use it as their own address too (webhook signatures, links, the dashboard\'s origin).')
+param customDomainStage string = 'add'
+
 // Key Vault and database names are global across Azure: a short suffix from the resource
 // group's ID keeps ours unique and the same on every run.
 var suffix = take(uniqueString(resourceGroup().id), 8)
@@ -218,9 +225,14 @@ var setupEnv = map(setupSecretNames, secretName => {
   secretRef: secretName
 })
 
-// Container Apps names its default address after the app: known before the app exists.
+// Container Apps names its default address after the app: known before the app exists. Once
+// the custom domain is live, that is the service's own address instead; the generated one
+// keeps working (the uptime check uses it).
 var apiName = '${name}-api'
-var publicBaseUrl = 'https://${apiName}.${environment.properties.defaultDomain}'
+var customDomainOn = deployApps && image != '' && customDomain != ''
+var publicBaseUrl = customDomainOn && customDomainStage == 'live'
+  ? 'https://${customDomain}'
+  : 'https://${apiName}.${environment.properties.defaultDomain}'
 
 var plainEnv = [
   { name: 'NODE_ENV', value: 'production' }
@@ -235,6 +247,29 @@ var identity = {
   type: 'UserAssigned'
   userAssignedIdentities: { '${appIdentity.id}': {} }
 }
+
+// ─── The custom domain ────────────────────────────────────────────────────────────────────
+// Azure's free certificate for it, issued once the domain's CNAME points at the API and the
+// asuid TXT record carries the verification ID (output below). Microsoft documents the
+// portal and CLI flows, not templates; this follows the same order in three stages: the
+// hostname on the API first ("add"), then the certificate and its binding ("bind").
+resource customDomainCertificate 'Microsoft.App/managedEnvironments/managedCertificates@2024-03-01' = if (customDomainOn && customDomainStage != 'add') {
+  parent: environment
+  name: '${name}-${replace(customDomain, '.', '-')}'
+  location: location
+  properties: {
+    subjectName: customDomain
+    domainControlValidation: 'CNAME'
+  }
+}
+
+var customDomains = customDomainOn
+  ? [
+      customDomainStage == 'add'
+        ? { name: customDomain, bindingType: 'Disabled' }
+        : { name: customDomain, bindingType: 'SniEnabled', certificateId: customDomainCertificate.id }
+    ]
+  : []
 
 // ─── The API ──────────────────────────────────────────────────────────────────────────────
 // Always one replica: a call's webhook must never wait for a cold start (BUILD_PLAN Step 8).
@@ -251,6 +286,7 @@ resource api 'Microsoft.App/containerApps@2024-03-01' = if (deployApps && image 
         targetPort: 3000
         transport: 'auto'
         allowInsecure: false
+        customDomains: customDomains
       }
       secrets: appSecrets
     }
@@ -408,3 +444,7 @@ resource task 'Microsoft.App/jobs@2024-03-01' = if (image != '') {
 }
 
 output publicBaseUrl string = publicBaseUrl
+// What the custom domain's asuid TXT record must hold (RUNBOOK section 16, the domain).
+output customDomainVerificationId string = deployApps && image != ''
+  ? api.properties.customDomainVerificationId
+  : ''

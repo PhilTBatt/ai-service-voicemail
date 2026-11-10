@@ -36,7 +36,8 @@
     "evals": "node --env-file-if-exists=.env apps/api/src/scripts/run-evals.ts",
     "live-evals-retell": "node --env-file-if-exists=.env apps/api/src/scripts/live-evals-retell.ts",
     "live-configure-number": "node --env-file-if-exists=.env apps/api/src/scripts/live-configure-number.ts",
-    "invite-user": "node --env-file-if-exists=.env apps/api/src/scripts/invite-user.ts"
+    "invite-user": "node --env-file-if-exists=.env apps/api/src/scripts/invite-user.ts",
+    "reset-login": "node --env-file-if-exists=.env apps/api/src/scripts/reset-login.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

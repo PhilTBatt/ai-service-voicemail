@@ -10,6 +10,8 @@
 #                             and the worker to it
 #   task                      run one script against production, in the callmate-task job
 #                             (the "command" box: e.g. invite-user --email a@b.c --role admin)
+#   apply                     re-apply infra/main.bicep to the apps with the image they already
+#                             run: no build, no migrations (settings changes, the custom domain)
 # The Azure steps run in the "production" environment, so GitHub waits for Phil's approval
 # first, and sign in to Azure with OIDC: no Azure password is stored in GitHub.
 name: Deploy
@@ -27,6 +29,7 @@ on:
           - database-setup
           - release
           - task
+          - apply
         default: infrastructure-what-if
       command:
         description: "task only: the script and its arguments, e.g. invite-user --email a@b.c --role admin"
@@ -151,6 +154,9 @@ jobs:
       KEY_VAULT_ADMIN_OBJECT_ID: ${{ vars.KEY_VAULT_ADMIN_OBJECT_ID }}
       # Optional Key Vault settings, as a JSON list: ["retell-webhook-key"]. Empty: none.
       OPTIONAL_SECRET_NAMES: ${{ vars.OPTIONAL_SECRET_NAMES || '[]' }}
+      # The service's own domain and how far along it is (RUNBOOK section 16, the domain).
+      CUSTOM_DOMAIN: ${{ vars.CUSTOM_DOMAIN || '' }}
+      CUSTOM_DOMAIN_STAGE: ${{ vars.CUSTOM_DOMAIN_STAGE || 'add' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -173,6 +179,8 @@ jobs:
                          keyVaultAdminObjectId="$KEY_VAULT_ADMIN_OBJECT_ID" \
                          image="$IMAGE:$IMAGE_TAG" \
                          optionalSecretNames="$OPTIONAL_SECRET_NAMES" \
+                         customDomain="$CUSTOM_DOMAIN" \
+                         customDomainStage="$CUSTOM_DOMAIN_STAGE" \
                          deployApps=false \
             --output none
 
@@ -199,6 +207,8 @@ jobs:
                          keyVaultAdminObjectId="$KEY_VAULT_ADMIN_OBJECT_ID" \
                          image="$IMAGE:$IMAGE_TAG" \
                          optionalSecretNames="$OPTIONAL_SECRET_NAMES" \
+                         customDomain="$CUSTOM_DOMAIN" \
+                         customDomainStage="$CUSTOM_DOMAIN_STAGE" \
                          deployApps=true \
             --query properties.outputs.publicBaseUrl.value --output tsv
 
@@ -256,3 +266,53 @@ jobs:
           echo "Command: $COMMAND"
           encoded="$(printf '%s' "$COMMAND" | base64 -w0 | tr '+/' '-_' | tr -d '=')"
           bash .github/scripts/run-azure-job.sh callmate-task task node apps/api/src/scripts/run-task.ts "$encoded"
+
+  # The template again, for the apps, with the image they already run: a settings change or
+  # a custom-domain stage without an eight-minute release. Needs a release to have happened.
+  apply:
+    if: inputs.step == 'apply'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      POSTGRES_ADMIN_PASSWORD: ${{ secrets.POSTGRES_ADMIN_PASSWORD }}
+      KEY_VAULT_ADMIN_OBJECT_ID: ${{ vars.KEY_VAULT_ADMIN_OBJECT_ID }}
+      OPTIONAL_SECRET_NAMES: ${{ vars.OPTIONAL_SECRET_NAMES || '[]' }}
+      CUSTOM_DOMAIN: ${{ vars.CUSTOM_DOMAIN || '' }}
+      CUSTOM_DOMAIN_STAGE: ${{ vars.CUSTOM_DOMAIN_STAGE || 'add' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Apply to the apps as they are
+        run: |
+          az config set extension.use_dynamic_install=yes_without_prompt
+          image="$(az containerapp show --name callmate-api --resource-group "$RESOURCE_GROUP" --query 'properties.template.containers[0].image' --output tsv 2>/dev/null || true)"
+          if [ -z "$image" ]; then
+            echo "::error::No API is running yet: run a release first"
+            exit 1
+          fi
+          echo "Image: $image"
+          echo "Custom domain: ${CUSTOM_DOMAIN:-none} (stage: $CUSTOM_DOMAIN_STAGE)"
+          az deployment group create \
+            --name "apply-${GITHUB_RUN_NUMBER}" \
+            --resource-group "$RESOURCE_GROUP" \
+            --template-file infra/main.bicep \
+            --parameters postgresAdminPassword="$POSTGRES_ADMIN_PASSWORD" \
+                         keyVaultAdminObjectId="$KEY_VAULT_ADMIN_OBJECT_ID" \
+                         image="$image" \
+                         optionalSecretNames="$OPTIONAL_SECRET_NAMES" \
+                         customDomain="$CUSTOM_DOMAIN" \
+                         customDomainStage="$CUSTOM_DOMAIN_STAGE" \
+                         deployApps=true \
+            --query properties.outputs

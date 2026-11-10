@@ -332,3 +332,22 @@ The one thing the service can't email about is being down, so something outside 
 | Worker  | `https://callmate-api.greengrass-a4449d88.uksouth.azurecontainerapps.io/healthz/worker` | The worker hasn't checked in for two minutes: no texts, emails or syncs |
 
 When one fires: the Azure portal, the app (`callmate-api` or `callmate-worker`), **Log stream** for the live output, and **Revisions and replicas** for whether Azure could start it at all. A release that broke it is undone by releasing the previous commit.
+
+### The domain: app.brockersby.co.uk, and Clerk's production instance
+
+The dashboard and the API move from Azure's generated address to `app.brockersby.co.uk`, with Azure's free certificate; then Clerk gets a production instance on the same domain. Three stages, each a Deploy `apply` (a few minutes, no rebuild), driven by two `production` environment variables: `CUSTOM_DOMAIN` (`app.brockersby.co.uk`) and `CUSTOM_DOMAIN_STAGE` (`add`, then `bind`, then `live`). Microsoft documents this for the portal and the CLI; the template does the same steps in the same order, so the first run through is the check.
+
+1. **Variables.** GitHub, Settings, Environments, production: `CUSTOM_DOMAIN` = `app.brockersby.co.uk`, `CUSTOM_DOMAIN_STAGE` = `add`. **Deploy**, `apply`. Its log ends with the outputs; copy `customDomainVerificationId`.
+2. **DNS at Porkbun** (brockersby.co.uk, DNS records), two records:
+   - `CNAME`, host `app`, answer `callmate-api.greengrass-a4449d88.uksouth.azurecontainerapps.io`
+   - `TXT`, host `asuid.app`, answer the `customDomainVerificationId` from step 1
+     Porkbun's default TTL is fine. Wait a few minutes, then check from PowerShell: `Resolve-DnsName app.brockersby.co.uk -Type CNAME` should show the Azure address.
+3. **Certificate.** `CUSTOM_DOMAIN_STAGE` = `bind`; **Deploy**, `apply`. Azure asks DigiCert for the certificate (several minutes; the run waits). Then `https://app.brockersby.co.uk/healthz` answers `{"status":"ok"}` with a valid padlock. The old address still works.
+4. **Switch.** `CUSTOM_DOMAIN_STAGE` = `live`; **Deploy**, `apply`. The apps now call `https://app.brockersby.co.uk` their own address. Straight after, two tasks, because Twilio and Retell still have the old address: **Deploy**, `task`, `live-configure-number --confirm` (Twilio's webhooks), then **Deploy**, `task`, `save-demo-profile --wait 0` (re-syncs the demo agent, which carries Retell's webhook address). Calls in those few minutes get the fallback voicemail.
+5. **Clerk, production instance.** Clerk Dashboard, the Development switch at the top, **Create production instance**, clone the development settings, domain `brockersby.co.uk`. Clerk's **Domains** page then lists its own DNS records (several CNAMEs); add each at Porkbun, "DNS only", and wait for Clerk to show them verified (it says up to 48 hours; usually minutes).
+   - **Sign-in method.** Clerk's shared Google sign-in is for development only; production needs your own Google OAuth client (Google Cloud console, a project, an OAuth consent screen, a web client ID with Clerk's redirect URL), pasted into Clerk's Google connection. Either do that, or turn Google off in the production instance and use email codes, which need nothing.
+   - **Keys.** The production instance's **API keys** page: the secret key (`sk_live_...`) into Key Vault as a new version of `clerk-secret-key`; the publishable key (`pk_live_...`) into the GitHub repository variable `CLERK_PUBLISHABLE_KEY`. Then **Deploy**, `release` (the publishable key is built into the dashboard, so this one needs the rebuild).
+   - **Everyone's login is new.** Production is a new Clerk instance, so every person gets a new Clerk ID, and an account here is tied to the old one. Before each person's first production sign-in: **Deploy**, `task`, `reset-login --email <their address>`. Their next sign-in with that verified email claims the account again. Do yours, then sign in at `https://app.brockersby.co.uk`.
+6. **Afterwards.** UptimeRobot can stay on the Azure address (its checks don't go through Clerk), or move to the new one. RUNBOOK and DEMO.md references to the dashboard's address become `https://app.brockersby.co.uk`.
+
+To undo: `CUSTOM_DOMAIN_STAGE` back to `bind` and `apply`, then the two tasks again; the generated address was never switched off.
