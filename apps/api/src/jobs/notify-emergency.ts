@@ -78,7 +78,7 @@ export async function runNotifyEmergency(
   const parsed = storedFieldsSchema.safeParse(loaded.call.extracted_fields);
   const callbackNumber =
     (parsed.success ? parsed.data.callbackNumber : null) ?? loaded.call.caller_number;
-  const deps = { pool, sms, outbound };
+  const deps = { pool, sms, outbound, alert };
 
   let tradesperson: DeliveryOutcome | "no-mobile";
   if (loaded.tenant.notification_mobile) {

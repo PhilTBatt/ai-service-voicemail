@@ -1,6 +1,7 @@
 // Sends one text and records it, through deliver-notification.ts. SMS is metered, so the
 // segment count the provider billed goes into call_costs.
 import type pg from "pg";
+import type { AlertFn } from "../alerts.ts";
 import type { OutboundPolicy } from "../core/outbound-allowlist.ts";
 import type { SmsProvider } from "../providers/sms.ts";
 import { deliverNotification, type DeliveryOutcome } from "./deliver-notification.ts";
@@ -26,14 +27,15 @@ export interface SmsDeliveryDeps {
   pool: pg.Pool;
   sms: SmsProvider;
   outbound: OutboundPolicy;
+  alert?: AlertFn;
 }
 
 export async function deliverSms(
-  { pool, sms, outbound }: SmsDeliveryDeps,
+  { pool, sms, outbound, alert }: SmsDeliveryDeps,
   { tenantId, callId, channel, to, body, segments }: SmsDelivery,
 ): Promise<DeliveryOutcome> {
   return deliverNotification(
-    { pool, outbound },
+    { pool, outbound, ...(alert && { alert }) },
     {
       tenantId,
       callId,

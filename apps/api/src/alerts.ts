@@ -14,6 +14,7 @@ export const ALERTS = [
   "guardrail-hit",
   "notification-no-mobile",
   "notification-no-email",
+  "notification-refused",
   "sms-undelivered",
   "recipient-opted-out",
   "email-bounced",

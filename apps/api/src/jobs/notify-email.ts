@@ -118,7 +118,7 @@ export async function runNotifyEmail(
       })();
 
   return deliverNotification(
-    { pool, outbound },
+    { pool, outbound, alert },
     {
       tenantId,
       callId,

@@ -3,6 +3,7 @@
 // once the message has gone; the outbound allowlist decides whether it goes at all outside
 // production (CLAUDE.md rule 4). The channel-specific part is the `send` callback.
 import type pg from "pg";
+import { raiseAlert, type AlertFn } from "../alerts.ts";
 import { checkOutbound, type OutboundPolicy } from "../core/outbound-allowlist.ts";
 import { withTenant } from "../db/tenant.ts";
 import { logger } from "../logger.ts";
@@ -14,6 +15,22 @@ export function failureReasonOf(error: unknown): string {
   return redactText(message).slice(0, 300);
 }
 
+/**
+ * Whether the provider refused the message for good, so that trying again can't help: a
+ * 4xx answer (an invalid number, an unknown or inactive address, an account that may not
+ * send there yet), as the provider adapters report it in `status`. Being told to slow down
+ * (429) or that it timed out (408) is worth a retry; so is anything else: an outage, the
+ * network, a 5xx. Phil's first live call retried an invalid number six times over twenty
+ * minutes before anyone could be told (2026-11-10).
+ */
+export function isRefusal(error: unknown): boolean {
+  if (!(error instanceof Error) || !("status" in error)) return false;
+  const { status } = error;
+  return (
+    typeof status === "number" && status >= 400 && status < 500 && status !== 408 && status !== 429
+  );
+}
+
 /** 'sms' and 'email' are the call summaries; the other two are the emergency texts. */
 export type NotificationChannel = "sms" | "sms_emergency" | "sms_caller" | "email";
 
@@ -21,7 +38,8 @@ export type NotificationChannel = "sms" | "sms_emergency" | "sms_caller" | "emai
 export type NotificationStatus =
   "pending" | "sent" | "failed" | "blocked" | "delivered" | "undelivered";
 
-export type DeliveryOutcome = "sent" | "blocked" | "already-sent";
+/** 'refused': the provider turned the message down for good, so the job is over (an alert says so). */
+export type DeliveryOutcome = "sent" | "blocked" | "already-sent" | "refused";
 
 /** What a send cost, when the channel is metered (SMS segments are; email isn't). */
 export interface DeliveryCost {
@@ -44,10 +62,11 @@ export interface Delivery {
 export interface DeliveryDeps {
   pool: pg.Pool;
   outbound: OutboundPolicy;
+  alert?: AlertFn;
 }
 
 export async function deliverNotification(
-  { pool, outbound }: DeliveryDeps,
+  { pool, outbound, alert = raiseAlert }: DeliveryDeps,
   { tenantId, callId, channel, to, send }: Delivery,
 ): Promise<DeliveryOutcome> {
   const existing = await withTenant(
@@ -112,7 +131,14 @@ export async function deliverNotification(
   } catch (error) {
     // The provider's words, for the admin's health screen. Provider errors are redacted
     // where they're made (providers/*.ts); this redacts again in case one isn't.
-    await setStatus("failed", null, failureReasonOf(error));
+    const reason = failureReasonOf(error);
+    await setStatus("failed", null, reason);
+    if (isRefusal(error)) {
+      // Trying again can't help, so the job ends here, and a person is told now rather
+      // than after every retry has failed.
+      alert("notification-refused", { tenantId, callId, channel, reason });
+      return "refused";
+    }
     throw error; // the queue retries with backoff; the row shows how many times
   }
   await withTenant(pool, tenantId, async (client) => {

@@ -151,6 +151,28 @@ describe("runNotifyEmail", () => {
     });
   });
 
+  // Postmark's answer to Phil's first live call (2026-11-10): error 412, the account is
+  // pending approval and may only send to its own domain. Retrying that six times helped nobody.
+  it("ends the job and alerts at once when the provider refuses the address for good", async () => {
+    const { tenantId, callId } = await makeCall("agent");
+    const d = deps();
+    d.email.willFail(
+      Object.assign(new Error("Postmark /email failed: HTTP 422, error 412: pending approval"), {
+        status: 422,
+      }),
+    );
+    expect(await runNotifyEmail(d, { tenantId, callId })).toBe("refused");
+    expect((await notificationRows(tenantId, callId))[0]).toMatchObject({
+      status: "failed",
+      attempts: 1,
+    });
+    expect(d.alert).toHaveBeenCalledWith(
+      "notification-refused",
+      expect.objectContaining({ tenantId, callId, channel: "email" }),
+    );
+    expect(d.email.sent).toHaveLength(0);
+  });
+
   it("alerts when the tenant has no email address", async () => {
     const { tenantId, callId } = await makeCall("agent", { email: null });
     const d = deps();

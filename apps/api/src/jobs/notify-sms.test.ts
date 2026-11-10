@@ -184,6 +184,33 @@ describe("runNotifySms", () => {
     });
   });
 
+  // Phil's first live call (2026-11-10) retried an invalid number six times over twenty
+  // minutes; nobody could have been told sooner.
+  it("ends the job and alerts at once when the provider refuses the number for good", async () => {
+    const { tenantId, callId } = await makeProcessedCall();
+    const d = deps();
+    d.sms.willFail(
+      Object.assign(new Error("Twilio /Messages.json failed: HTTP 400 invalid To"), {
+        status: 400,
+      }),
+    );
+    expect(await runNotifySms(d, { tenantId, callId })).toBe("refused");
+    expect((await rows(tenantId, callId)).notifications).toEqual([
+      { channel: "sms", status: "failed", attempts: 1, provider_ref: null },
+    ]);
+    expect(d.alert).toHaveBeenCalledWith("notification-refused", {
+      tenantId,
+      callId,
+      channel: "sms",
+      reason: "Error: Twilio /Messages.json failed: HTTP 400 invalid To",
+    });
+    expect(d.sms.sent).toHaveLength(0);
+
+    // Being told to slow down is not a refusal: that one is retried as before.
+    d.sms.willFail(Object.assign(new Error("Twilio: HTTP 429 too many requests"), { status: 429 }));
+    await expect(runNotifySms(d, { tenantId, callId })).rejects.toThrow("429");
+  });
+
   it("alerts when the tenant has no notification mobile", async () => {
     const { tenantId, callId } = await makeProcessedCall({ mobile: null });
     const d = deps();

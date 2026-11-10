@@ -108,5 +108,8 @@ export async function runNotifySms(
     });
   }
 
-  return deliverSms({ pool, sms, outbound }, { tenantId, callId, channel: "sms", to, ...text });
+  return deliverSms(
+    { pool, sms, outbound, alert },
+    { tenantId, callId, channel: "sms", to, ...text },
+  );
 }

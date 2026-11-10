@@ -40,6 +40,14 @@ const input = z
   })
   .safeParse({ ...values, email: process.env.DEMO_EMAIL });
 const mobile = ukMobileFromInput(process.env.DEMO_MOBILE);
+// 07700 900000 to 900999 is Ofcom's range for TV drama: it's the example number in the docs
+// and the tests, and it's what reached production once (2026-11-10). No real phone has it.
+if (mobile !== null && /^\+447700900\d{3}$/.test(mobile)) {
+  console.error(
+    "DEMO_MOBILE is a fictional number from the drama range (the example in the instructions), not a real mobile: put your own in Key Vault's demo-mobile",
+  );
+  process.exit(2);
+}
 if (!input.success || mobile === null) {
   console.error(
     "Usage: create-demo-business.ts --number <E.164> --sid <PN...>, with DEMO_MOBILE and DEMO_EMAIL set",
