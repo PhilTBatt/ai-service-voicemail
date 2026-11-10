@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { roleLoginsFrom } from "./azure-roles.ts";
+import { fingerprint, passwordIn, roleLoginsFrom } from "./azure-roles.ts";
 
 const password = "a".repeat(30);
 const host = "psql-example.postgres.database.azure.com:5432/callmate?sslmode=require";
@@ -42,5 +42,30 @@ describe("roleLoginsFrom", () => {
     ],
   ])("refuses %s", (_label, change, error) => {
     expect(() => roleLoginsFrom({ ...urls, ...change })).toThrow(error);
+  });
+});
+
+describe("fingerprint", () => {
+  it("is 8 hex digits, the same for the same secret and different for a different one", () => {
+    expect(fingerprint(password)).toMatch(/^[0-9a-f]{8}$/);
+    expect(fingerprint(password)).toBe(fingerprint(password));
+    expect(fingerprint(password)).not.toBe(fingerprint(`${password}x`));
+  });
+
+  it("matches what the Deploy workflow prints with sha256sum", () => {
+    // echo -n "secret" | sha256sum | cut -c1-8
+    expect(fingerprint("secret")).toBe("2bb80d53");
+  });
+});
+
+describe("passwordIn", () => {
+  it("decodes the password a URL had to escape", () => {
+    expect(passwordIn(`postgres://callmateadmin:${encodeURIComponent("p@ss/w:rd")}@${host}`)).toBe(
+      "p@ss/w:rd",
+    );
+  });
+
+  it("refuses something that isn't a URL", () => {
+    expect(() => passwordIn("not a url")).toThrow(/isn't a URL/);
   });
 });

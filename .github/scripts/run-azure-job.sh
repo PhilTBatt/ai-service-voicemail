@@ -3,10 +3,13 @@
 # it doesn't succeed. Used by .github/workflows/deploy.yml. Needs RESOURCE_GROUP and an Azure
 # sign-in. Microsoft's CLI reference doesn't spell out what "job start" prints or every status
 # an execution can have, so this reads the newest execution from the job's own list, and treats
-# anything but "Succeeded" at the end as a failure.
+# anything but "Succeeded" at the end as a failure. On a failure it prints the job's own output
+# here, so the cause is in the Actions log and not only in the Azure portal.
+#   run-azure-job.sh <job name> <container name>
 set -euo pipefail
 
 job="$1"
+container="$2"
 timeout_seconds=600
 
 az containerapp job start --name "$job" --resource-group "$RESOURCE_GROUP" --output none
@@ -29,7 +32,13 @@ while [ "$waited" -lt "$timeout_seconds" ]; do
   case "$status" in
     Succeeded) exit 0 ;;
     Failed | Stopped | Degraded)
-      echo "::error::$job ended as $status. Its output is in the logs: Azure portal, $job, Execution history."
+      echo "::error::$job ended as $status. Its output follows, if Azure still has it; otherwise it's in the Azure portal: $job, Execution history, Console."
+      echo "::group::$job output"
+      # Preview command (containerapp extension 2.79+). Its failure mustn't hide the job's.
+      az containerapp job logs show --name "$job" --resource-group "$RESOURCE_GROUP" \
+        --execution "$execution" --container "$container" --format text --tail 300 \
+        || echo "(couldn't fetch the output here)"
+      echo "::endgroup::"
       exit 1
       ;;
   esac

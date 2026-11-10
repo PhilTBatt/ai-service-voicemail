@@ -281,9 +281,13 @@ Azure portal, **Key vaults**, `kv-callmate-dalbkqkh`, **Objects**, **Secrets**, 
 | `database-url`           | `postgres://callmate_app:<password 2>@<host>:5432/callmate?sslmode=require`                                                               |
 | `admin-database-url`     | `postgres://callmate_admin:<password 3>@<host>:5432/callmate?sslmode=require`                                                             |
 
+**The admin password belongs to the GitHub secret.** `infra/main.bicep` passes `POSTGRES_ADMIN_PASSWORD` as the server's `callmateadmin` password on every deploy, so treat GitHub's copy as the real one: to change it, update the GitHub secret and add a new version of `postgres-admin-url` with the same password, then deploy. (Microsoft's docs don't say whether a redeploy re-applies the password to an existing server, so don't rely on a deploy to undo or apply a portal reset.) If `database-setup` fails with `password authentication failed for user "callmateadmin"`, compare the two fingerprints in its Actions log: the workflow prints GitHub's, the job prints Key Vault's. Different: set both from one copy. Same: the server has a third password; reset it in the portal (the server's **Overview**, **Reset password**) to that same one and run `database-setup` again. A failed job's output is printed in the Actions log, under the error.
+
 **The rest, copied from your `.env`** (same values, or the live ones):
 
-`retell-api-key`, `twilio-account-sid`, `twilio-auth-token`, `fallback-voicemail-url`, `anthropic-api-key`, `twilio-sms-from`, `signing-secret`, `postmark-server-token`, `postmark-webhook-secret`, `email-from`, `clerk-secret-key`.
+`retell-api-key`, `twilio-account-sid`, `twilio-auth-token`, `fallback-voicemail-url`, `anthropic-api-key`, `twilio-sms-from`, `signing-secret`, `postmark-server-token`, `email-from`, `clerk-secret-key`.
+
+**`postmark-webhook-secret`** isn't in `.env` until Postmark's bounce webhook is set up: make one up (`node -e "console.log(require('node:crypto').randomBytes(24).toString('hex'))"`), and keep a copy to paste into Postmark's webhook URL later (section 14).
 
 **Optional ones** (only if you use them): `retell-webhook-key`, `clerk-jwt-key`, `twilio-bundle-sid`, `twilio-address-sid`, `email-reply-to`. Add each one you use to the `production` environment variable `OPTIONAL_SECRET_NAMES` as a JSON list, for example `["retell-webhook-key"]`, so the apps read it.
 

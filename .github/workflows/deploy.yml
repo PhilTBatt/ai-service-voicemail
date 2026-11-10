@@ -169,13 +169,17 @@ jobs:
                          deployApps=false \
             --output none
 
+      # The job prints the same fingerprint of the password it reads from Key Vault, so if the
+      # server turns the password down, the log shows whether the two copies even agree.
       - name: Set up the database's logins
         if: inputs.step == 'database-setup'
-        run: bash .github/scripts/run-azure-job.sh callmate-db-setup
+        run: |
+          echo "POSTGRES_ADMIN_PASSWORD fingerprint: $(printf '%s' "$POSTGRES_ADMIN_PASSWORD" | sha256sum | cut -c1-8)"
+          bash .github/scripts/run-azure-job.sh callmate-db-setup db-setup
 
       - name: Run the migrations
         if: inputs.step == 'release'
-        run: bash .github/scripts/run-azure-job.sh callmate-migrate
+        run: bash .github/scripts/run-azure-job.sh callmate-migrate migrate
 
       - name: Move the API and the worker to the new image
         if: inputs.step == 'release'

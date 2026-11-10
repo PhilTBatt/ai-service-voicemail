@@ -2,7 +2,29 @@
 // locally, where no login needs a password, with the real passwords. Each password comes from
 // the connection URL that login is used with (Key Vault), so there's one place to set it.
 // Run by scripts/setup-database-roles.ts, as the server's admin; safe to run again.
+import { createHash } from "node:crypto";
 import type pg from "pg";
+
+/**
+ * The first 8 hex digits of a secret's SHA-256: enough to tell two copies of a password apart
+ * in a log without revealing it (a 24+ character random password can't be recovered from it).
+ * The Deploy workflow prints the same of its POSTGRES_ADMIN_PASSWORD, so a mismatch between
+ * GitHub's copy and Key Vault's shows up as two different fingerprints.
+ */
+export function fingerprint(secret: string): string {
+  return createHash("sha256").update(secret).digest("hex").slice(0, 8);
+}
+
+/** The password inside a connection URL, decoded (a URL's password has to be URL-encoded). */
+export function passwordIn(connectionUrl: string): string {
+  let url: URL;
+  try {
+    url = new URL(connectionUrl);
+  } catch {
+    throw new Error("isn't a URL");
+  }
+  return decodeURIComponent(url.password);
+}
 
 /** Each login, and the setting holding the connection URL it's used with. */
 const LOGINS = [
