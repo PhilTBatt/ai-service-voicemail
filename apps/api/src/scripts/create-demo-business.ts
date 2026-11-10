@@ -8,6 +8,7 @@
 import { parseArgs } from "node:util";
 import { z } from "zod";
 import { loadConfig } from "../config.ts";
+import { ukMobileFromInput } from "../core/phone.ts";
 import { createAdminPool } from "../db/cross-tenant.ts";
 import { createDemoBusiness } from "../db/demo-business.ts";
 import { createPool } from "../db/pool.ts";
@@ -17,24 +18,41 @@ const { values } = parseArgs({
   options: { number: { type: "string" }, sid: { type: "string" } },
 });
 
+/**
+ * Says what shape a value has without saying what it is: enough to tell "the new version
+ * hasn't reached the job yet" from "typed wrong", with no number in the log.
+ */
+function shapeOf(value: string | undefined): string {
+  if (value === undefined) return "not set";
+  const kinds = [
+    /^\+/.test(value) ? "starts with +" : "no +",
+    /\s/.test(value) ? "has spaces" : "no spaces",
+    `${value.replace(/\D/g, "").length} digits`,
+  ];
+  return `${value.length} characters: ${kinds.join(", ")}`;
+}
+
 const input = z
   .object({
     number: z.string().regex(/^\+44\d{9,10}$/, "a UK number in E.164 form, like +441134960100"),
     sid: z.string().regex(/^PN[0-9a-f]{32}$/, "the number's Twilio SID: PN and 32 hex characters"),
-    DEMO_MOBILE: z.string().regex(/^\+44\d{10}$/, "a UK mobile in E.164 form"),
-    DEMO_EMAIL: z.email(),
+    email: z.email("DEMO_EMAIL must be an email address"),
   })
-  .safeParse({
-    ...values,
-    DEMO_MOBILE: process.env.DEMO_MOBILE,
-    DEMO_EMAIL: process.env.DEMO_EMAIL,
-  });
-if (!input.success) {
+  .safeParse({ ...values, email: process.env.DEMO_EMAIL });
+const mobile = ukMobileFromInput(process.env.DEMO_MOBILE);
+if (!input.success || mobile === null) {
   console.error(
     "Usage: create-demo-business.ts --number <E.164> --sid <PN...>, with DEMO_MOBILE and DEMO_EMAIL set",
   );
-  for (const issue of input.error.issues)
-    console.error(`  ${issue.path.join(".")}: ${issue.message}`);
+  if (!input.success) {
+    for (const issue of input.error.issues)
+      console.error(`  ${issue.path.join(".")}: ${issue.message}`);
+  }
+  if (mobile === null) {
+    console.error(
+      `  DEMO_MOBILE: must be a UK mobile (07700 900123 or +447700900123); what's set is ${shapeOf(process.env.DEMO_MOBILE)}`,
+    );
+  }
   process.exit(2);
 }
 
@@ -50,8 +68,8 @@ try {
   const outcome = await createDemoBusiness(
     { admin, pool, boss },
     {
-      mobile: input.data.DEMO_MOBILE,
-      email: input.data.DEMO_EMAIL,
+      mobile,
+      email: input.data.email,
       number: input.data.number,
       providerSid: input.data.sid,
     },
