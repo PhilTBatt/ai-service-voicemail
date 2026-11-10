@@ -321,3 +321,14 @@ The live database starts empty: no businesses, no logins. The demo line (the num
 5. Call the number. The call shows on the live dashboard; the text and the email arrive at `demo-mobile` and `demo-email`.
 
 To hand the number back to a laptop for a day, run `npm run live-configure-number -- --confirm` locally (with ngrok up); step 4 takes it back.
+
+### The uptime check (decision 018)
+
+The one thing the service can't email about is being down, so something outside asks it every five minutes. UptimeRobot, free plan, two monitors of type HTTP(s), each alerting the same address as `ALERT_EMAIL`:
+
+| Monitor | URL                                                                                     | Means, when it fails                                                    |
+| ------- | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| API     | `https://callmate-api.greengrass-a4449d88.uksouth.azurecontainerapps.io/readyz`         | The API is down, or can't reach the database (section 5's first checks) |
+| Worker  | `https://callmate-api.greengrass-a4449d88.uksouth.azurecontainerapps.io/healthz/worker` | The worker hasn't checked in for two minutes: no texts, emails or syncs |
+
+When one fires: the Azure portal, the app (`callmate-api` or `callmate-worker`), **Log stream** for the live output, and **Revisions and replicas** for whether Azure could start it at all. A release that broke it is undone by releasing the previous commit.

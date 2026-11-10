@@ -720,7 +720,11 @@ export async function deletionPlan(
 export async function deleteTenantData(
   admin: AdminPool,
   tenantId: string,
-  { now, actorUserId }: { now: Date; actorUserId: string | null },
+  {
+    now,
+    actorUserId,
+    batchSize = RETENTION_BATCH_SIZE,
+  }: { now: Date; actorUserId: string | null; batchSize?: number },
 ): Promise<{ calls: number }> {
   const client = await admin.connect();
   try {
@@ -734,7 +738,18 @@ export async function deleteTenantData(
                          WHERE other.user_id = m.user_id AND other.tenant_id <> $1)`,
       [tenantId],
     );
-    const calls = await client.query("DELETE FROM calls WHERE tenant_id = $1", [tenantId]);
+    // The calls a batch at a time, still inside the one transaction: each DELETE (and the
+    // costs and messages it cascades to) stays inside the statement timeout however many
+    // calls the business took, where one statement over all of them would not.
+    let calls = 0;
+    for (;;) {
+      const batch = await client.query(
+        "DELETE FROM calls WHERE id IN (SELECT id FROM calls WHERE tenant_id = $1 LIMIT $2)",
+        [tenantId, batchSize],
+      );
+      calls += batch.rowCount ?? 0;
+      if ((batch.rowCount ?? 0) < batchSize) break;
+    }
     for (const table of [
       "agent_profiles",
       "blocked_numbers",
@@ -759,10 +774,10 @@ export async function deleteTenantData(
     );
     await client.query(
       "INSERT INTO audit_log (tenant_id, actor_user_id, action, details) VALUES ($1, $2, 'tenant.data-deleted', $3)",
-      [tenantId, actorUserId, { calls: calls.rowCount ?? 0, people: people.rowCount ?? 0 }],
+      [tenantId, actorUserId, { calls, people: people.rowCount ?? 0 }],
     );
     await client.query("COMMIT");
-    return { calls: calls.rowCount ?? 0 };
+    return { calls };
   } catch (error) {
     await client.query("ROLLBACK").catch(() => undefined);
     throw error;
@@ -1023,14 +1038,37 @@ export async function clearRecording(admin: AdminPool, callId: string): Promise<
   await admin.query("UPDATE calls SET recording_ref = NULL WHERE id = $1", [callId]);
 }
 
-/** Deletes transcripts, summaries and extracted fields older than the retention period. Returns the count. */
-export async function clearExpiredTranscripts(admin: AdminPool, olderThan: Date): Promise<number> {
-  const result = await admin.query(
-    `UPDATE calls SET transcript = NULL, summary = NULL, extracted_fields = '{}'
-     WHERE started_at < $1 AND (transcript IS NOT NULL OR summary IS NOT NULL OR extracted_fields <> '{}')`,
-    [olderThan],
-  );
-  return result.rowCount ?? 0;
+/** How many rows one retention statement touches: well inside the pool's 10-second statement timeout. */
+export const RETENTION_BATCH_SIZE = 1000;
+/** Batches one run clears at most: a backlog is worked off over a few nights, not in one. */
+export const RETENTION_MAX_BATCHES = 100;
+
+/**
+ * Deletes transcripts, summaries and extracted fields older than the retention period, a
+ * batch at a time: one statement over every old call would outgrow the statement timeout as
+ * the table grows, and then fail every night without ever making progress. Returns the count.
+ */
+export async function clearExpiredTranscripts(
+  admin: AdminPool,
+  olderThan: Date,
+  { batchSize = RETENTION_BATCH_SIZE, maxBatches = RETENTION_MAX_BATCHES } = {},
+): Promise<number> {
+  let cleared = 0;
+  for (let batch = 0; batch < maxBatches; batch++) {
+    const result = await admin.query(
+      `UPDATE calls SET transcript = NULL, summary = NULL, extracted_fields = '{}'
+       WHERE id IN (
+         SELECT id FROM calls
+         WHERE started_at < $1 AND (transcript IS NOT NULL OR summary IS NOT NULL OR extracted_fields <> '{}')
+         ORDER BY started_at
+         LIMIT $2
+       )`,
+      [olderThan, batchSize],
+    );
+    cleared += result.rowCount ?? 0;
+    if ((result.rowCount ?? 0) < batchSize) break;
+  }
+  return cleared;
 }
 
 /** Of these provider call IDs, the ones whose call row exists and has ended (across tenants). */

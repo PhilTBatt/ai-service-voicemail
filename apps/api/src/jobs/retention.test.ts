@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, describe, expect, it } from "vitest";
-import { createAdminPool, createTenant } from "../db/cross-tenant.ts";
+import { clearExpiredTranscripts, createAdminPool, createTenant } from "../db/cross-tenant.ts";
 import { FakeTelephonyProvider } from "../providers/telephony.fake.ts";
 import { FakeVoiceProvider } from "../providers/voice.fake.ts";
 import { TEST_ADMIN_DATABASE_URL } from "../testing/databases.ts";
@@ -105,6 +105,30 @@ describe("runRetention", () => {
     voice.deleteCallData = () => Promise.resolve();
     await runRetention({ admin, voice, telephony: new FakeTelephonyProvider(), now: () => NOW });
     expect(await callState(old.callId)).toMatchObject({ has_recording: false });
+  });
+
+  it("clears old transcripts a batch at a time, and stops at the batch limit for one run", async () => {
+    const t = await createTenant(admin, { businessName: "Retain E", trade: "plumber" });
+    // Older than anything another test seeds, so oldest-first makes these the ones batched.
+    const seeded = await Promise.all(
+      Array.from({ length: 5 }, (_, i) =>
+        seedCall({ tenantId: t, startedAt: daysAgo(10_000 + i) }),
+      ),
+    );
+    const before = daysAgo(365);
+    // Two batches of two, then this run's limit: one of the five is left for the next run.
+    const firstRun = await clearExpiredTranscripts(admin, before, { batchSize: 2, maxBatches: 2 });
+    expect(firstRun).toBeGreaterThanOrEqual(4);
+    const states = await Promise.all(seeded.map((call) => callState(call.callId)));
+    expect(states.filter((state) => state["has_transcript"] === true).length).toBeLessThanOrEqual(
+      1,
+    );
+
+    const secondRun = await clearExpiredTranscripts(admin, before, { batchSize: 2 });
+    expect(secondRun).toBeGreaterThanOrEqual(0);
+    for (const call of seeded) {
+      expect(await callState(call.callId)).toMatchObject({ has_transcript: false, summary: null });
+    }
   });
 
   it("does nothing the second time round", async () => {
