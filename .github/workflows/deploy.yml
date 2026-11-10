@@ -241,6 +241,9 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      # The command goes across encoded (core/task-command.ts): az reads anything starting
+      # with "--" in its argument list as one of its own options, so "--email x" would never
+      # reach the script. run-task.ts decodes it in the container and runs the script.
       - name: Run the script
         run: |
           az config set extension.use_dynamic_install=yes_without_prompt
@@ -250,4 +253,6 @@ jobs:
             echo "::error::The command must start with a script from apps/api/src/scripts (without .ts): $(ls apps/api/src/scripts | sed 's/\.ts$//' | tr '\n' ' ')"
             exit 1
           fi
-          bash .github/scripts/run-azure-job.sh callmate-task task node "apps/api/src/scripts/$script.ts" "${words[@]:1}"
+          echo "Command: $COMMAND"
+          encoded="$(printf '%s' "$COMMAND" | base64 -w0 | tr '+/' '-_' | tr -d '=')"
+          bash .github/scripts/run-azure-job.sh callmate-task task node apps/api/src/scripts/run-task.ts "$encoded"
