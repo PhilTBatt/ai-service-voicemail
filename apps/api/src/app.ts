@@ -1,5 +1,5 @@
 import path from "node:path";
-import express, { type ErrorRequestHandler } from "express";
+import express, { type ErrorRequestHandler, type RequestHandler } from "express";
 import type pg from "pg";
 import type { AlertFn } from "./alerts.ts";
 import type { OutboundPolicy } from "./core/outbound-allowlist.ts";
@@ -72,6 +72,7 @@ export function createApp({
 }: AppOptions) {
   const app = express();
   app.disable("x-powered-by");
+  app.use(securityHeaders);
 
   // Liveness: answers whenever the process can. It deliberately checks nothing else, so a
   // database outage never makes Azure restart containers that are otherwise healthy.
@@ -143,7 +144,19 @@ export function createApp({
   // Last: Express's own handler prints the stack with console.error, unredacted, and shows
   // it to the client outside production. Log through the redacting logger instead, and
   // give the client nothing.
-  const onError: ErrorRequestHandler = (error: unknown, req, res, _next) => {
+  const onError: ErrorRequestHandler = (error: unknown, req, res, next) => {
+    // A response already on its way (the voice route answers from a timer while its work may
+    // still fail) can't carry an error; writing to it would only raise a second one that
+    // buries this. Log it, and let Express close the connection.
+    if (res.headersSent) {
+      logger.error("Request failed after its response was sent", {
+        error,
+        method: req.method,
+        path: req.path,
+      });
+      next(error);
+      return;
+    }
     // Express's body parser marks what it refuses (malformed JSON, too large) with a 4xx
     // status and a type: that's a bad request, not a fault here.
     const { status, type } = (error ?? {}) as { status?: unknown; type?: unknown };
@@ -159,6 +172,24 @@ export function createApp({
 
   return app;
 }
+
+/**
+ * Browser protections on every response. Nothing here may be shown inside another site's
+ * frame (a page that could trick someone into clicking on the dashboard or a call page), a
+ * browser must take each file's declared type at its word (never sniff a recording or an
+ * upload into HTML), only the site's own address is passed on as a referrer (a call-page
+ * link in a referrer would be a leak; /c/* already sends none), and once a browser has seen
+ * the site over HTTPS it stays on it for a year. Browsers ignore that last one over plain
+ * HTTP, so it's harmless on a laptop.
+ */
+const securityHeaders: RequestHandler = (_req, res, next) => {
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Content-Security-Policy", "frame-ancestors 'none'");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader("Strict-Transport-Security", "max-age=31536000");
+  next();
+};
 
 /** Paths that belong to the API, never to the dashboard: an unknown one stays a 404. */
 const API_PATHS = /^\/(?:api|webhooks|c|healthz|readyz)(?:\/|$)/;

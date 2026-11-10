@@ -143,6 +143,20 @@ describe("GET /c/:token/recording", () => {
     );
   });
 
+  it("never serves a recording as anything but audio, whatever the platform claims", async () => {
+    const { callId, providerCallId } = await makeCall("agent");
+    voice.recordingAudio.set(providerCallId, new Uint8Array([0x3c, 0x68, 0x31, 0x3e]));
+    voice.recordingContentType = "text/html";
+    try {
+      const response = await get(`/c/${token(callId)}/recording`);
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toBe("application/octet-stream");
+      expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+    } finally {
+      voice.recordingContentType = "audio/wav";
+    }
+  });
+
   it("reports no recording for a call that was never recorded", async () => {
     const { callId } = await makeCall("agent", { recorded: false });
     const page = (await (await get(`/c/${token(callId)}`)).json()) as {

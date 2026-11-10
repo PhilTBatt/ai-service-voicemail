@@ -214,7 +214,6 @@ function failureName(error: unknown): string {
 const recordingSid = (recordingRef: string) => /RE[0-9a-f]{32}/.exec(recordingRef)?.[0] ?? null;
 
 /**
-/**
  * Deletes a business's data (BUILD_PLAN Step 13): first at the providers, every step of which is
  * safe to repeat, so a failure part-way just runs again on retry; then the written confirmation,
  * once; then everything here in one transaction (db/cross-tenant.ts deleteTenantData). A lock

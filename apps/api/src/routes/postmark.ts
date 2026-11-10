@@ -4,6 +4,7 @@
 // must match POSTMARK_WEBHOOK_SECRET. A bounce or complaint marks the email undelivered
 // with Postmark's reason and raises an alert; a complaint is also Postmark deactivating that
 // address for good.
+import { timingSafeEqual } from "node:crypto";
 import { Router, json } from "express";
 import type pg from "pg";
 import { z } from "zod";
@@ -34,12 +35,15 @@ export function postmarkRouter({ pool, webhookSecret, alert = raiseAlert }: Post
   const router = Router();
   router.use(json({ limit: "1mb" }));
 
-  const expected = `Basic ${Buffer.from(`${POSTMARK_WEBHOOK_USER}:${webhookSecret}`).toString("base64")}`;
+  const expected = Buffer.from(
+    `Basic ${Buffer.from(`${POSTMARK_WEBHOOK_USER}:${webhookSecret}`).toString("base64")}`,
+  );
 
   router.post("/", async (req, res) => {
-    const given = req.headers.authorization ?? "";
-    const matches =
-      given.length === expected.length && Buffer.from(given).equals(Buffer.from(expected)); // same length first, so no timing hint
+    const given = Buffer.from(req.headers.authorization ?? "");
+    // Same byte length first (timingSafeEqual throws otherwise), then a comparison that takes
+    // the same time whether the first or the last byte differs: Buffer.equals stops at the first.
+    const matches = given.length === expected.length && timingSafeEqual(given, expected);
     if (!matches) {
       logger.warn("Rejected Postmark webhook", { reason: "bad or missing Basic auth" });
       res.status(401).json({ error: "Unauthorized" });

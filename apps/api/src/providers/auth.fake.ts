@@ -26,7 +26,11 @@ export class FakeAuthProvider implements AuthProvider {
     return Promise.resolve(subject === undefined ? null : { subject });
   }
 
+  /** How many times verifiedEmail was asked: each one would be a call to the real provider. */
+  emailLookups = 0;
+
   verifiedEmail(subject: string): Promise<string | null> {
+    this.emailLookups += 1;
     return Promise.resolve(this.emails.get(subject) ?? null);
   }
 

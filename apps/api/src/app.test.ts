@@ -39,6 +39,27 @@ describe("GET /healthz", () => {
   });
 });
 
+describe("browser protections", () => {
+  it("are on every response, and the server doesn't name itself", async () => {
+    const get = await startApp(DOWN_DATABASE_URL);
+    // Express's own 404 page replaces the policy with its stricter one; the rest stay.
+    const policies = {
+      "/healthz": "frame-ancestors 'none'",
+      "/readyz": "frame-ancestors 'none'",
+      "/nothing": "default-src 'none'",
+    };
+    for (const [path, policy] of Object.entries(policies)) {
+      const { headers } = await get(path);
+      expect(headers.get("x-frame-options")).toBe("DENY");
+      expect(headers.get("content-security-policy")).toBe(policy);
+      expect(headers.get("x-content-type-options")).toBe("nosniff");
+      expect(headers.get("referrer-policy")).toBe("strict-origin-when-cross-origin");
+      expect(headers.get("strict-transport-security")).toBe("max-age=31536000");
+      expect(headers.get("x-powered-by")).toBeNull();
+    }
+  });
+});
+
 describe("GET /readyz", () => {
   it("returns 503 without error details when the database is down", async () => {
     const get = await startApp(DOWN_DATABASE_URL);

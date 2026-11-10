@@ -216,5 +216,11 @@ describe("POST /api/signup", () => {
     );
     expect((await refused(form(code), newcomer().token, 409)).error).toMatch(/expired/);
     expect(await linkStatus(code)).toBe(410);
+
+    // A bad link is turned down before the login provider is asked anything, so a stream of
+    // them can't use up our allowance there.
+    const lookups = auth.emailLookups;
+    expect((await refused(form(randomUUID()), newcomer().token, 409)).error).toMatch(/isn't valid/);
+    expect(auth.emailLookups).toBe(lookups);
   });
 });

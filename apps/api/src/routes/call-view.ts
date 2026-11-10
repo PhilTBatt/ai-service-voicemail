@@ -106,7 +106,9 @@ export async function streamRecording(
     res.status(404).json({ error: "Recording not available" });
     return;
   }
-  res.type(audio.contentType);
+  // Only ever an audio type: the provider says what it's sending, and if that were somehow a
+  // page, a browser would otherwise run it as this site. The bytes are passed on unchanged.
+  res.type(audio.contentType.startsWith("audio/") ? audio.contentType : "application/octet-stream");
   try {
     // pipeline() forwards a provider-side error here; pipe() would leave it unhandled and
     // take the whole process down.

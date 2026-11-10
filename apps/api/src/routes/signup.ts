@@ -32,22 +32,14 @@ export function signupRouter({ admin, auth, now = () => new Date() }: SignupOpti
   });
 
   router.get("/:code", async (req, res) => {
-    const link = await findSignupLink(admin, req.params.code);
-    if (!link) {
-      res.status(404).json({ error: "This signup link isn't valid" });
-      return;
-    }
-    if (link.usedAt) {
-      res.status(410).json({ error: "This signup link has already been used" });
-      return;
-    }
-    if (link.expiresAt <= now()) {
-      res.status(410).json({ error: "This signup link has expired; ask for a new one" });
+    const check = checkLink(await findSignupLink(admin, req.params.code), now());
+    if (!check.ok) {
+      res.status(check.status).json({ error: check.error });
       return;
     }
     res.json({
-      forTest: link.forTest,
-      expiresAt: link.expiresAt.toISOString(),
+      forTest: check.link.forTest,
+      expiresAt: check.link.expiresAt.toISOString(),
       documents: LEGAL_DOCUMENTS,
     } satisfies SignupLinkView);
   });
@@ -64,6 +56,13 @@ export function signupRouter({ admin, auth, now = () => new Date() }: SignupOpti
       res
         .status(400)
         .json({ error: "Invalid signup", issues: z.flattenError(body.error).fieldErrors });
+      return;
+    }
+    // The link first, from our own database, so a bad one costs no call to the login provider
+    // (which rate-limits us). The transaction below checks it again, with the row locked.
+    const check = checkLink(await findSignupLink(admin, body.data.code), now());
+    if (!check.ok) {
+      res.status(409).json({ error: check.error });
       return;
     }
     // The account is tied to a verified address, so nobody can sign up as someone else.
@@ -87,4 +86,24 @@ export function signupRouter({ admin, auth, now = () => new Date() }: SignupOpti
   });
 
   return router;
+}
+
+type SignupLink = NonNullable<Awaited<ReturnType<typeof findSignupLink>>>;
+
+/**
+ * Whether a link can be followed, with the same words completeSignup refuses it with (it
+ * checks again inside its transaction, with the row locked, so two people can't share one).
+ */
+function checkLink(
+  link: SignupLink | null,
+  now: Date,
+): { ok: true; link: SignupLink } | { ok: false; status: 404 | 410; error: string } {
+  if (!link) return { ok: false, status: 404, error: "This signup link isn't valid" };
+  if (link.usedAt) {
+    return { ok: false, status: 410, error: "This signup link has already been used" };
+  }
+  if (link.expiresAt <= now) {
+    return { ok: false, status: 410, error: "This signup link has expired; ask for a new one" };
+  }
+  return { ok: true, link };
 }

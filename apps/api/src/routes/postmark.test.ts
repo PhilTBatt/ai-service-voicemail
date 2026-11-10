@@ -108,6 +108,12 @@ describe("POST /webhooks/postmark", () => {
     expect(
       (await post(body, `Basic ${Buffer.from("postmark:wrong").toString("base64")}`)).status,
     ).toBe(401);
+    // The right number of characters but more bytes (é is two in UTF-8): still a plain 401,
+    // not a crash in the constant-time comparison.
+    const right = `Basic ${Buffer.from(`postmark:${SECRET}`).toString("base64")}`;
+    expect((await post(body, `Basic ${"é".repeat(right.length - "Basic ".length)}`)).status).toBe(
+      401,
+    );
     expect((await row(messageId))?.status).toBe("sent");
   });
 });

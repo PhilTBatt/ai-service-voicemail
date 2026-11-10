@@ -140,10 +140,16 @@ export class FakeVoiceProvider implements VoiceProvider {
     return Promise.resolve(this.endedCalls.filter((call) => call.endedAt >= since));
   }
 
+  /** What fetchRecording says it's sending: a test can make it claim something that isn't audio. */
+  recordingContentType = "audio/wav";
+
   fetchRecording(providerCallId: string): Promise<RecordingAudio | null> {
     const bytes = this.recordingAudio.get(providerCallId);
     if (!bytes) return Promise.resolve(null);
-    return Promise.resolve({ contentType: "audio/wav", body: new Blob([bytes]).stream() });
+    return Promise.resolve({
+      contentType: this.recordingContentType,
+      body: new Blob([bytes]).stream(),
+    });
   }
 
   /** Builds a signed webhook request for an event, as the platform would send it. */
