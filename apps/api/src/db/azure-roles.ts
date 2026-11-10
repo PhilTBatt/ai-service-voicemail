@@ -65,9 +65,13 @@ export function roleLoginsFrom(env: Record<string, string | undefined>): RoleLog
 
 /**
  * Creates each login, or sets its password if it exists, with the same rights roles.sql gives
- * it; then lets the owner create the job queue's objects as the app, and makes the owner own
- * the database. Statements, not parameters: CREATE ROLE takes no bind parameters, so the
- * names and passwords are quoted by the driver's own escaping.
+ * it; then lets the owner create the job queue's objects as the app, makes the owner own the
+ * database, and lets it create tables in the public schema. Locally the second gives the
+ * third (Postgres 15+ hands public to whoever owns the database), but on Azure the public
+ * schema belongs to Azure's own admin role instead, so the grant is explicit, and checked:
+ * a GRANT the admin isn't entitled to make only warns. Statements, not parameters: CREATE
+ * ROLE takes no bind parameters, so the names and passwords are quoted by the driver's own
+ * escaping.
  */
 export async function setUpRoles(client: pg.ClientBase, logins: RoleLogin[]): Promise<void> {
   for (const { role, password } of logins) {
@@ -87,4 +91,24 @@ export async function setUpRoles(client: pg.ClientBase, logins: RoleLogin[]): Pr
   await client.query(
     `ALTER DATABASE ${client.escapeIdentifier(rows[0]!.db)} OWNER TO callmate_owner`,
   );
+  await client.query("GRANT USAGE, CREATE ON SCHEMA public TO callmate_owner");
+  await client.query("GRANT USAGE ON SCHEMA public TO callmate_app, callmate_admin");
+  const { rows: checks } = await client.query<{ role: string; ok: boolean }>(
+    `SELECT role, has_schema_privilege(role, 'public', privilege) AS ok
+     FROM (VALUES ('callmate_owner', 'CREATE'), ('callmate_owner', 'USAGE'),
+                  ('callmate_app', 'USAGE'), ('callmate_admin', 'USAGE')) AS needed (role, privilege)`,
+  );
+  const denied = checks.filter((check) => !check.ok).map((check) => check.role);
+  if (denied.length > 0) {
+    throw new Error(
+      `${[...new Set(denied)].join(", ")} can't use the public schema: the admin running this isn't allowed to grant it (its owner is ${await publicSchemaOwner(client)})`,
+    );
+  }
+}
+
+async function publicSchemaOwner(client: pg.ClientBase): Promise<string> {
+  const { rows } = await client.query<{ owner: string }>(
+    "SELECT pg_get_userbyid(nspowner) AS owner FROM pg_namespace WHERE nspname = 'public'",
+  );
+  return rows[0]?.owner ?? "unknown";
 }

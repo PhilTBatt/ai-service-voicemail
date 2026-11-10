@@ -1,5 +1,6 @@
+import type pg from "pg";
 import { describe, expect, it } from "vitest";
-import { fingerprint, passwordIn, roleLoginsFrom } from "./azure-roles.ts";
+import { fingerprint, passwordIn, roleLoginsFrom, setUpRoles } from "./azure-roles.ts";
 
 const password = "a".repeat(30);
 const host = "psql-example.postgres.database.azure.com:5432/callmate?sslmode=require";
@@ -42,6 +43,68 @@ describe("roleLoginsFrom", () => {
     ],
   ])("refuses %s", (_label, change, error) => {
     expect(() => roleLoginsFrom({ ...urls, ...change })).toThrow(error);
+  });
+});
+
+/**
+ * A stand-in for the admin's connection that records each statement and answers the few
+ * queries setUpRoles reads from. The real thing was run against a simulated Azure database
+ * (the public schema owned by another role) when this was written; see PROGRESS 2026-11-10.
+ */
+function stubClient(publicSchema: { grantable: boolean }) {
+  const statements: string[] = [];
+  const client = {
+    escapeIdentifier: (name: string) => `"${name}"`,
+    escapeLiteral: (value: string) => `'${value}'`,
+    query: (sql: string) => {
+      statements.push(sql);
+      if (sql.startsWith("SELECT 1 FROM pg_roles"))
+        return Promise.resolve({ rowCount: 0, rows: [] });
+      if (sql.startsWith("SELECT current_database()")) {
+        return Promise.resolve({ rowCount: 1, rows: [{ db: "callmate" }] });
+      }
+      if (sql.includes("has_schema_privilege")) {
+        return Promise.resolve({
+          rowCount: 4,
+          rows: [
+            { role: "callmate_owner", ok: publicSchema.grantable },
+            { role: "callmate_owner", ok: publicSchema.grantable },
+            { role: "callmate_app", ok: true },
+            { role: "callmate_admin", ok: true },
+          ],
+        });
+      }
+      if (sql.includes("nspowner")) {
+        return Promise.resolve({ rowCount: 1, rows: [{ owner: "azure_pg_admin" }] });
+      }
+      return Promise.resolve({ rowCount: 0, rows: [] });
+    },
+  };
+  return { client: client as unknown as pg.ClientBase, statements };
+}
+
+describe("setUpRoles", () => {
+  it("creates the logins, hands the database and the public schema to the owner, and checks", async () => {
+    const { client, statements } = stubClient({ grantable: true });
+    await setUpRoles(client, roleLoginsFrom(urls));
+    expect(statements).toEqual(
+      expect.arrayContaining([
+        `CREATE ROLE "callmate_owner" LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS PASSWORD '${password}'`,
+        "GRANT callmate_app TO callmate_owner",
+        "GRANT callmate_owner TO CURRENT_USER",
+        'ALTER DATABASE "callmate" OWNER TO callmate_owner',
+        "GRANT USAGE, CREATE ON SCHEMA public TO callmate_owner",
+        "GRANT USAGE ON SCHEMA public TO callmate_app, callmate_admin",
+      ]),
+    );
+    expect(statements.filter((sql) => sql.startsWith("CREATE ROLE"))).toHaveLength(3);
+  });
+
+  it("fails loudly when the grant on public didn't take, naming the schema's owner", async () => {
+    const { client } = stubClient({ grantable: false });
+    await expect(setUpRoles(client, roleLoginsFrom(urls))).rejects.toThrow(
+      /callmate_owner can't use the public schema.*owner is azure_pg_admin/,
+    );
   });
 });
 

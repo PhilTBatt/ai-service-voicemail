@@ -263,7 +263,7 @@ Before the first infrastructure run, once:
 
 1. **Resource providers.** A new subscription may not have them, and the deploy identity can't add them (it only has rights on the resource group). Azure portal, **Subscriptions**, your subscription, **Settings**, **Resource providers**: register `Microsoft.App`, `Microsoft.DBforPostgreSQL`, `Microsoft.OperationalInsights`, `Microsoft.KeyVault` and `Microsoft.ManagedIdentity`.
 2. **The `production` environment** (GitHub, Settings, Environments), besides its three Azure IDs:
-   - secret `POSTGRES_ADMIN_PASSWORD`: a long random password from a password manager; keep a copy there too.
+   - secret `POSTGRES_ADMIN_PASSWORD`: a long random password from a password manager; keep a copy there too. The password only: the whole `postgres://...` address goes in Key Vault's `postgres-admin-url`, not here (the first `database-setup` runs failed on exactly that mix-up).
    - variable `KEY_VAULT_ADMIN_OBJECT_ID`: your own **Object ID** (Entra admin center, **Users**, you, **Overview**). It lets you add the secrets to Key Vault.
 
 After `infrastructure-apply`, the run's log ends with the Key Vault's name and the database's address: the next step's secrets go there.
