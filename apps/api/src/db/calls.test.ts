@@ -298,6 +298,48 @@ describe("recordCallEnded for a demo tenant", () => {
     }));
     expect(stored).toEqual({ usage: 0, costs: 1 });
   });
+
+  // Decision 019: a live business's usage periods are months from the day it went live.
+  it("files a live business's usage under its own billing month, not the calendar month", async () => {
+    const tenantId = await createTenant(admin, {
+      businessName: "Anchored Plumbing",
+      trade: "plumber",
+    });
+    await admin.query(
+      "UPDATE tenants SET status = 'live', onboarding_state = 'live', billing_start_date = '2026-06-14' WHERE id = $1",
+      [tenantId],
+    );
+    const number = "+441632960993"; // the reserved 990-999 range: no other test takes it
+    await admin.query(
+      "UPDATE phone_numbers SET status = 'released', released_at = now() WHERE number = $1 AND status = 'active'",
+      [number],
+    );
+    await assignPhoneNumber(admin, tenantId, number, `PN${randomUUID()}`);
+
+    const result = await recordCallEnded(
+      app,
+      boss,
+      event(number, { durationSeconds: 90, startedAt: new Date("2026-07-15T10:00:00Z") }),
+    );
+    expect(result).toMatchObject({ outcome: "stored", tenantId });
+    const usage = await withTenant(
+      app,
+      tenantId,
+      async (client) =>
+        (
+          await client.query<{
+            period_start: string;
+            period_end: string;
+            billable_seconds: number;
+          }>(
+            "SELECT period_start::text, period_end::text, billable_seconds::int FROM usage_periods",
+          )
+        ).rows,
+    );
+    expect(usage).toEqual([
+      { period_start: "2026-07-14", period_end: "2026-08-14", billable_seconds: 90 },
+    ]);
+  });
 });
 
 describe("recordCallEnded transcript storage", () => {

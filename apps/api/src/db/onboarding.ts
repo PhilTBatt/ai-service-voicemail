@@ -164,9 +164,14 @@ export async function advanceOnboarding(
         reason: `Only a business that's onboarding can go live; this one is ${loaded.status}`,
       };
     }
+    // Going live starts the clock on billing: periods are months from today, UK date
+    // (decision 019). Kept if somehow already set, so a business is never re-anchored.
     await client.query(
       `UPDATE tenants SET onboarding_state = $2,
-              status = CASE WHEN $2 = 'live' THEN 'live' ELSE status END
+              status = CASE WHEN $2 = 'live' THEN 'live' ELSE status END,
+              billing_start_date = CASE WHEN $2 = 'live'
+                THEN COALESCE(billing_start_date, (now() AT TIME ZONE 'Europe/London')::date)
+                ELSE billing_start_date END
        WHERE id = $1`,
       [tenantId, to],
     );

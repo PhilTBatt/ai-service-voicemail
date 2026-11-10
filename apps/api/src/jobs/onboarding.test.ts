@@ -163,6 +163,14 @@ describe("the go-live action", () => {
 
     expect(await runOnboardingJob(deps(sms), { tenantId, action: "go-live" })).toBe("sent");
     expect(await tenantRow(tenantId)).toMatchObject({ onboarding_state: "live", status: "live" });
+    // Going live starts the billing clock: today's UK date (decision 019).
+    const { rows: anchored } = await admin.query<{ billing_start_date: string }>(
+      "SELECT billing_start_date::text FROM tenants WHERE id = $1",
+      [tenantId],
+    );
+    expect(anchored[0]?.billing_start_date).toBe(
+      new Date().toLocaleDateString("en-CA", { timeZone: "Europe/London" }),
+    );
     expect(sms.sent.map((text) => text.body)).toEqual([
       "AnswerMate is live for Wren Plumbing. Calls you don't answer now go to your assistant, and you'll get a text about each one.",
     ]);

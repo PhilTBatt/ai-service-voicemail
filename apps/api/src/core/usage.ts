@@ -8,15 +8,43 @@ export function billableSeconds(durationSeconds: number): number {
 }
 
 /**
- * The calendar month a call falls in, in UK local time. Step 12 may move to rolling
- * 30-day periods per tenant; the table stores explicit start and end dates either way.
+ * The usage period a call falls in, in UK local time. For a business that has gone live,
+ * periods are months on the anniversary of its billing start date (decision 019), so its
+ * usage lines up with what it's charged for. Without one (a business still onboarding, a
+ * demo, or a call from before it went live), the UK calendar month. The table stores explicit
+ * start and end dates either way.
  */
-export function usagePeriodFor(at: Date): { periodStart: string; periodEnd: string } {
+export function usagePeriodFor(
+  at: Date,
+  billingStartDate: string | null = null,
+): { periodStart: string; periodEnd: string } {
   const local = Temporal.Instant.fromEpochMilliseconds(at.getTime()).toZonedDateTimeISO(
     "Europe/London",
   );
+  if (billingStartDate !== null) {
+    const anchor = Temporal.PlainDate.from(billingStartDate);
+    if (Temporal.PlainDate.compare(local.toPlainDate(), anchor) >= 0) {
+      const period = anniversaryPeriod(anchor, local.toPlainDate());
+      return { periodStart: period.start.toString(), periodEnd: period.end.toString() };
+    }
+  }
   const start = Temporal.PlainDate.from({ year: local.year, month: local.month, day: 1 });
   return { periodStart: start.toString(), periodEnd: start.add({ months: 1 }).toString() };
+}
+
+/**
+ * The anniversary month containing `day`, counted from `anchor`: [anchor + n months, anchor +
+ * n+1 months). An anchor on the 31st falls back to the last day of shorter months (Temporal's
+ * month arithmetic), so the month difference can over-count by one around them.
+ */
+export function anniversaryPeriod(
+  anchor: Temporal.PlainDate,
+  day: Temporal.PlainDate,
+): { start: Temporal.PlainDate; end: Temporal.PlainDate; index: number } {
+  let index = Math.max(0, anchor.until(day, { largestUnit: "months" }).months);
+  while (Temporal.PlainDate.compare(anchor.add({ months: index }), day) > 0) index -= 1;
+  while (Temporal.PlainDate.compare(anchor.add({ months: index + 1 }), day) <= 0) index += 1;
+  return { start: anchor.add({ months: index }), end: anchor.add({ months: index + 1 }), index };
 }
 
 /**

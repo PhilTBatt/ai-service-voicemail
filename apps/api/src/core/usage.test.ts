@@ -34,6 +34,31 @@ describe("usagePeriodFor", () => {
       periodEnd: "2026-12-01",
     });
   });
+
+  // Decision 019: a live business's periods are months from the day it went live.
+  it("uses months from the billing start date once a business has one", () => {
+    expect(usagePeriodFor(new Date("2026-07-15T10:00:00Z"), "2026-06-14")).toEqual({
+      periodStart: "2026-07-14",
+      periodEnd: "2026-08-14",
+    });
+    // 23:30 UTC on 13 August is 00:30 on the 14th in the UK: the next period.
+    expect(usagePeriodFor(new Date("2026-08-13T23:30:00Z"), "2026-06-14")).toEqual({
+      periodStart: "2026-08-14",
+      periodEnd: "2026-09-14",
+    });
+    // A 31st anchor: February's period ends on the 28th, and the next runs to 31 March.
+    expect(usagePeriodFor(new Date("2026-03-10T12:00:00Z"), "2026-01-31")).toEqual({
+      periodStart: "2026-02-28",
+      periodEnd: "2026-03-31",
+    });
+  });
+
+  it("falls back to the calendar month for a call from before the business went live", () => {
+    expect(usagePeriodFor(new Date("2026-06-10T10:00:00Z"), "2026-06-14")).toEqual({
+      periodStart: "2026-06-01",
+      periodEnd: "2026-07-01",
+    });
+  });
 });
 
 describe("overagePence (200 included minutes, 20p a minute)", () => {

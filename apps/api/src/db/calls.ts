@@ -30,7 +30,10 @@ export async function recordCallEnded(
   return withTenant(pool, tenantId, async (client) => {
     const billable = billableSeconds(event.durationSeconds);
     const tenant = (
-      await client.query<{ status: string }>("SELECT status FROM tenants WHERE id = $1", [tenantId])
+      await client.query<{ status: string; billing_start_date: string | null }>(
+        "SELECT status, billing_start_date::text FROM tenants WHERE id = $1",
+        [tenantId],
+      )
     ).rows[0];
     const { rows } = await client.query<{ id: string }>(
       `INSERT INTO calls (tenant_id, provider_call_id, caller_number, started_at, ended_at,
@@ -71,10 +74,13 @@ export async function recordCallEnded(
     }
 
     // Billable seconds accumulate per period; overage is worked out once per period (Step 12).
-    // Demo calls are never billed (Step 9); their costs still land in call_costs, on the demo
-    // tenant's own line.
+    // Periods are months from the day the business went live (decision 019). Demo calls are
+    // never billed (Step 9); their costs still land in call_costs, on the demo tenant's own line.
     if (billable > 0 && tenant?.status !== "demo") {
-      const { periodStart, periodEnd } = usagePeriodFor(event.startedAt);
+      const { periodStart, periodEnd } = usagePeriodFor(
+        event.startedAt,
+        tenant?.billing_start_date ?? null,
+      );
       await client.query(
         `INSERT INTO usage_periods (tenant_id, period_start, period_end, billable_seconds)
          VALUES ($1, $2, $3, $4)
