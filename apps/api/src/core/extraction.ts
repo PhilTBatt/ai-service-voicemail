@@ -73,7 +73,7 @@ Rules:
 - urgency, one of:
 ${URGENCY_RULES}
 - priceAsked: true if the caller asked about cost or a quote at any point.
-- flags: short notes ${tradespersonName} should see, such as "mentioned gas smell", "existing customer chasing a job", "caller abusive" (swearing at or insulting anyone, not just upset), "call cut off". Empty if nothing stands out.`;
+- flags: short notes ${tradespersonName} should see, such as "mentioned gas smell", "existing customer chasing a job", "caller abusive" (swearing at or insulting anyone, not just upset), "call cut off" (only when the transcript stops mid-conversation, never when the assistant said goodbye). Empty if nothing stands out.`;
 
   const lines = transcript.map(
     (turn) => `${turn.role === "agent" ? "Assistant" : "Caller"}: ${turn.text}`,

@@ -220,6 +220,28 @@ describe("call-back number instructions", () => {
     // Names and postcodes are read back to the caller; nothing else is (Phil, 2026-11-10).
     expect(definition.instructions).toContain("read each back once as soon as you have it");
     expect(definition.instructions).toContain("Don't read back the job or anything else.");
+    // The eval run of 2026-11-11: a burning-smell call ran past its turn limit on a read-back
+    // asked as its own question ("Thanks, is that Nadia?"), then a question about the job asked
+    // after the name, number and postcode were in. A name is read back with the next question,
+    // the trade's questions come while the job is being described, and then the call ends.
+    expect(definition.instructions).toContain(
+      "Read a name back in the same breath as your next question, not as a question of its own",
+    );
+    expect(definition.instructions).toContain("Read a postcode back as its own question");
+    expect(definition.instructions).toContain(
+      "While the caller is telling you about the job, ask whichever of these they haven't already answered",
+    );
+    // The next run (gas-in-passing): it still asked two of them, and how urgent a gas smell was,
+    // after the postcode. They're optional, and urgency is asked only when it isn't clear.
+    expect(definition.instructions).toContain(
+      "never ask one once you have the call-back number and postcode",
+    );
+    expect(definition.instructions).toContain(
+      "how urgent it is, unless that's already clear from what they've said",
+    );
+    expect(definition.instructions).toContain(
+      "When you have the five things above, end the call without starting a new question",
+    );
     expect(definition.perCallVariables.map((v) => v.name)).toEqual([
       "open_now",
       "holiday_mode",

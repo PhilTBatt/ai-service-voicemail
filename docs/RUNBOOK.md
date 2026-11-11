@@ -351,6 +351,15 @@ The live database starts empty: no businesses, no logins. The demo line (the num
 
 To hand the number back to a laptop for a day, run `npm run live-configure-number -- --confirm` locally (with ngrok up); step 4 takes it back.
 
+### Changing the fallback voicemail's words
+
+The voicemail callers hear when the assistant can't answer comes from two places. A paused or suspended business and the kill switch get the API's copy, which changes with a release. When the API itself is down, Twilio plays the TwiML Bin (bin 2), which only changes when you paste a new copy into it. So after a release that changes the greeting (`FALLBACK_VOICEMAIL_GREETING` in `apps/api/src/core/scripts.ts`), update the bin too:
+
+1. Twilio console, **TwiML Bins**: open bin 1 ("AnswerMate voicemail done") and copy its URL.
+2. From the repo root: `npm run twiml:fallback -- --done-url <bin 1's URL> --base-url https://callmate-api.greengrass-a4449d88.uksouth.azurecontainerapps.io`. Use that address even after the domain move: the API answers at it for good (`ALTERNATE_BASE_URL`). Without `--base-url` the script uses your `.env`'s ngrok address, which would send production's voicemails to your laptop.
+3. Open bin 2 ("AnswerMate fallback voicemail"), replace everything in it with what the script printed (from `<?xml` to `</Response>`), and save. Its URL doesn't change, so nothing else needs updating.
+4. Check it: Twilio console, the demo number, **Voice configuration**: its fallback URL is still bin 2's URL.
+
 ### The uptime check (decision 018)
 
 The one thing the service can't email about is being down, so something outside asks it every five minutes. UptimeRobot, free plan, two monitors of type HTTP(s), each alerting the same address as `ALERT_EMAIL`:

@@ -92,6 +92,15 @@ describe("buildExtractionPrompt", () => {
     expect(system).toContain("still not in the field");
   });
 
+  // The eval run of 2026-11-11 (water and sparks): "call cut off" on a call that ended with the
+  // assistant's goodbye, which the judge rightly called unsupported.
+  it("flags a call as cut off only when it stops mid-conversation", () => {
+    const { system } = buildExtractionPrompt([], { businessName: "B", tradespersonName: "Ant" });
+    expect(system).toContain(
+      '"call cut off" (only when the transcript stops mid-conversation, never when the assistant said goodbye)',
+    );
+  });
+
   it("calls a silent call 'other', so the judge and the extraction agree", () => {
     expect(URGENCY_RULES).toMatch(/"other" if the call [^\n]*, or the caller said nothing/);
   });

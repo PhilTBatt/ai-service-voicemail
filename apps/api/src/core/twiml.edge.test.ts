@@ -1,7 +1,13 @@
 // What Twilio is told, checked as a whole document: every reply is well-formed TwiML, says what
 // Appendix A says word for word, and never leaves a caller on a silent line.
 import { describe, expect, it } from "vitest";
-import { FALLBACK_VOICEMAIL_GREETING, SERVICE_ENDED_LINE, VOICEMAIL_THANKS } from "./scripts.ts";
+import {
+  DANGER_SCRIPT,
+  FALLBACK_VOICEMAIL_GREETING,
+  GAS_EMERGENCY_NUMBER,
+  SERVICE_ENDED_LINE,
+  VOICEMAIL_THANKS,
+} from "./scripts.ts";
 import {
   VOICEMAIL_MAX_SECONDS,
   agentDial,
@@ -72,6 +78,33 @@ describe("the fallback voicemail", () => {
     expect(xml).toContain(`maxLength="${VOICEMAIL_MAX_SECONDS}"`);
     expect(xml).toContain('playBeep="true"');
     expect(xml).toContain('recordingStatusCallbackMethod="POST"');
+  });
+
+  // Phil, 2026-11-11: a caller who smells gas or is in danger heard nothing but "leave a
+  // message" when the assistant couldn't answer (an outage, a pause, the kill switch).
+  it("tells a caller with gas or danger to hang up and ring, before the beep, in Appendix A's words", () => {
+    // The numbers are written as words for the voice to read; put back as digits, the lines
+    // are Appendix A's.
+    const asDigits = FALLBACK_VOICEMAIL_GREETING.replace(
+      "oh eight hundred, one one one, nine nine nine",
+      GAS_EMERGENCY_NUMBER.GB,
+    ).replace("call nine nine nine", "call 999");
+    expect(asDigits).toContain(
+      `If you can smell gas, or you think there's carbon monoxide, please hang up now and call ${GAS_EMERGENCY_NUMBER.GB}.`,
+    );
+    expect(asDigits).toContain(DANGER_SCRIPT);
+    // No digits left for the voice to read as a quantity ("nine hundred and ninety-nine").
+    expect(FALLBACK_VOICEMAIL_GREETING).not.toMatch(/\d/);
+    // Safety first, then the message: the beep follows the last sentence.
+    expect(FALLBACK_VOICEMAIL_GREETING.indexOf("gas")).toBeLessThan(
+      FALLBACK_VOICEMAIL_GREETING.indexOf("leave your name"),
+    );
+    expect(FALLBACK_VOICEMAIL_GREETING).toMatch(
+      /Please leave your name, your number and what you need after the tone, and you'll get a call back\.$/i,
+    );
+    // The bin served while the API is down says the same.
+    const bin = fallbackVoicemailBins.greeting(URLS.actionUrl, URLS.recordingStatusCallbackUrl);
+    expect(bin).toContain(`>${FALLBACK_VOICEMAIL_GREETING}</Say>`);
   });
 
   it("escapes an ampersand in its URLs", () => {

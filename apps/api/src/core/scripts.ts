@@ -40,9 +40,17 @@ export function closingLine(tradesperson: string): string {
   return `Thanks. I've passed that to ${tradesperson}, who'll aim to get back to you. Goodbye.`;
 }
 
-/** Static, so it can't include the business name: it's served even when the API is down. */
+/**
+ * Static, so it can't include the business name: it's served even when the API is down (as a
+ * TwiML Bin, `npm run twiml:fallback`). The two safety lines before the beep (Phil, 2026-11-11):
+ * a caller who smells gas or is in danger could otherwise only leave a voicemail, which nobody
+ * hears until later. The 999 line is Appendix A's word for word; the gas line is the start of
+ * Appendix A's gas message with Great Britain's number (the service is GB only, so a static
+ * message can carry it). Both numbers are written as words: Twilio's voice reads them as they're
+ * written, while how it reads digits ("999" as "nine hundred and ninety-nine"?) isn't documented.
+ */
 export const FALLBACK_VOICEMAIL_GREETING =
-  "Sorry, the assistant isn't available right now. Please leave your name, your number and what you need after the tone, and you'll get a call back.";
+  "Sorry, the assistant isn't available right now. If you can smell gas, or you think there's carbon monoxide, please hang up now and call oh eight hundred, one one one, nine nine nine. If anyone is in danger, or there's a fire or smoke, please hang up now and call nine nine nine. Otherwise, please leave your name, your number and what you need after the tone, and you'll get a call back.";
 
 /** For cancelling and cancelled tenants (BUILD_PLAN Step 4). */
 export const SERVICE_ENDED_LINE = "This service has ended. Please call";
