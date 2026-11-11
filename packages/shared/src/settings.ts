@@ -7,10 +7,22 @@ export const ukMobileSchema = z
   .string()
   .regex(/^\+447\d{9}$/, "must be a UK mobile like +447700900123");
 
+/**
+ * The longest email address that can be delivered: RFC 5321 limits the path an address travels
+ * in to 256 characters, two of them its angle brackets (RFC 3696's erratum 1690 says the same).
+ * Anything longer would be saved, then refused by the email provider on every send.
+ */
+export const EMAIL_MAX_LENGTH = 254;
+
+/** An email address someone types in: the dashboard's settings and the signup form. */
+export const emailAddressSchema = z
+  .email("must be an email address")
+  .max(EMAIL_MAX_LENGTH, `keep it to ${EMAIL_MAX_LENGTH} characters or fewer`);
+
 export const notificationSettingsSchema = z.object({
   /** Null stops texts, emergency texts included. */
   notificationMobile: ukMobileSchema.nullable(),
-  notificationEmail: z.email("must be an email address").nullable(),
+  notificationEmail: emailAddressSchema.nullable(),
 });
 export type NotificationSettings = z.infer<typeof notificationSettingsSchema>;
 
@@ -22,6 +34,10 @@ export const CSV_EXPORTS = [
   "assistant",
   "account-log",
   "billing",
+  "people",
+  "payment-events",
+  "billing-emails",
+  "suspensions",
 ] as const;
 export type CsvExport = (typeof CSV_EXPORTS)[number];
 export const CSV_EXPORT_LABELS: Record<CsvExport, string> = {
@@ -31,4 +47,8 @@ export const CSV_EXPORT_LABELS: Record<CsvExport, string> = {
   assistant: "Assistant settings",
   "account-log": "Account log",
   billing: "Billing",
+  people: "People with access",
+  "payment-events": "Direct Debit events",
+  "billing-emails": "Billing emails",
+  suspensions: "Suspensions",
 };

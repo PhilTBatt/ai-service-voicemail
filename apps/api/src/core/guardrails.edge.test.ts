@@ -154,6 +154,31 @@ describe("scanAgentTurns on awkward turns", () => {
     ).toEqual(["commitment", "price"]);
   });
 
+  // A 34,000-character turn with no punctuation took about 10 seconds: patterns that ran from
+  // every position to the end of a run of digits, number words or spaces, or looked back to the
+  // start of the clause from each one. The scan runs in the worker, so a hostile turn would hold
+  // up every other business's texts. The bound is generous, so a slow machine doesn't fail it.
+  it.each([
+    ["words with no punctuation", "he said the boiler was making a noise and we can't "],
+    ["digits", "1"],
+    ["digits and commas", "1,"],
+    ["digits and doubled commas", "1,,"],
+    ["number words", "one "],
+    ["number words joined by 'and'", "one and "],
+    ["a deflection, again and again", "I can't promise "],
+    ["a promise after one deflection", "he'll be there today "],
+    ["one long word", "a"],
+    ["whitespace", " \t"],
+    ["short sentences", "Hi. "],
+    ["call-out fees", "call-out "],
+    ["the start of an instruction", "please "],
+  ])("scans 50,000 characters of %s in well under a second", (_what, unit) => {
+    const text = `we ${unit.repeat(Math.ceil(50_000 / unit.length))}`.slice(0, 50_000);
+    const started = performance.now();
+    scanAgentTurns([agent(text)]);
+    expect(performance.now() - started).toBeLessThan(1_000);
+  });
+
   it("scans every agent turn, not just the first", () => {
     const hits = scanAgentTurns([
       agent("Hi, how can I help?"),

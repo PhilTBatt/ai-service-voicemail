@@ -21,16 +21,21 @@ export function e164OrNull(value: string | null | undefined): string | null {
 }
 
 /**
- * A UK mobile as a person types it ("07700 900123", "+44 (0)7700-900123", "447700900123"),
- * as the E.164 form texts are sent to (+447 and nine digits), or null for anything else.
+ * A UK mobile as a person types it ("07700 900123", "+44 (0)7700-900123", "447700900123",
+ * "0044 7700 900123"), as the E.164 form texts are sent to (+447 and nine digits), or null for
+ * anything else.
  */
 export function ukMobileFromInput(value: string | null | undefined): string | null {
   if (value === undefined || value === null) return null;
   let digits = value.replace(/[\s().-]/g, "");
-  // "+44 (0)7700 900123" is "+4407700900123" by now: the 0 is the trunk prefix, not a digit.
-  if (digits.startsWith("+440")) digits = `+44${digits.slice(4)}`;
-  if (digits.startsWith("0")) digits = `+44${digits.slice(1)}`;
+  // 00 is the international prefix, as + is: "0044 7700 900123" was read as a national number
+  // starting 0044 and refused.
+  if (digits.startsWith("00")) digits = `+${digits.slice(2)}`;
+  else if (digits.startsWith("0")) digits = `+44${digits.slice(1)}`;
   else if (digits.startsWith("44")) digits = `+${digits}`;
+  // "+44 (0)7700 900123" and "0044 (0)7700 900123" are "+4407700900123" by now: the 0 is the
+  // trunk prefix, not a digit.
+  if (digits.startsWith("+440")) digits = `+44${digits.slice(4)}`;
   return /^\+447\d{9}$/.test(digits) ? digits : null;
 }
 

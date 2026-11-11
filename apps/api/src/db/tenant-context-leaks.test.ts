@@ -254,14 +254,20 @@ describe("the database's guard rails", () => {
   });
 
   it("lets the lookup functions answer with an ID only, never a row of another business", async () => {
-    // What each definer function returns: one uuid, or the caller's own account. None returns
-    // a table of call or contact data the app role couldn't otherwise read.
+    // What each definer function returns: one uuid, the caller's own account, or (for the data
+    // export) the email and role of each person with access to the business the transaction is
+    // set to, which every-tenant-table.test.ts checks answers for no other business. None
+    // returns call data, or anyone's details beyond those.
     const { rows } = await owner.query<{ name: string; result: string }>(`
       SELECT p.proname AS name, pg_get_function_result(p.oid) AS result
       FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace AND p.prosecdef
       ORDER BY 1`);
     for (const fn of rows) {
       if (fn.name.startsWith("tenant_id_for_")) expect(fn.result, fn.name).toBe("uuid");
+      else if (fn.name === "tenant_members")
+        expect(fn.result, fn.name).toBe(
+          "TABLE(email text, role text, added_at timestamp with time zone)",
+        );
       else
         expect(fn.result, fn.name).toBe(
           "TABLE(user_id uuid, email text, role text, tenant_id uuid)",

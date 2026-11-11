@@ -23,8 +23,16 @@ export type BillingEmailKind = "receipt" | "payment_failed" | "direct_debit_ende
 export interface BillingEmailJobData {
   tenantId: string;
   kind: BillingEmailKind;
-  /** The charge's ID (a receipt or a failed payment), or the mandate's reference (an ending). */
+  /**
+   * What the email is about, once each: the charge's ID for a receipt; the mandate's reference
+   * for an ending; for a failed payment, the charge's ID and the provider's event that said so
+   * ("<charge ID>:<event ID>"), so a month that fails again after Collect again is told again,
+   * and one event delivered twice is told once. (The charge's ID alone when the morning run
+   * finds the payment already failed: no event says so then.)
+   */
   ref: string;
+  /** The charge it's about, for a receipt or a failed payment. Without it, the ref is the charge's ID. */
+  chargeId?: string | undefined;
 }
 
 /** Queues a billing email. Given a client, the job commits or rolls back with that transaction. */
@@ -68,7 +76,7 @@ interface ChargeRow {
 
 export async function runBillingEmail(
   { pool, email, outbound, dashboardOrigin, alert = raiseAlert }: BillingEmailDeps,
-  { tenantId, kind, ref }: BillingEmailJobData,
+  { tenantId, kind, ref, chargeId = ref }: BillingEmailJobData,
 ): Promise<BillingEmailOutcome> {
   const loaded = await withTenant(pool, tenantId, async (client) => {
     const done = await client.query("SELECT 1 FROM billing_emails WHERE kind = $1 AND ref = $2", [
@@ -91,7 +99,7 @@ export async function runBillingEmail(
           `SELECT period_start::text, period_end::text, lines, vat_rate_percent, vat_pence,
                   total_pence, vat_number, charge_date::text
            FROM billing_charges WHERE id = $1`,
-          [ref],
+          [chargeId],
         )
       ).rows[0];
       if (!charge) return null;

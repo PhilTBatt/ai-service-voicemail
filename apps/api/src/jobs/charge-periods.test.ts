@@ -358,6 +358,138 @@ describe("charging one month", () => {
   });
 });
 
+describe("two runs at once", () => {
+  /**
+   * The app pool, under a name of its own so the test can see its connections waiting. Both
+   * runs share it, each transaction on its own connection, as two runs in the worker would.
+   */
+  function racingPool() {
+    const url = new URL(TEST_DATABASE_URL);
+    url.searchParams.set("application_name", `charge-race-${randomUUID().slice(0, 8)}`);
+    return { pool: createPool(url.toString()), name: url.searchParams.get("application_name")! };
+  }
+
+  /**
+   * Holds every insert into billing_charges (a SHARE lock lets reads through and blocks
+   * writes) until `waiting` of the named pool's connections are stuck behind it, then lets
+   * them all go at once. So both runs have looked for the month's row, found none, and are
+   * inserting together: the overlap that, left to timing, only happens now and then.
+   */
+  async function collideInserts<T>(
+    name: string,
+    waiting: number,
+    start: () => Promise<T>[],
+  ): Promise<PromiseSettledResult<T>[]> {
+    const gate = await app.connect();
+    let running: Promise<T>[] = [];
+    try {
+      await gate.query("BEGIN");
+      await gate.query("LOCK TABLE billing_charges IN SHARE MODE");
+      running = start();
+      for (let tries = 0; ; tries += 1) {
+        // Asked on another connection: inside the gate's transaction, Postgres would show
+        // the same snapshot of pg_stat_activity every time.
+        const { rows } = await app.query<{ n: number }>(
+          `SELECT count(*)::int AS n FROM pg_stat_activity
+           WHERE application_name = $1 AND wait_event_type = 'Lock'`,
+          [name],
+        );
+        if (rows[0]!.n >= waiting) break;
+        if (tries > 100) throw new Error("The runs never reached the insert together");
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      await gate.query("COMMIT");
+    } catch (error) {
+      // Let the runs go before giving up, so none is left waiting on the lock.
+      await gate.query("ROLLBACK").catch(() => undefined);
+      await Promise.allSettled(running);
+      throw error;
+    } finally {
+      gate.release();
+    }
+    return Promise.allSettled(running);
+  }
+
+  it("charges a month once, and the run that loses the race just moves on, not failing", async () => {
+    const { tenantId, tenant } = await business();
+    const { pool, name } = racingPool();
+    try {
+      const { deps: d, payments, enqueueBillingEmail } = deps({ pool });
+      const results = await collideInserts(name, 2, () => [
+        chargePeriod(d, tenant, JUNE),
+        chargePeriod(d, tenant, JUNE),
+      ]);
+      // Both finish: one collected it, the other found it already done. Neither failed, so
+      // neither would be retried by the queue.
+      expect(results.map((r) => r.status)).toEqual(["fulfilled", "fulfilled"]);
+      expect(results.map((r) => (r.status === "fulfilled" ? r.value : "")).sort()).toEqual([
+        "already-done",
+        "collected",
+      ]);
+      expect(payments.payments).toHaveLength(1);
+      expect(await charges(tenantId)).toEqual([
+        expect.objectContaining({
+          status: "pending",
+          payment_ref: payments.payments[0]!.paymentRef,
+        }),
+      ]);
+      expect(enqueueBillingEmail).toHaveBeenCalledTimes(1);
+    } finally {
+      await pool.end();
+    }
+  });
+
+  it("finishes both whole runs without an error when they overlap on the same month", async () => {
+    // A business that went live after the morning-run test's date, seen only by these runs.
+    const { tenantId } = await business();
+    await admin.query("UPDATE tenants SET billing_start_date = '2026-10-03' WHERE id = $1", [
+      tenantId,
+    ]);
+    const { pool, name } = racingPool();
+    try {
+      const scoped = {
+        query: async (text: string, values?: unknown[]) => {
+          const result = await admin.query<{ tenantId: string }>(text, values);
+          return { ...result, rows: result.rows.filter((row) => row.tenantId === tenantId) };
+        },
+      } as unknown as typeof admin;
+      const { deps: d, payments } = deps({
+        pool,
+        admin: scoped,
+        now: () => new Date("2026-11-03T06:00:00Z"),
+      });
+      const results = await collideInserts(name, 2, () => [
+        runChargePeriods(d),
+        runChargePeriods(d),
+      ]);
+      expect(results.map((r) => r.status)).toEqual(["fulfilled", "fulfilled"]);
+      const counts = results.map((r) => (r.status === "fulfilled" ? r.value : null));
+      expect(counts.map((c) => c?.collected).sort()).toEqual([0, 1]);
+      expect(counts.map((c) => c?.failedBusinesses)).toEqual([0, 0]);
+      expect(payments.payments).toHaveLength(1);
+      expect((await charges(tenantId)).map((c) => c.status)).toEqual(["pending"]);
+    } finally {
+      await pool.end();
+    }
+  });
+});
+
+describe("a cancelled payment", () => {
+  it("is never collected again by the morning run: only by hand, from the Admin page", async () => {
+    const { tenantId, tenant } = await business();
+    const { deps: d, payments } = deps();
+    expect(await chargePeriod(d, tenant, JUNE)).toBe("collected");
+    await withTenant(app, tenantId, (client) =>
+      client.query("UPDATE billing_charges SET status = 'cancelled' WHERE tenant_id = $1", [
+        tenantId,
+      ]),
+    );
+    expect(await chargePeriod(d, tenant, JUNE)).toBe("already-done");
+    expect(payments.payments).toHaveLength(1);
+    expect((await charges(tenantId))[0]?.status).toBe("cancelled");
+  });
+});
+
 describe("the morning run", () => {
   it("charges every ended month of a paying business, and never the demo line or a test business", async () => {
     const paying = await business({ seconds: { "2026-06-14": 60 } });

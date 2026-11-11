@@ -5,6 +5,7 @@ import type pg from "pg";
 import { ukDateOf } from "../core/billing.ts";
 import { billableSeconds, usagePeriodFor } from "../core/usage.ts";
 import { NOTIFY_EMERGENCY_QUEUE, PROCESS_CALL_QUEUE } from "../jobs/queue.ts";
+import { logger } from "../logger.ts";
 import type { CallEndedEvent, FunctionCallEvent } from "../providers/voice.ts";
 import { findTenantIdByNumber } from "./cross-tenant.ts";
 import { withTenant } from "./tenant.ts";
@@ -13,6 +14,19 @@ export type RecordCallResult =
   | { outcome: "stored"; tenantId: string; callId: string; jobId: string | null }
   | { outcome: "duplicate"; tenantId: string }
   | { outcome: "unknown-number" };
+
+/** call_costs.units is numeric(14, 4): under 10 billion, and checked never to be negative. */
+const MAX_COST_UNITS = 9_999_999_999;
+
+/** Why call_costs would refuse this line, or null when it can be stored. */
+function unstorableCost(cost: CallEndedEvent["costs"][number]): string | null {
+  if (!Number.isFinite(cost.units)) return "not a number";
+  if (cost.units < 0) return "negative";
+  if (cost.units > MAX_COST_UNITS) return "too large";
+  // Postgres text can't hold a NUL character.
+  if (cost.component.includes("\u0000") || cost.unitType.includes("\u0000")) return "NUL character";
+  return null;
+}
 
 /**
  * Stores a finished call and queues its processing, in ONE transaction: either the call row,
@@ -102,6 +116,19 @@ export async function recordCallEnded(
     }
 
     for (const cost of event.costs) {
+      // A call must never be lost over a cost line. One the table can't hold (Retell has sent a
+      // negative product cost) failed the insert, and so the whole call, on every redelivery
+      // and every reconciliation run. It's left out, with a warning that names no one.
+      const unstorable = unstorableCost(cost);
+      if (unstorable !== null) {
+        logger.warn("Cost line the database can't hold: left out, the call stored", {
+          tenantId,
+          callId,
+          component: cost.component.replaceAll("\u0000", "").slice(0, 80),
+          reason: unstorable,
+        });
+        continue;
+      }
       await client.query(
         `INSERT INTO call_costs (tenant_id, call_id, component, units, unit_type, is_estimated)
          VALUES ($1, $2, $3, $4, $5, false)`,

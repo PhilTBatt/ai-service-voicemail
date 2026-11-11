@@ -154,7 +154,8 @@ export function adminRouter({
     } satisfies AdminBillingView);
   });
 
-  // A failed payment, collected again: GoCardless's own retry of the same payment.
+  // A payment collected again, by hand only: a failed one as GoCardless's own retry of the same
+  // payment; a cancelled one (GoCardless can't retry those) as a new payment for the month.
   router.post("/charges/:chargeId/collect-again", async (req, res) => {
     if (!payments) {
       res.status(503).json({ error: "Payments aren't set up on this server" });
@@ -187,7 +188,16 @@ export function adminRouter({
     }
     if (result.outcome === "not-failed") {
       res.status(409).json({
-        error: `Only a failed payment can be collected again; this one is ${result.status}`,
+        error: `Only a failed or cancelled payment can be collected again; this one is ${result.status}`,
+      });
+      return;
+    }
+    if (result.outcome === "no-mandate" || result.outcome === "mandate-unusable") {
+      res.status(409).json({
+        error:
+          result.outcome === "no-mandate"
+            ? "This payment was cancelled, and the business has no active Direct Debit to collect a new one from. Once it sets one up, collect it again."
+            : "GoCardless won't collect from this business's Direct Debit any more. It needs to set up a new one before this month can be collected.",
       });
       return;
     }

@@ -21,6 +21,7 @@ export const ALERTS = [
   "email-spam-complaint",
   "number-bought-not-recorded",
   "deletion-confirmation-not-sent",
+  "recording-not-deleted",
   "payment-mandate-ended",
   "billing-no-mandate",
   "billing-payment-failed",

@@ -43,7 +43,7 @@ const ENV_EXAMPLE = new Map(
 /** The settings production can't start without: what loadConfig names as missing. */
 function productionRequired(): string[] {
   try {
-    // DATABASE_URL given: zod checks the production rule only once every field has parsed.
+    // DATABASE_URL given, so every problem named is one of production's own.
     loadConfig({ NODE_ENV: "production", DATABASE_URL: "postgres://app@localhost/callmate" });
   } catch (error) {
     if (!(error instanceof ConfigError)) throw error;
@@ -211,6 +211,9 @@ describe("the database connection budget (apps/api/src/db/pool.ts)", () => {
   const AZURE_B1MS_USER_CONNECTIONS = 35;
   const api = APP_POOL_MAX + ADMIN_POOL_MAX + QUEUE_POOL_MAX;
   const worker = APP_POOL_MAX + WORKER_ADMIN_POOL_MAX + QUEUE_POOL_MAX;
+  // The one-off task job (deploy.yml's "task" step, the callmate-task job) runs one script
+  // from apps/api/src/scripts, which makes its own pools: at most one of each.
+  const task = APP_POOL_MAX + ADMIN_POOL_MAX + QUEUE_POOL_MAX;
 
   it("fits a release's peak within the database's limit", () => {
     const peak = 2 * (api + worker) + 1;
@@ -225,6 +228,34 @@ describe("the database connection budget (apps/api/src/db/pool.ts)", () => {
     );
     expect(comment).toContain(`${api + worker} in normal running`);
     expect(comment).toContain(`${2 * (api + worker)} at the peak`);
+    expect(comment).toContain(`${APP_POOL_MAX} + ${ADMIN_POOL_MAX} + ${QUEUE_POOL_MAX} = ${task}`);
+    expect(comment).toContain(`${api + worker + task} while a task runs`);
+    expect(comment).toContain(`the peak stays ${2 * (api + worker) + 1}`);
+    expect(comment).toContain(`ask for ${2 * (api + worker) + 1 + task}`);
+  });
+
+  it("counts the task job at the most any script opens: one of each pool, at its default size", () => {
+    const scriptsDir = path.join(ROOT, "apps/api/src/scripts");
+    for (const file of readdirSync(scriptsDir)) {
+      if (!file.endsWith(".ts") || file.endsWith(".test.ts")) continue;
+      const source = readFileSync(path.join(scriptsDir, file), "utf8");
+      for (const maker of [/createPool\(/g, /createAdminPool\(/g, /startQueue\(/g]) {
+        expect(source.match(maker)?.length ?? 0, `${file}: ${maker.source}`).toBeLessThanOrEqual(1);
+      }
+      // A size passed in would be outside the count; so would a pool made some other way.
+      expect(source, file).not.toMatch(/create(Admin)?Pool\([^)]*max/);
+      expect(source, file).not.toMatch(/new pg\.Pool\(/);
+    }
+  });
+
+  it("fits a task alongside normal running, and never runs one during a release", () => {
+    expect(api + worker + task).toBeLessThanOrEqual(AZURE_B1MS_USER_CONNECTIONS);
+    // A release's peak leaves no room for a task's pools, so the two take turns, in one group.
+    const deploy = read(".github/workflows/deploy.yml");
+    for (const job of ["release", "task"]) {
+      const block = new RegExp(`^  ${job}:\\n((?: {4}.*\\n|\\n)*)`, "m").exec(deploy)?.[1] ?? "";
+      expect(block, job).toMatch(/concurrency:\n\s+group: deploy-production\n/);
+    }
   });
 
   it("keeps the API and the worker to one copy each, which the budget assumes", () => {

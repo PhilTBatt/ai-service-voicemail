@@ -164,6 +164,38 @@ describe("callEmail", () => {
     expect(text).toContain("Caller: It's Sam, my boiler's leaking <badly> & I can smell gas.");
   });
 
+  // A caller's name is whatever the extraction heard: a line break in it reached the subject,
+  // which is an email header.
+  it.each([
+    ["a line break", "Sam\nBcc: someone@example.com"],
+    ["a carriage return and line feed", "Sam\r\nBcc: someone@example.com"],
+    ["a Unicode line separator", "Sam\u2028Bcc: someone@example.com"],
+    ["a next-line control", "Sam\u0085Bcc: someone@example.com"],
+    ["a tab and a NUL", "Sam\t\u0000Bcc: someone@example.com"],
+    ["a right-to-left override", "Sam \u202EBcc: someone@example.com"],
+  ])("keeps the subject to one line when the name has %s", (_what, callerName) => {
+    const { subject, text } = callEmail({
+      ...EMAIL_INPUT,
+      callerName,
+      summary: "Boiler leaking.\r\nMore detail.",
+    });
+    expect(subject).toBe("URGENT: Sam Bcc: someone@example.com, 07700 900123 - Boiler leaking.");
+    expect(subject).not.toMatch(/[\p{Cc}\p{Cf}\u2028\u2029]/u);
+    // And in the text, the name stays on its own "Caller:" line.
+    expect(text).toContain("Caller: Sam Bcc: someone@example.com\nNumber: 07700 900123");
+  });
+
+  it("collapses control characters in the summary's first line too", () => {
+    const { subject } = callEmail({ ...EMAIL_INPUT, summary: "Boiler\u000Bleaking\fbadly\rnow" });
+    expect(subject).toBe("URGENT: Sam, 07700 900123 - Boiler leaking badly now");
+  });
+
+  it("calls a name that's only spaces and line breaks an unknown caller", () => {
+    const { subject, text } = callEmail({ ...EMAIL_INPUT, callerName: " \n\t " });
+    expect(subject.startsWith("URGENT: Unknown caller, 07700 900123")).toBe(true);
+    expect(text).toContain("Caller: not given");
+  });
+
   it("shows UK time, the links, and copes with a cleared transcript", () => {
     const { text, html } = callEmail({ ...EMAIL_INPUT, transcript: null, recordingUrl: null });
     expect(text).toContain("Wednesday 15 July 2026, 09:00");
@@ -208,6 +240,53 @@ describe("email helpers", () => {
 });
 
 describe("callSms length", () => {
+  // The extraction's name and postcode have no length limit: a name or postcode this long
+  // used to leave the text at three segments or more, however short the summary was cut.
+  it.each([
+    ["a long name", { callerName: "Alexandra ".repeat(20).trim() }],
+    ["a long postcode", { postcode: "Postcode not clear, sounded like ".repeat(6).trim() }],
+    [
+      "a long name and postcode",
+      { callerName: "Sam ".repeat(60).trim(), postcode: "XQ12 ".repeat(60).trim() },
+    ],
+    ["a long name with no spaces", { callerName: "A".repeat(400) }],
+    ["a name of extension characters", { callerName: "€".repeat(300) }],
+  ] as const)("fits two segments with %s, cutting the field with an ellipsis", (_what, fields) => {
+    const longSummary =
+      "Boiler leaking under the kitchen sink and no hot water since this morning.";
+    const { body, segments } = callSms({ ...INPUT, ...fields, summary: longSummary });
+    expect(segments).toBeLessThanOrEqual(2);
+    expect(isGsm7(body)).toBe(true);
+    const lines = body.split("\n");
+    expect(lines).toHaveLength(4);
+    expect(lines[0]).toMatch(/^URGENT: .*\.\.\./);
+    expect(lines[0]).toContain("07700 900123");
+    expect(lines[2]).toBe("Call back: tel:+447700900123");
+    expect(lines[3]).toBe(`Details: ${INPUT.callUrl}`);
+  });
+
+  it("leaves a real name and postcode whole", () => {
+    const { body } = callSms({
+      ...INPUT,
+      callerName: "Anne-Marie O'Brien-Fitzgerald",
+      postcode: "XQ12 3JL",
+      summary: "Detail about the job. ".repeat(20),
+    });
+    expect(body.split("\n")[0]).toBe(
+      "URGENT: Anne-Marie O'Brien-Fitzgerald, 07700 900123, XQ12 3JL",
+    );
+  });
+
+  it("keeps a name and postcode on the first line, however they're spaced", () => {
+    const { body } = callSms({
+      ...INPUT,
+      callerName: "Sam\nSmith\r\n",
+      postcode: "XQ12\t3JL\u2028",
+    });
+    expect(body.split("\n")).toHaveLength(4);
+    expect(body.split("\n")[0]).toBe("URGENT: Sam Smith, 07700 900123, XQ12 3JL");
+  });
+
   it("cuts a long summary so the text never runs past two segments", () => {
     const longSummary = Array.from(
       { length: 30 },

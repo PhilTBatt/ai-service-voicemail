@@ -16,7 +16,7 @@ import type pg from "pg";
 import { createAdminPool, deleteTenantData } from "./cross-tenant.ts";
 import { createPool } from "./pool.ts";
 import { withTenant } from "./tenant.ts";
-import { exportTenant } from "./tenant-settings.ts";
+import { exportTenant, exportTenantCsv } from "./tenant-settings.ts";
 import {
   TEST_ADMIN_DATABASE_URL,
   TEST_DATABASE_URL,
@@ -46,7 +46,7 @@ interface Seeded {
   callId: string;
   /** Strings that identify a person: none may survive the business's deletion. */
   personal: string[];
-  /** Provider references that must stay out of the export (they're ours, not theirs). */
+  /** Our IDs and provider references that must stay out of the export (ours, not theirs). */
   internal: string[];
 }
 
@@ -90,6 +90,11 @@ async function seedBusiness(label: string): Promise<Seeded> {
   const transcriptWords = `marrowfield ceiling ${label}`;
   const recordingRef = `https://api.twilio.com/2010-04-01/Accounts/AC0/Recordings/RE${hex()}`;
   const agentId = `agent_${hex()}`;
+  const authSubject = `sub_${randomUUID()}`;
+  const paymentEventId = `EV${hex()}`;
+  const paymentRef = `PM${hex()}`;
+  const billingEmailRef = `ref_${hex()}`;
+  const billingEmailProviderRef = `email_${hex()}`;
 
   const client = await owner.connect();
   let userId = "";
@@ -99,7 +104,7 @@ async function seedBusiness(label: string): Promise<Seeded> {
     userId = (
       await client.query<{ id: string }>(
         "INSERT INTO users (auth_subject, email, role) VALUES ($1, $2, 'owner') RETURNING id",
-        [`sub_${randomUUID()}`, ownerEmail],
+        [authSubject, ownerEmail],
       )
     ).rows[0]!.id;
     const write: Record<TenantTable, () => Promise<unknown>> = {
@@ -219,7 +224,7 @@ async function seedBusiness(label: string): Promise<Seeded> {
         client.query(
           `INSERT INTO payment_events (event_id, tenant_id, resource_type, action, resource_ref)
            VALUES ($1, $2, 'payments', 'confirmed', $3)`,
-          [`EV${hex()}`, tenantId, `PM${hex()}`],
+          [paymentEventId, tenantId, paymentRef],
         ),
       billing_charges: () =>
         client.query(
@@ -233,7 +238,7 @@ async function seedBusiness(label: string): Promise<Seeded> {
         client.query(
           `INSERT INTO billing_emails (tenant_id, kind, ref, status, provider_ref)
            VALUES ($1, 'receipt', $2, 'sent', $3)`,
-          [tenantId, `ref_${hex()}`, `email_${hex()}`],
+          [tenantId, billingEmailRef, billingEmailProviderRef],
         ),
       tenant_suspensions: () =>
         client.query(
@@ -266,7 +271,18 @@ async function seedBusiness(label: string): Promise<Seeded> {
       summaryWords,
       transcriptWords,
     ],
-    internal: [recordingRef, agentId],
+    // Our IDs and the providers' references, including the person's login subject and the
+    // references on the payment events and billing emails the export now carries.
+    internal: [
+      recordingRef,
+      agentId,
+      userId,
+      authSubject,
+      paymentEventId,
+      paymentRef,
+      billingEmailRef,
+      billingEmailProviderRef,
+    ],
   };
 }
 
@@ -424,18 +440,17 @@ describe("the data export (BUILD_PLAN Step 13)", () => {
     offboarding_messages: "offboardingMessages",
     billing_charges: "billingCharges",
     payment_mandates: "directDebits",
+    // Phil's answer to the open questions (2026-11-11): these are about the business, so the
+    // export carries them. The people by email and role only (through tenant_members()).
+    tenant_memberships: "peopleWithAccess",
+    payment_events: "paymentEvents",
+    billing_emails: "billingEmails",
+    tenant_suspensions: "suspensions",
   };
-  /**
-   * Left out on purpose, and why. The last four are open questions for Phil (reported with
-   * this file): they're about the business, but the export doesn't carry them today.
-   */
+  /** Left out on purpose, and why. */
   const NOT_EXPORTED: Partial<Record<TenantTable, string>> = {
     call_costs: "what each call cost us to serve: our records, not theirs",
     signup_links: "an internal record of the link that created the business",
-    tenant_memberships: "open question: who can log in (the owner's own email) isn't in it",
-    payment_events: "open question: the payment provider's event log for the business",
-    billing_emails: "open question: which billing emails went to the business",
-    tenant_suspensions: "open question: when the business was suspended",
   };
 
   let a: Seeded;
@@ -473,6 +488,41 @@ describe("the data export (BUILD_PLAN Step 13)", () => {
     // And it is the business's own: its caller and its summary are there.
     expect(text).toContain(a.personal[1]);
     expect(text).toContain(a.personal[8]);
+  });
+
+  it("names the people with access by email and role only: no IDs, no login subjects", async () => {
+    const people = (await exportTenant(app, a.tenantId)).peopleWithAccess as Record<
+      string,
+      unknown
+    >[];
+    expect(people).toHaveLength(1);
+    expect(Object.keys(people[0]!).sort()).toEqual(["added_at", "email", "role"]);
+    expect(people[0]).toMatchObject({ email: a.personal[3], role: "owner" });
+    expect(people[0]!["added_at"]).toBeInstanceOf(Date);
+  });
+
+  it("answers the people lookup only for the business the transaction is set to", async () => {
+    // tenant_members() runs as the owner, past row-level security, so it checks the business
+    // itself: asked about another one, or with none set, it has nothing to say.
+    const asked = await withTenant(app, a.tenantId, async (client) => ({
+      own: (await client.query("SELECT email FROM tenant_members($1)", [a.tenantId])).rowCount,
+      other: (await client.query("SELECT email FROM tenant_members($1)", [b.tenantId])).rowCount,
+    }));
+    expect(asked).toEqual({ own: 1, other: 0 });
+    expect((await app.query("SELECT email FROM tenant_members($1)", [a.tenantId])).rowCount).toBe(
+      0,
+    );
+  });
+
+  it("gives the newly exported tables a CSV each, holding the same rows as the file", async () => {
+    for (const table of ["people", "payment-events", "billing-emails", "suspensions"] as const) {
+      const lines = (await exportTenantCsv(app, a.tenantId, table)).split("\r\n").filter(Boolean);
+      expect(lines, table).toHaveLength(2); // the header and the business's one row
+    }
+    const people = await exportTenantCsv(app, a.tenantId, "people");
+    expect(people).toContain(a.personal[3]);
+    expect(people).not.toContain(b.personal[3]);
+    expect(people).not.toContain(a.userId);
   });
 
   it("exports nothing for a business ID that isn't one", async () => {

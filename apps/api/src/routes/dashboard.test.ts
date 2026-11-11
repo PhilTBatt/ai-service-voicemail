@@ -1648,6 +1648,58 @@ describe("billing for the admin (Step 12)", () => {
     expect(payments.retried.filter((ref) => ref === paymentRef)).toHaveLength(1);
   });
 
+  it("collects a cancelled payment again as a new one, only while the business has a Direct Debit", async () => {
+    const paymentRef = `PM${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+    const { tenant, chargeId } = await chargedBusiness("cancelled", paymentRef);
+    const listed = async () =>
+      (await json<AdminBillingView>(get("/admin/billing", tokens.admin))).attention.find(
+        (charge) => charge.chargeId === chargeId,
+      );
+    const collect = () =>
+      send("POST", `/admin/charges/${chargeId}/collect-again`, {}, tokens.admin);
+
+    // No Direct Debit: no button, and pressing anyway is refused in plain words.
+    expect((await listed())?.canCollectAgain).toBe(false);
+    const refused = await collect();
+    expect(refused.status).toBe(409);
+    expect(((await refused.json()) as { error: string }).error).toMatch(
+      /no active Direct Debit to collect a new one from/,
+    );
+    const made = () => payments.payments.filter((p) => p.metadata["tenantId"] === tenant);
+    expect(made()).toEqual([]);
+
+    // With one, the button is offered, and a new payment is made for the same month.
+    const mandateRef = `MD${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+    await withTenant(app, tenant, (client) =>
+      client.query(
+        `INSERT INTO payment_mandates (tenant_id, setup_ref, authorisation_url, expires_at, mandate_ref, status, activated_at)
+         VALUES ($1, $2, 'https://pay.fake.invalid', now() + interval '7 days', $3, 'active', now())`,
+        [tenant, `BRQ${randomUUID()}`, mandateRef],
+      ),
+    );
+    expect((await listed())?.canCollectAgain).toBe(true);
+    const collected = await collect();
+    expect(collected.status).toBe(200);
+    expect(await collected.json()).toEqual({ status: "pending" });
+    expect(made()).toEqual([
+      expect.objectContaining({
+        mandateRef,
+        amountPence: 9900,
+        idempotencyKey: `collect-again:${chargeId}:2`,
+      }),
+    ]);
+    expect(payments.retried).not.toContain(paymentRef);
+    const { rows } = await admin.query(
+      "SELECT status, payment_ref FROM billing_charges WHERE id = $1",
+      [chargeId],
+    );
+    expect(rows).toEqual([{ status: "pending", payment_ref: made()[0]!.paymentRef }]);
+    // On its way now: off the list, and a second press makes nothing more.
+    expect(await listed()).toBeUndefined();
+    expect((await collect()).status).toBe(409);
+    expect(made()).toHaveLength(1);
+  });
+
   it("puts each month's charge in the business's own data download", async () => {
     const { tenant } = await chargedBusiness("paid_out", "PM_DOWNLOAD");
     const owner = await personFor(tenant);

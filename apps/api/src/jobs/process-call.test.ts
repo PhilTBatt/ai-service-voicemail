@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type pg from "pg";
 import { afterAll, describe, expect, it, vi } from "vitest";
-import { EXTRACTION_FAILED_SUMMARY } from "../core/extraction.ts";
+import { EMPTY_TRANSCRIPT_SUMMARY, EXTRACTION_FAILED_SUMMARY } from "../core/extraction.ts";
 import { gasScript } from "../core/scripts.ts";
 import { assignPhoneNumber, createAdminPool, createTenant } from "../db/cross-tenant.ts";
 import { createPool } from "../db/pool.ts";
@@ -390,6 +390,70 @@ describe("runProcessCall", () => {
       await runProcessCall({ pool: app, llm }, { tenantId, callId, providerCallId: "x" }),
     ).toBe("no-transcript");
     expect(llm.requests).toHaveLength(0);
+  });
+
+  // An agent call with no words in it (the caller rang off at once, or the platform sent no
+  // transcript) used to stop here with no text or email at all.
+  it.each([
+    ["an empty transcript", ""],
+    ["turns with no words in them", "agent: \ncaller:  "],
+  ])(
+    "still sends the text and email for %s, without asking the LLM, once",
+    async (_what, transcript) => {
+      const { tenantId, callId } = await makeCall({ transcript });
+      const llm = new FakeLlmProvider();
+      const enqueueNotifications = vi.fn(() => Promise.resolve());
+      expect(
+        await runProcessCall(
+          { pool: app, llm, enqueueNotifications },
+          { tenantId, callId, providerCallId: "x" },
+        ),
+      ).toBe("empty-transcript");
+      expect(llm.requests).toHaveLength(0);
+      expect(await callRow(tenantId, callId)).toMatchObject({
+        summary: EMPTY_TRANSCRIPT_SUMMARY,
+        urgency: null,
+        flags: [],
+        costs: [], // no LLM, so no tokens
+      });
+      expect(enqueueNotifications).toHaveBeenCalledWith(expect.anything(), {
+        tenantId,
+        callId,
+        urgency: null,
+      });
+
+      // Redelivered: nothing more.
+      expect(
+        await runProcessCall(
+          { pool: app, llm, enqueueNotifications },
+          { tenantId, callId, providerCallId: "x" },
+        ),
+      ).toBe("already-processed");
+      expect(enqueueNotifications).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("keeps a mid-call emergency with an empty transcript an emergency", async () => {
+    const { tenantId, callId } = await makeCall({ transcript: "" });
+    await admin.query(
+      "UPDATE calls SET urgency = 'emergency', flags = ARRAY['emergency:gas'] WHERE id = $1",
+      [callId],
+    );
+    const enqueueNotifications = vi.fn(() => Promise.resolve());
+    await runProcessCall(
+      { pool: app, llm: new FakeLlmProvider(), enqueueNotifications },
+      { tenantId, callId, providerCallId: "x" },
+    );
+    expect(await callRow(tenantId, callId)).toMatchObject({
+      summary: EMPTY_TRANSCRIPT_SUMMARY,
+      urgency: "emergency",
+      flags: ["emergency:gas"],
+    });
+    expect(enqueueNotifications).toHaveBeenCalledWith(expect.anything(), {
+      tenantId,
+      callId,
+      urgency: "emergency",
+    });
   });
 });
 

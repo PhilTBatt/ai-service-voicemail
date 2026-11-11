@@ -1,20 +1,39 @@
-// What an admin can do about a business's billing (BUILD_PLAN Step 12): collect a failed
-// payment again, and suspend or resume the business. Never automatic: decision 019 and the
-// plan's "no automatic cut-off". Each runs in the business's own transaction, audited by name.
+// What an admin can do about a business's billing (BUILD_PLAN Step 12): collect a failed or
+// cancelled payment again, and suspend or resume the business. Never automatic: decision 019
+// and the plan's "no automatic cut-off". Each runs in the business's own transaction, audited
+// by name.
 import type { TenantStatus } from "@callmate/shared";
 import type pg from "pg";
-import type { PaymentsProvider } from "../providers/payments.ts";
+import { chargeStatusOf, paymentDescription } from "../jobs/charge-periods.ts";
+import { MandateUnusableError, type PaymentsProvider } from "../providers/payments.ts";
+import { activeMandateRef } from "./direct-debit.ts";
 import { withTenant } from "./tenant.ts";
 
 export type CollectAgainResult =
   | { outcome: "collecting"; status: string }
   | { outcome: "not-failed"; status: string }
+  /** A cancelled payment, and no active Direct Debit to make a new one against. */
+  | { outcome: "no-mandate" }
+  /** A cancelled payment, and the provider won't collect from the Direct Debit any more. */
+  | { outcome: "mandate-unusable" }
   | { outcome: "not-found" };
 
+interface CollectableCharge {
+  status: string;
+  payment_ref: string | null;
+  period_start: string;
+  period_end: string;
+  total_pence: number;
+  collection_attempt: number;
+}
+
 /**
- * Asks the provider to collect a failed payment again: the same payment, so its progress
- * comes back through the webhook as before. Only a failed charge with a payment; anything
- * else is refused before the provider is asked.
+ * Collects a month's payment again, by hand only (decision 019: never automatic).
+ * - Failed: the provider's own retry of the same payment, so its progress comes back through
+ *   the webhook as before.
+ * - Cancelled: the provider can't retry one, so a new payment for the same month, against the
+ *   business's Direct Debit now. Refused with none.
+ * Anything else is refused before the provider is asked.
  */
 export async function collectAgain(
   pool: pg.Pool,
@@ -23,18 +42,24 @@ export async function collectAgain(
   chargeId: string,
   actorUserId: string,
 ): Promise<CollectAgainResult> {
-  const charge = await withTenant(
-    pool,
-    tenantId,
-    async (client) =>
-      (
-        await client.query<{ status: string; payment_ref: string | null }>(
-          "SELECT status, payment_ref FROM billing_charges WHERE id = $1",
-          [chargeId],
-        )
-      ).rows[0],
-  );
-  if (!charge) return { outcome: "not-found" };
+  const found = await withTenant(pool, tenantId, async (client) => {
+    const charge = (
+      await client.query<CollectableCharge>(
+        `SELECT status, payment_ref, period_start::text, period_end::text, total_pence,
+                collection_attempt
+         FROM billing_charges WHERE id = $1`,
+        [chargeId],
+      )
+    ).rows[0];
+    return charge && { charge, mandateRef: await activeMandateRef(client, tenantId) };
+  });
+  if (!found) return { outcome: "not-found" };
+  const { charge, mandateRef } = found;
+  if (charge.status === "cancelled" && charge.payment_ref) {
+    return collectCancelledAgain(pool, payments, { tenantId, chargeId, actorUserId }, charge, {
+      mandateRef,
+    });
+  }
   if (charge.status !== "failed" || !charge.payment_ref) {
     return { outcome: "not-failed", status: charge.status };
   }
@@ -51,6 +76,59 @@ export async function collectAgain(
     );
   });
   return { outcome: "collecting", status: "pending" };
+}
+
+/**
+ * A new payment for a month whose payment was cancelled. Its idempotency key names the charge
+ * and which payment for the month this is (the charge's attempt, plus one), so a double-click,
+ * or a retry after the answer was lost, gets the same new payment back, never a second. The
+ * charge only moves on to it while it's still cancelled on the attempt read, so two clicks at
+ * once record it once. The next Collect again, if this one is cancelled too, is a new attempt.
+ */
+async function collectCancelledAgain(
+  pool: pg.Pool,
+  payments: PaymentsProvider,
+  { tenantId, chargeId, actorUserId }: { tenantId: string; chargeId: string; actorUserId: string },
+  charge: CollectableCharge,
+  { mandateRef }: { mandateRef: string | null },
+): Promise<CollectAgainResult> {
+  if (!mandateRef) return { outcome: "no-mandate" };
+  const attempt = charge.collection_attempt + 1;
+  let receipt;
+  try {
+    receipt = await payments.createPayment({
+      mandateRef,
+      amountPence: charge.total_pence,
+      description: paymentDescription(charge.period_start, charge.period_end),
+      metadata: { tenantId, periodStart: charge.period_start },
+      idempotencyKey: `collect-again:${chargeId}:${attempt}`,
+    });
+  } catch (error) {
+    // The Direct Debit has ended at the provider, and its webhook saying so hasn't come yet
+    // (or was lost). Refused, with nothing recorded; the business needs a new Direct Debit.
+    if (error instanceof MandateUnusableError) return { outcome: "mandate-unusable" };
+    throw error;
+  }
+  const status = chargeStatusOf(receipt.status);
+  await withTenant(pool, tenantId, async (client) => {
+    // A new payment, with its own history: the old one's last event time doesn't apply.
+    const { rowCount } = await client.query(
+      `UPDATE billing_charges SET status = $2, payment_ref = $3, charge_date = $4,
+              failure_reason = NULL, last_event_at = NULL, collection_attempt = $5
+       WHERE id = $1 AND status = 'cancelled' AND collection_attempt = $5::int - 1`,
+      [chargeId, status, receipt.paymentRef, receipt.chargeDate, attempt],
+    );
+    if (rowCount !== 1) return;
+    await client.query(
+      "INSERT INTO audit_log (tenant_id, actor_user_id, action, details) VALUES ($1, $2, 'billing.collect-again', $3)",
+      [
+        tenantId,
+        actorUserId,
+        { chargeId, newPayment: receipt.paymentRef, cancelledPayment: charge.payment_ref, attempt },
+      ],
+    );
+  });
+  return { outcome: "collecting", status };
 }
 
 export type SuspensionResult =

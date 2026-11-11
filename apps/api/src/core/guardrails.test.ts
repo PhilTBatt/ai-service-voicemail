@@ -50,6 +50,14 @@ describe("scanAgentTurns", () => {
     ).toEqual([]);
   });
 
+  // Read as plain text before matching, but quoted as said.
+  it.each(["It's ￡50 for the call-out.", "That'll be ５０ quid.", "It'll cost about ￡９０."])(
+    "flags a price in full-width characters: %s",
+    (text) => {
+      expect(scanAgentTurns([agent(text)])).toEqual([{ rule: "price", excerpt: text }]);
+    },
+  );
+
   it("reports each offending sentence once, by rule", () => {
     const hits = scanAgentTurns([
       agent("Sure. It'll cost about £90. He'll be there tomorrow at 9. Anything else?"),
@@ -126,6 +134,7 @@ describe("scanAgentTurns", () => {
       "Switch it off at the wall to be safe.",
       "I'd get everyone out of the house.",
       "You should call 999 if you're worried.",
+      "Turn off all the electrics at the fuse box.",
     ])("flags advice in the agent's own words: %s", (text) => {
       expect(scanAgentTurns([agent(text)])).toEqual([{ rule: "safety", excerpt: text }]);
     });

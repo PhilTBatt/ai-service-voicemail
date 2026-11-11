@@ -163,6 +163,35 @@ describe("callPageHtml with missing parts", () => {
   });
 });
 
+// Phil's decision (2026-11-11): the pipeline's own flags are for the admin's review queue. On
+// this page they showed the tradesperson "guardrail:price" and "judge:failed" as badges.
+describe("callPageHtml and the call's flags", () => {
+  it("shows the summary's notes as plain badges and none of the pipeline's own", () => {
+    const html = page({
+      flags: [
+        "mentioned gas smell",
+        "guardrail:price",
+        "guardrail:safety",
+        "judge:failed",
+        "extraction_failed",
+        "caller abusive",
+      ],
+    });
+    expect(html).toContain(
+      '<span class="badge ">New enquiry</span><span class="badge">mentioned gas smell</span><span class="badge">caller abusive</span></p>',
+    );
+    for (const internal of ["guardrail:", "judge:", "extraction_failed"]) {
+      expect(html).not.toContain(internal);
+    }
+  });
+
+  it("shows no flag badges at all when the pipeline's are the only ones", () => {
+    expect(page({ flags: ["guardrail:commitment", "extraction_failed"] })).toContain(
+      '<p><span class="badge ">New enquiry</span></p>',
+    );
+  });
+});
+
 describe("the called-back form", () => {
   it("posts handled=true while the call is open", () => {
     const html = page({}, "/c/token/handled");

@@ -113,53 +113,6 @@ const envSchema = z
     // 0 (off) to 1 (every call). Off by default; each check is one more model call.
     JUDGE_SAMPLE_RATE: z.coerce.number().min(0).max(1).default(0),
   })
-  .superRefine((env, ctx) => {
-    // The same address twice would send the dashboard round a loop of redirects. Only when both
-    // parse: zod runs this even after a field failed, and a malformed one is reported as such.
-    if (
-      env.ALTERNATE_BASE_URL !== undefined &&
-      env.PUBLIC_BASE_URL !== undefined &&
-      URL.canParse(env.ALTERNATE_BASE_URL) &&
-      URL.canParse(env.PUBLIC_BASE_URL) &&
-      new URL(env.ALTERNATE_BASE_URL).host === new URL(env.PUBLIC_BASE_URL).host
-    ) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["ALTERNATE_BASE_URL"],
-        message: "must be a different address from PUBLIC_BASE_URL",
-      });
-    }
-    // The two go together: name whichever one is missing.
-    if ((env.VAT_REGISTRATION_NUMBER === undefined) !== (env.VAT_REGISTRATION_FROM === undefined)) {
-      ctx.addIssue({
-        code: "custom",
-        path: [
-          env.VAT_REGISTRATION_NUMBER === undefined
-            ? "VAT_REGISTRATION_NUMBER"
-            : "VAT_REGISTRATION_FROM",
-        ],
-        message: "VAT_REGISTRATION_NUMBER and VAT_REGISTRATION_FROM go together",
-      });
-    }
-    if (env.NODE_ENV !== "production") return;
-    for (const name of [
-      "RETELL_API_KEY",
-      "TWILIO_ACCOUNT_SID",
-      "TWILIO_AUTH_TOKEN",
-      "PUBLIC_BASE_URL",
-      "FALLBACK_VOICEMAIL_URL",
-      "ANTHROPIC_API_KEY",
-      "ADMIN_DATABASE_URL",
-      "TWILIO_SMS_FROM",
-      "SIGNING_SECRET",
-      "POSTMARK_SERVER_TOKEN",
-      "EMAIL_FROM",
-    ] as const) {
-      if (env[name] === undefined) {
-        ctx.addIssue({ code: "custom", path: [name], message: "required in production" });
-      }
-    }
-  })
   .transform((env) => ({
     nodeEnv: env.NODE_ENV,
     port: env.PORT,
@@ -244,20 +197,97 @@ export class ConfigError extends Error {
   }
 }
 
+/** What production can't run without (each one is optional elsewhere). */
+const REQUIRED_IN_PRODUCTION = [
+  "RETELL_API_KEY",
+  "TWILIO_ACCOUNT_SID",
+  "TWILIO_AUTH_TOKEN",
+  "PUBLIC_BASE_URL",
+  "FALLBACK_VOICEMAIL_URL",
+  "ANTHROPIC_API_KEY",
+  "ADMIN_DATABASE_URL",
+  "TWILIO_SMS_FROM",
+  "SIGNING_SECRET",
+  "POSTMARK_SERVER_TOKEN",
+  "EMAIL_FROM",
+] as const;
+
+interface Problem {
+  name: string;
+  message: string;
+}
+
+/**
+ * The rules that span settings. These were a refinement on the schema, but zod skips an
+ * object's refinements once any field has failed at the type level (DATABASE_URL missing, PORT
+ * not a number), so a production start with PORT mistyped reported that alone, and only the next
+ * start said what else was missing. Run on the raw values here, they're checked every time.
+ * `failed` holds the settings the schema already refused, so none is reported twice.
+ */
+function crossSettingProblems(
+  env: Record<string, string | undefined>,
+  failed: ReadonlySet<string>,
+): Problem[] {
+  const problems: Problem[] = [];
+  // The same address twice would send the dashboard round a loop of redirects. Only when both
+  // are themselves valid: a malformed one is reported as such.
+  const alternate = env["ALTERNATE_BASE_URL"];
+  const publicUrl = env["PUBLIC_BASE_URL"];
+  if (
+    alternate !== undefined &&
+    publicUrl !== undefined &&
+    !failed.has("ALTERNATE_BASE_URL") &&
+    !failed.has("PUBLIC_BASE_URL") &&
+    URL.canParse(alternate) &&
+    URL.canParse(publicUrl) &&
+    new URL(alternate).host === new URL(publicUrl).host
+  ) {
+    problems.push({
+      name: "ALTERNATE_BASE_URL",
+      message: "must be a different address from PUBLIC_BASE_URL",
+    });
+  }
+  // The two go together: name whichever one is missing.
+  const vatNumber = env["VAT_REGISTRATION_NUMBER"];
+  if ((vatNumber === undefined) !== (env["VAT_REGISTRATION_FROM"] === undefined)) {
+    problems.push({
+      name: vatNumber === undefined ? "VAT_REGISTRATION_NUMBER" : "VAT_REGISTRATION_FROM",
+      message: "VAT_REGISTRATION_NUMBER and VAT_REGISTRATION_FROM go together",
+    });
+  }
+  // Exactly "production", as the schema takes it: anything else isn't production (and a
+  // mistyped NODE_ENV is reported by the schema).
+  if (env["NODE_ENV"] === "production") {
+    for (const name of REQUIRED_IN_PRODUCTION) {
+      if (env[name] === undefined) problems.push({ name, message: "required in production" });
+    }
+  }
+  return problems;
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv): Config {
   // `KEY=` in a .env file arrives as "", so treat empty values as unset and let defaults apply.
   const present = Object.fromEntries(Object.entries(env).filter(([, value]) => value !== ""));
 
   const result = envSchema.safeParse(present);
-  if (result.success) return result.data;
+  const fieldProblems: Problem[] = result.success
+    ? []
+    : result.error.issues.map((issue) => ({
+        name: String(issue.path[0]),
+        message: issue.message,
+      }));
+  // Every problem at once: the fields' own, and the rules across them, whichever failed.
+  const problems = [
+    ...fieldProblems,
+    ...crossSettingProblems(present, new Set(fieldProblems.map((problem) => problem.name))),
+  ];
+  if (result.success && problems.length === 0) return result.data;
 
-  const problems = result.error.issues.map((issue) => {
-    const name = String(issue.path[0]);
-    return present[name] === undefined
-      ? `${name} is missing`
-      : `${name} is invalid: ${issue.message}`;
-  });
-  throw new ConfigError(problems);
+  throw new ConfigError(
+    problems.map(({ name, message }) =>
+      present[name] === undefined ? `${name} is missing` : `${name} is invalid: ${message}`,
+    ),
+  );
 }
 
 /**

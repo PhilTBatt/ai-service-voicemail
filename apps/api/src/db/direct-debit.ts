@@ -288,27 +288,67 @@ const PAYMENT_PROGRESS: Record<string, number> = {
 };
 const PAYMENT_BAD = new Set(["failed", "cancelled", "charged_back"]);
 
+/**
+ * The provider's payment events that move a charge, and the status each moves it to. The
+ * customer turning down a payment that needed their approval is a failed payment, as the
+ * morning run already records a payment it finds in that state (charge-periods.ts).
+ */
+const PAYMENT_EVENT_STATUS: Record<string, string> = {
+  submitted: "submitted",
+  confirmed: "confirmed",
+  paid_out: "paid_out",
+  failed: "failed",
+  cancelled: "cancelled",
+  charged_back: "charged_back",
+  customer_approval_denied: "failed",
+};
+
+interface PaymentProgress {
+  chargeId: string;
+  periodStart: string;
+  status: string;
+  becameBad: boolean;
+}
+
 /** Moves a charge to what the provider says of its payment, if that's forward. */
 async function recordPaymentProgress(
   client: pg.ClientBase,
+  tenantId: string,
   paymentRef: string,
-  action: string,
-  cause: string | null,
-): Promise<{ chargeId: string; periodStart: string; status: string; becameBad: boolean } | null> {
+  event: PaymentsEvent,
+): Promise<PaymentProgress | null> {
+  const { action, cause, createdAt } = event;
   const resubmitted = action === "resubmission_requested";
-  if (
-    !resubmitted &&
-    (PAYMENT_PROGRESS[action] === undefined || action === "pending" || action === "collecting")
-  ) {
-    return null;
-  }
+  const chargebackReversed = action === "chargeback_cancelled";
+  const moveTo = PAYMENT_EVENT_STATUS[action];
+  if (!resubmitted && !chargebackReversed && moveTo === undefined) return null;
   const charge = (
-    await client.query<{ id: string; status: string; period_start: string }>(
-      "SELECT id, status, period_start::text FROM billing_charges WHERE payment_ref = $1 FOR UPDATE",
+    await client.query<{
+      id: string;
+      status: string;
+      period_start: string;
+      last_event_at: Date | null;
+    }>(
+      `SELECT id, status, period_start::text, last_event_at FROM billing_charges
+       WHERE payment_ref = $1 FOR UPDATE`,
       [paymentRef],
     )
   ).rows[0];
   if (!charge) return null;
+  // Older than the last event applied: history, whenever it arrives. A delivery that failed is
+  // sent again later, after events that happened since, so without this a failure redelivered
+  // late would undo the payment's success after Collect again. Ordered by the provider's own
+  // time on each event, never by when it reached us. Events at the same moment fall through to
+  // the order of PAYMENT_PROGRESS.
+  if (charge.last_event_at !== null && createdAt.getTime() < charge.last_event_at.getTime()) {
+    return null;
+  }
+  const progress = (status: string, becameBad = false): PaymentProgress => ({
+    chargeId: charge.id,
+    periodStart: charge.period_start,
+    status,
+    becameBad,
+  });
   // A failed payment collected again (from the provider's dashboard, decision 019) keeps its
   // ID and starts over: back to pending, so its progress from here is recorded, and a later
   // failure is said again. Only a payment that ended badly starts over: the event can arrive
@@ -317,31 +357,50 @@ async function recordPaymentProgress(
   if (resubmitted) {
     if (!PAYMENT_BAD.has(charge.status)) return null;
     await client.query(
-      "UPDATE billing_charges SET status = 'pending', failure_reason = NULL WHERE id = $1",
-      [charge.id],
+      `UPDATE billing_charges SET status = 'pending', failure_reason = NULL, last_event_at = $2
+       WHERE id = $1`,
+      [charge.id, createdAt],
     );
-    return {
-      chargeId: charge.id,
-      periodStart: charge.period_start,
-      status: "pending",
-      becameBad: false,
-    };
+    return progress("pending");
   }
+  // The chargeback was reversed (GoCardless: "The chargeback for this payment was reversed"):
+  // the money is Brockersby's again, so the month is paid again. Back to paid out if this
+  // payment had been paid out before the chargeback (GoCardless's paid_out event is on
+  // record), else confirmed: collected, not yet paid out. GoCardless's docs don't say which
+  // status the payment itself takes. Nothing is said to the business; the admin can see it in
+  // the audit log.
+  if (chargebackReversed) {
+    if (charge.status !== "charged_back") return null;
+    const paidOutBefore = (
+      await client.query<{ paid_out: boolean }>(
+        `SELECT EXISTS (SELECT 1 FROM payment_events
+                        WHERE tenant_id = $1 AND resource_ref = $2 AND action = 'paid_out') AS paid_out`,
+        [tenantId, paymentRef],
+      )
+    ).rows[0]!.paid_out;
+    const status = paidOutBefore ? "paid_out" : "confirmed";
+    await client.query(
+      `UPDATE billing_charges SET status = $2, failure_reason = NULL, last_event_at = $3
+       WHERE id = $1`,
+      [charge.id, status, createdAt],
+    );
+    await client.query(
+      "INSERT INTO audit_log (tenant_id, actor_user_id, action, details) VALUES ($1, NULL, 'billing.chargeback-cancelled', $2)",
+      [tenantId, { chargeId: charge.id, paymentRef, status }],
+    );
+    return progress(status);
+  }
+  const to = moveTo!;
   const was = PAYMENT_PROGRESS[charge.status] ?? 0;
-  const now = PAYMENT_PROGRESS[action] ?? 0;
-  if (now < was || charge.status === action) return null;
+  const now = PAYMENT_PROGRESS[to] ?? 0;
+  if (now < was || charge.status === to) return null;
   await client.query(
-    `UPDATE billing_charges SET status = $2,
+    `UPDATE billing_charges SET status = $2, last_event_at = $5,
             failure_reason = CASE WHEN $3::boolean THEN $4 ELSE failure_reason END
      WHERE id = $1`,
-    [charge.id, action, PAYMENT_BAD.has(action), cause],
+    [charge.id, to, PAYMENT_BAD.has(to), cause, createdAt],
   );
-  return {
-    chargeId: charge.id,
-    periodStart: charge.period_start,
-    status: action,
-    becameBad: PAYMENT_BAD.has(action) && !PAYMENT_BAD.has(charge.status),
-  };
+  return progress(to, PAYMENT_BAD.has(to) && !PAYMENT_BAD.has(charge.status));
 }
 
 export type EventOutcome =
@@ -450,16 +509,19 @@ export async function handlePaymentsEvent(
       }
     }
     if (event.resourceType === "payments" && event.links.payment) {
-      const progress = await recordPaymentProgress(
-        client,
-        event.links.payment,
-        event.action,
-        event.cause,
-      );
+      const progress = await recordPaymentProgress(client, found, event.links.payment, event);
       if (progress) {
         if (progress.becameBad) {
+          // One email per failure: keyed by this event, not just the charge, so a month that
+          // fails again after Collect again is told again. The event is handled once (above),
+          // so a redelivery doesn't queue it twice.
           await enqueueBillingEmail?.(
-            { tenantId: found, kind: "payment_failed", ref: progress.chargeId },
+            {
+              tenantId: found,
+              kind: "payment_failed",
+              ref: `${progress.chargeId}:${event.id}`,
+              chargeId: progress.chargeId,
+            },
             client,
           );
           return {

@@ -4,7 +4,7 @@
 // first, and caller text never reaches the HTML unescaped.
 import { randomUUID } from "node:crypto";
 import { afterAll, describe, expect, it, vi } from "vitest";
-import { EXTRACTION_FAILED_SUMMARY } from "../core/extraction.ts";
+import { EMPTY_TRANSCRIPT_SUMMARY, EXTRACTION_FAILED_SUMMARY } from "../core/extraction.ts";
 import { parseAllowlist } from "../core/outbound-allowlist.ts";
 import { DANGER_SCRIPT, GAS_EMERGENCY_NUMBER, gasScript } from "../core/scripts.ts";
 import { verifyCallLink } from "../core/signed-links.ts";
@@ -166,6 +166,36 @@ describe("the post-call pipeline, delivered twice", () => {
     expect(sms.sent[1]!.body.split("\n")[0]).toBe("EMERGENCY: 07700 900123");
     expect(email.sent).toHaveLength(1);
     expect(alert).toHaveBeenCalledWith("call-extraction-failed", expect.anything());
+  });
+
+  // These used to get nothing at all: the tradesperson never heard someone had rung.
+  it("tells the tradesperson about a call with an empty transcript, once, without the LLM", async () => {
+    const call = await makeCall("");
+    const llm = new FakeLlmProvider();
+    const { outcome, sms, email, notifications } = await runPipeline(call, llm);
+    expect(outcome).toBe("empty-transcript");
+    expect(llm.requests).toHaveLength(0);
+    expect(sms.sent.map((text) => text.to)).toEqual([MOBILE]);
+    expect(sms.sent[0]!.body.split("\n").slice(0, 3)).toEqual([
+      "Call: 07700 900123",
+      EMPTY_TRANSCRIPT_SUMMARY,
+      `Call back: tel:${CALLER}`,
+    ]);
+    expect(email.sent).toHaveLength(1);
+    expect(email.sent[0]!.subject).toBe(
+      `Call: Unknown caller, 07700 900123 - ${EMPTY_TRANSCRIPT_SUMMARY}`,
+    );
+    expect(email.sent[0]!.text).toContain("Transcript\n(none)");
+    expect(notifications).toEqual([
+      { channel: "email", status: "sent" },
+      { channel: "sms", status: "sent" },
+    ]);
+  });
+
+  it("says 'number withheld' for an empty transcript from a withheld number", async () => {
+    const { sms } = await runPipeline(await makeCall("", null), new FakeLlmProvider());
+    expect(sms.sent[0]!.body.split("\n")[0]).toBe("Call: number withheld");
+    expect(sms.sent[0]!.body).not.toContain("tel:");
   });
 
   it("escapes whatever the LLM wrote in the email, and the text stays GSM-7 with a working link", async () => {

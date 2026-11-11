@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { givesSafetyAdvice, mentionsPrice, promisesTime } from "./guardrail-patterns.ts";
+import {
+  givesSafetyAdvice,
+  guardrailText,
+  mentionsPrice,
+  promisesTime,
+} from "./guardrail-patterns.ts";
 
 // Everyday British phrasing the agent (or a profile) might use. Each list was checked against
 // the patterns as they were before: the "now caught" ones used to slip through.
@@ -23,6 +28,12 @@ describe("mentionsPrice", () => {
     "Roughly two grand for the lot.",
     "Bathrooms start from about 8k.",
     "There's no call-out charge.",
+    // Full-width look-alikes, which used to slip through (2026-11-11)
+    "It's ￡50 for the call-out.",
+    "It's ￡５０ for the call-out.",
+    "It will cost around １２０ pounds.",
+    "Our rates start at ４５ an hour.",
+    "The call-out fee is ６０.",
   ])("flags %j", (text) => {
     expect(mentionsPrice(text)).toBe(true);
   });
@@ -108,6 +119,20 @@ describe("givesSafetyAdvice", () => {
     "Get out of the house now.",
     "Don't use the light switches.",
     "Call the emergency services.",
+    // Missed until 2026-11-11: "all the" before the supply, as with the doors and windows, and
+    // the same advice behind a look-alike or an invisible character
+    "Turn off all the electrics.",
+    "Turn off all of the power at the fuse box.",
+    "Turn all the electrics off.",
+    "Turn everything off at the mains.",
+    "Switch off all the electrics until he's there.",
+    "Switch all the power off.",
+    "Turn off some of the electrics.",
+    "Turn the stopcock off.",
+    "Turn off all the elec\u00ADtrics.",
+    "Turn\u200B off the gas.",
+    "Ｔｕｒｎ ｏｆｆ ｔｈｅ ｇａｓ.",
+    "Turn  off   the\nwater.",
   ])("flags %j", (text) => {
     expect(givesSafetyAdvice(text)).toBe(true);
   });
@@ -132,7 +157,24 @@ describe("givesSafetyAdvice", () => {
     "We get doors open fast, without damage.",
     "Can you get doors open without damage?",
     "We switch the power off while we work.",
+    // The wider electrics wording, said of the job or declined
+    "We turn off all the electrics while we work.",
+    "He'll switch off all the power when he gets there.",
+    "I can't advise you to turn off all the electrics.",
+    "Were you able to turn all the power off?",
+    "Ant will tell you whether to turn everything off.",
+    "All the electrics are tested and certified.",
+    "Full rewires and consumer unit upgrades.",
   ])("leaves %j alone", (text) => {
     expect(givesSafetyAdvice(text)).toBe(false);
+  });
+});
+
+describe("guardrailText", () => {
+  it("reads look-alikes and invisible characters as the plain text the patterns are written for", () => {
+    expect(guardrailText("￡５０")).toBe("£50");
+    expect(guardrailText("Ｈｅ’ll\u00A0come")).toBe("He'll come");
+    expect(guardrailText("tu\u200Brn of\u00ADf")).toBe("turn off");
+    expect(guardrailText("a \t\n\r b")).toBe("a b");
   });
 });

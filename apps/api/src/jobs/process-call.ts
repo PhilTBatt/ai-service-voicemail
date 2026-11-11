@@ -10,6 +10,7 @@ import {
 } from "../core/spoken-scripts.ts";
 import { raiseAlert, type AlertFn } from "../alerts.ts";
 import {
+  EMPTY_TRANSCRIPT_SUMMARY,
   EXTRACTION_FAILED_SUMMARY,
   buildExtractionPrompt,
   callExtractionSchema,
@@ -64,7 +65,7 @@ function isPermanentLlmError(error: unknown): boolean {
 }
 
 export type ProcessCallOutcome =
-  "extracted" | "extraction-failed" | "already-processed" | "no-transcript";
+  "extracted" | "extraction-failed" | "already-processed" | "no-transcript" | "empty-transcript";
 
 export async function runProcessCall(
   {
@@ -109,13 +110,37 @@ export async function runProcessCall(
     logger.info("Call already processed", { tenantId, callId });
     return "already-processed";
   }
-  if (!loaded.call.transcript || loaded.call.via_fallback) {
+  if (loaded.call.via_fallback) {
     // Fallback voicemails have a recording, not a transcript (Step 5's retention and Step 6
     // handle them); there's nothing to extract from.
     return "no-transcript";
   }
 
-  const transcript = parseTranscript(loaded.call.transcript);
+  const transcript = parseTranscript(loaded.call.transcript ?? "");
+  if (transcript.every((turn) => turn.text.trim() === "")) {
+    // An agent call with no words in it: the caller rang off straight away, or the platform
+    // sent no transcript. Nothing for the LLM to summarise, but the tradesperson always hears
+    // about a call: the text and email still go, saying who rang if the number is known, as
+    // they do when the LLM is down. These calls used to get nothing at all.
+    const stored = await withTenant(pool, tenantId, async (client) => {
+      // Only while there's no summary, so a second run that got this far still sends once.
+      const { rowCount } = await client.query(
+        "UPDATE calls SET summary = $2 WHERE id = $1 AND summary IS NULL",
+        [callId, EMPTY_TRANSCRIPT_SUMMARY],
+      );
+      if (rowCount === 0) return false;
+      // A mid-call emergency stays one (db/calls.ts); otherwise there's nothing to judge it by.
+      await enqueueNotifications?.(client, {
+        tenantId,
+        callId,
+        urgency: loaded.call.urgency === "emergency" ? "emergency" : null,
+      });
+      return true;
+    });
+    if (!stored) return "already-processed";
+    logger.info("Empty transcript: messages queued without a summary", { tenantId, callId });
+    return "empty-transcript";
+  }
 
   // The agent must never quote prices or commit to times. A match flags the call for
   // review; the excerpts stay in the tenant's row, never in the alert.

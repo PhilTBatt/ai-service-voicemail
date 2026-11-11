@@ -96,6 +96,30 @@ export async function requestCancellation(
   });
 }
 
+/**
+ * Who can log in to the business: each person's email and role, and when they were given
+ * access. The app role can't read users, so an owner-run function answers, and only for the
+ * business the transaction is set to (migration 20261111140000). Our user IDs and the login
+ * provider's subjects stay out.
+ */
+const PEOPLE_SQL = "SELECT email, role, added_at FROM tenant_members($1)";
+/**
+ * The payment provider's events about the business: what happened and why, without the
+ * provider's event and resource references, which are ours to look things up by (the Direct
+ * Debits leave theirs out for the same reason).
+ */
+const PAYMENT_EVENTS_SQL = `SELECT received_at, resource_type, action, cause
+  FROM payment_events WHERE tenant_id = $1 ORDER BY received_at`;
+/**
+ * Each billing email we sent the business and what became of it. The address is the business's
+ * own, already in its details; the references the row keys on are ours.
+ */
+const BILLING_EMAILS_SQL = `SELECT created_at, kind, status
+  FROM billing_emails WHERE tenant_id = $1 ORDER BY created_at`;
+/** Each time the business was suspended, and when it was resumed (empty while it still is). */
+const SUSPENSIONS_SQL = `SELECT started_at, ended_at
+  FROM tenant_suspensions WHERE tenant_id = $1 ORDER BY started_at`;
+
 /** Everything we hold for one tenant, for the data export. RLS guarantees it's only theirs. */
 export async function exportTenant(pool: pg.Pool, tenantId: string) {
   return withTenant(pool, tenantId, async (client) => {
@@ -166,6 +190,12 @@ export async function exportTenant(pool: pg.Pool, tenantId: string) {
        FROM payment_mandates WHERE tenant_id = $1 ORDER BY created_at`,
       [tenantId],
     );
+    // The rest of what we hold about the business (Phil, 2026-11-11). The SQL lives in one
+    // place, shared with the CSV tables below, so the two can't drift apart.
+    const people = await client.query(PEOPLE_SQL, [tenantId]);
+    const paymentEvents = await client.query(PAYMENT_EVENTS_SQL, [tenantId]);
+    const billingEmails = await client.query(BILLING_EMAILS_SQL, [tenantId]);
+    const suspensions = await client.query(SUSPENSIONS_SQL, [tenantId]);
     return {
       exportedAt: new Date().toISOString(),
       tenant: (tenant.rows[0] as Record<string, unknown> | undefined) ?? null,
@@ -181,6 +211,10 @@ export async function exportTenant(pool: pg.Pool, tenantId: string) {
       offboardingMessages: leavingMessages.rows,
       billingCharges: charges.rows,
       directDebits: directDebits.rows,
+      peopleWithAccess: people.rows,
+      paymentEvents: paymentEvents.rows,
+      billingEmails: billingEmails.rows,
+      suspensions: suspensions.rows,
     };
   });
 }
@@ -277,6 +311,14 @@ const CSV_QUERIES: Record<CsvExport, { header: string[]; sql: string }> = {
                  status, to_char(charge_date, 'YYYY-MM-DD')
           FROM billing_charges WHERE tenant_id = $1 ORDER BY period_start`,
   },
+  // The same queries the JSON export runs, so each table holds exactly what the file does.
+  people: { header: ["email", "role", "added_at"], sql: PEOPLE_SQL },
+  "payment-events": {
+    header: ["at", "resource", "action", "cause"],
+    sql: PAYMENT_EVENTS_SQL,
+  },
+  "billing-emails": { header: ["at", "kind", "status"], sql: BILLING_EMAILS_SQL },
+  suspensions: { header: ["started_at", "ended_at"], sql: SUSPENSIONS_SQL },
 };
 
 /** One table of the business's data as CSV. Row-level security keeps it to that business. */

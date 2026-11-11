@@ -1,9 +1,10 @@
 // What an admin can do about a business's billing (db/billing-actions.ts): collect a failed
-// payment again, suspend and resume, and take back a cancellation. Never automatic, always
+// or cancelled payment again, suspend and resume, and take back a cancellation. Never automatic, always
 // audited, and each one leaves the suspension record billing reads in the right shape.
 import { randomUUID } from "node:crypto";
 import { afterAll, describe, expect, it } from "vitest";
 import { FakePaymentsProvider } from "../providers/payments.fake.ts";
+import { MandateUnusableError } from "../providers/payments.ts";
 import { TEST_ADMIN_DATABASE_URL, TEST_DATABASE_URL } from "../testing/databases.ts";
 import { collectAgain, setSuspended, undoCancellation } from "./billing-actions.ts";
 import { createAdminPool, createTenant } from "./cross-tenant.ts";
@@ -109,12 +110,12 @@ describe("collectAgain", () => {
     expect(payments.retried).toHaveLength(1);
   });
 
+  // Cancelled is collected again too, as a new payment (its own tests below).
   it.each([
     "pending",
     "submitted",
     "confirmed",
     "paid_out",
-    "cancelled",
     "charged_back",
     "nothing_due",
     "below_minimum",
@@ -157,6 +158,179 @@ describe("collectAgain", () => {
     });
     expect(payments.retried).toEqual([]);
     expect((await chargeRow(id))?.status).toBe("failed");
+  });
+});
+
+describe("collectAgain for a cancelled payment", () => {
+  /** An active Direct Debit, as the app writes one. */
+  async function giveMandate(tenantId: string) {
+    const mandateRef = `MD${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+    await withTenant(app, tenantId, (client) =>
+      client.query(
+        `INSERT INTO payment_mandates (tenant_id, setup_ref, authorisation_url, expires_at, mandate_ref, status, activated_at)
+         VALUES ($1, $2, 'https://pay.fake.invalid', now() + interval '7 days', $3, 'active', now())`,
+        [tenantId, `BRQ${randomUUID()}`, mandateRef],
+      ),
+    );
+    return mandateRef;
+  }
+
+  const collection = async (id: string) =>
+    (
+      await admin.query<{
+        status: string;
+        payment_ref: string | null;
+        collection_attempt: number;
+        charge_date: string | null;
+      }>(
+        "SELECT status, payment_ref, collection_attempt, charge_date::text FROM billing_charges WHERE id = $1",
+        [id],
+      )
+    ).rows[0];
+
+  it("makes a new payment for the same month against the business's Direct Debit now, and audits it", async () => {
+    const tenantId = await business();
+    const mandateRef = await giveMandate(tenantId);
+    const userId = await adminUser();
+    const { id, paymentRef } = await chargeIn(tenantId, "cancelled");
+    const payments = new FakePaymentsProvider();
+    expect(await collectAgain(app, payments, tenantId, id, userId)).toEqual({
+      outcome: "collecting",
+      status: "pending",
+    });
+    // GoCardless can't retry a cancelled payment: a new one, not a retry.
+    expect(payments.retried).toEqual([]);
+    expect(payments.payments).toEqual([
+      expect.objectContaining({
+        mandateRef,
+        amountPence: 9900,
+        description: "AnswerMate, 14 Sep 2026 to 13 Oct 2026",
+        metadata: { tenantId, periodStart: "2026-09-14" },
+        idempotencyKey: `collect-again:${id}:2`,
+      }),
+    ]);
+    const made = payments.payments[0]!;
+    expect(await collection(id)).toEqual({
+      status: "pending",
+      payment_ref: made.paymentRef,
+      collection_attempt: 2,
+      charge_date: made.chargeDate,
+    });
+    expect(await audit(tenantId, "billing.collect-again")).toEqual([
+      {
+        actor_user_id: userId,
+        details: {
+          chargeId: id,
+          newPayment: made.paymentRef,
+          cancelledPayment: paymentRef,
+          attempt: 2,
+        },
+      },
+    ]);
+    // Pressed again once it's on its way: refused, and no second payment.
+    expect(await collectAgain(app, payments, tenantId, id, userId)).toEqual({
+      outcome: "not-failed",
+      status: "pending",
+    });
+    expect(payments.payments).toHaveLength(1);
+  });
+
+  it("makes one payment when pressed twice at once, or again after its answer was lost", async () => {
+    const tenantId = await business();
+    await giveMandate(tenantId);
+    const userId = await adminUser();
+    const { id } = await chargeIn(tenantId, "cancelled");
+    const payments = new FakePaymentsProvider();
+    const results = await Promise.all([
+      collectAgain(app, payments, tenantId, id, userId),
+      collectAgain(app, payments, tenantId, id, userId),
+    ]);
+    expect(results).toEqual([
+      { outcome: "collecting", status: "pending" },
+      { outcome: "collecting", status: "pending" },
+    ]);
+    // Both asked under the same key, so the provider made one payment, recorded once.
+    expect(new Set(payments.payments.map((p) => p.paymentRef)).size).toBe(1);
+    expect((await collection(id))?.payment_ref).toBe(payments.payments[0]!.paymentRef);
+    expect(await audit(tenantId, "billing.collect-again")).toHaveLength(1);
+
+    // The provider made it but the answer never came back: the month is still cancelled, and
+    // pressing again asks under the same key, getting that payment back rather than a second.
+    const lost = await business();
+    await giveMandate(lost);
+    const { id: lostId } = await chargeIn(lost, "cancelled");
+    const flaky = new FakePaymentsProvider();
+    const original = flaky.createPayment.bind(flaky);
+    let dropAnswer = true;
+    flaky.createPayment = async (request) => {
+      const receipt = await original(request);
+      if (dropAnswer) {
+        dropAnswer = false;
+        throw new Error("socket hang up");
+      }
+      return receipt;
+    };
+    await expect(collectAgain(app, flaky, lost, lostId, userId)).rejects.toThrow("socket hang up");
+    expect((await collection(lostId))?.status).toBe("cancelled");
+    expect(await collectAgain(app, flaky, lost, lostId, userId)).toMatchObject({
+      outcome: "collecting",
+    });
+    expect(flaky.payments).toHaveLength(1);
+    expect((await collection(lostId))?.payment_ref).toBe(flaky.payments[0]!.paymentRef);
+  });
+
+  it("makes a fresh payment, under a new key, when the new one is cancelled too", async () => {
+    const tenantId = await business();
+    await giveMandate(tenantId);
+    const userId = await adminUser();
+    const { id } = await chargeIn(tenantId, "cancelled");
+    const payments = new FakePaymentsProvider();
+    await collectAgain(app, payments, tenantId, id, userId);
+    // The new payment is cancelled as well (the webhook's doing, here written directly).
+    await withTenant(app, tenantId, (client) =>
+      client.query("UPDATE billing_charges SET status = 'cancelled' WHERE id = $1", [id]),
+    );
+    expect(await collectAgain(app, payments, tenantId, id, userId)).toMatchObject({
+      outcome: "collecting",
+    });
+    expect(payments.payments.map((p) => p.idempotencyKey)).toEqual([
+      `collect-again:${id}:2`,
+      `collect-again:${id}:3`,
+    ]);
+    expect(await collection(id)).toMatchObject({
+      payment_ref: payments.payments[1]!.paymentRef,
+      collection_attempt: 3,
+    });
+  });
+
+  it("refuses with no active Direct Debit, before asking the provider anything", async () => {
+    const tenantId = await business();
+    const { id, paymentRef } = await chargeIn(tenantId, "cancelled");
+    const payments = new FakePaymentsProvider();
+    expect(await collectAgain(app, payments, tenantId, id, await adminUser())).toEqual({
+      outcome: "no-mandate",
+    });
+    expect(payments.payments).toEqual([]);
+    expect(await collection(id)).toMatchObject({
+      status: "cancelled",
+      payment_ref: paymentRef,
+      collection_attempt: 1,
+    });
+    expect(await audit(tenantId, "billing.collect-again")).toEqual([]);
+  });
+
+  it("refuses, recording nothing, when the provider won't use the Direct Debit any more", async () => {
+    const tenantId = await business();
+    await giveMandate(tenantId);
+    const { id, paymentRef } = await chargeIn(tenantId, "cancelled");
+    const payments = new FakePaymentsProvider().willFail(
+      new MandateUnusableError("GoCardless /payments failed: mandate is inactive"),
+    );
+    expect(await collectAgain(app, payments, tenantId, id, await adminUser())).toEqual({
+      outcome: "mandate-unusable",
+    });
+    expect(await collection(id)).toMatchObject({ status: "cancelled", payment_ref: paymentRef });
+    expect(await audit(tenantId, "billing.collect-again")).toEqual([]);
   });
 });
 

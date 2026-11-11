@@ -1,6 +1,7 @@
 // The notify-email job (BUILD_PLAN Step 6): the email version of the call text, with the
 // transcript and the links, or a "new voicemail" email. Composes; deliver-notification.ts
 // applies the allowlist and records the send. The provider adapter follows decision 010.
+import { tradespersonFlags } from "@callmate/shared";
 import type pg from "pg";
 import { raiseAlert, type AlertFn } from "../alerts.ts";
 import { storedFieldsSchema } from "../core/extraction.ts";
@@ -111,8 +112,13 @@ export async function runNotifyEmail(
           callerId: call.caller_number,
           postcode: fields.postcode ?? null,
           summary: call.summary ?? "",
-          flags: call.flags,
-          transcript: call.transcript === null ? null : parseTranscript(call.transcript),
+          // The summary's notes only: the pipeline's own flags are for the admin's review queue.
+          flags: tradespersonFlags(call.flags),
+          // Without the turns that say nothing: an empty transcript printed "Caller: " alone.
+          transcript:
+            call.transcript === null
+              ? null
+              : parseTranscript(call.transcript).filter((turn) => turn.text.trim() !== ""),
           callUrl,
           recordingUrl,
         });

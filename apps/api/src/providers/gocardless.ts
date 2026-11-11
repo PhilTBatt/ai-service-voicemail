@@ -117,7 +117,10 @@ const webhookSchema = z.object({
   events: z.array(
     z.object({
       id: z.string(),
-      created_at: z.string(),
+      // When the event happened, by GoCardless's clock ("2026-10-28T10:15:02.123Z"): payment
+      // events are put in order by it (db/direct-debit.ts), so one that isn't a time is refused
+      // here, rather than stored as an Invalid Date that fails the whole batch every retry.
+      created_at: z.iso.datetime({ offset: true }),
       resource_type: z.string(),
       action: z.string(),
       details: z

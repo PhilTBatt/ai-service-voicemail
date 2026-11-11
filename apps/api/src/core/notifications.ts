@@ -32,22 +32,38 @@ export function nationalNumber(e164: string): string {
 }
 
 /**
- * The SMS. GSM-7 only, so it stays at 160 characters a segment; aimed at two segments
- * at most. The summary is trimmed to two lines.
+ * A field as one line of plain text. A caller's name or postcode is whatever the extraction
+ * heard, and can hold a line break or a control character: in an email subject (a header) that
+ * broke the subject, and in a text or an email body it starts a line of its own. Invisible
+ * format characters (a zero-width space, a right-to-left override) go; every run of whitespace
+ * or control characters becomes one space.
+ */
+export function oneLine(text: string): string {
+  return text
+    .replaceAll(/\p{Cf}/gu, "")
+    .replaceAll(/[\s\p{Cc}]+/gu, " ")
+    .trim();
+}
+
+/** How short a name or postcode is ever cut to fit a text, before its "...". */
+const SMS_FIELD_MIN = 10;
+
+/**
+ * The SMS. GSM-7 only, so it stays at 160 characters a segment; two segments at most. The
+ * summary is trimmed to two lines.
  */
 export function callSms(input: CallNotificationInput): { body: string; segments: number } {
-  const who = [
-    input.callerName,
-    input.callbackNumber ? nationalNumber(input.callbackNumber) : "number withheld",
-    input.postcode,
-  ]
-    .filter((part): part is string => Boolean(part))
-    .join(", ");
+  // One line before GSM-7 (which would drop a tab rather than make it a space), and again after
+  // it (an emoji it drops leaves two spaces), so the cuts below count what's sent.
+  const smsField = (text: string | null) => oneLine(toGsm7(oneLine(text ?? "")));
+  let name = smsField(input.callerName);
+  let postcode = smsField(input.postcode);
+  const number = input.callbackNumber ? nationalNumber(input.callbackNumber) : "number withheld";
   let summary = input.summary.split("\n").slice(0, 2).join(" ").trim();
   const compose = () =>
     toGsm7(
       [
-        `${URGENCY_LABEL[input.urgency ?? "other"]}: ${who}`,
+        `${URGENCY_LABEL[input.urgency ?? "other"]}: ${[name, number, postcode].filter((part) => part !== "").join(", ")}`,
         summary,
         ...(input.callbackNumber ? [`Call back: tel:${input.callbackNumber}`] : []),
         `Details: ${input.callUrl}`,
@@ -63,6 +79,20 @@ export function callSms(input: CallNotificationInput): { body: string; segments:
     // characters (two septets each) that body.length undercounts. Take a character, then.
     if (shorter.length >= summary.length) shorter = `${summary.slice(0, summary.length - 4)}...`;
     summary = shorter;
+    body = compose();
+  }
+  // The name and postcode have no length limit either: the extraction can put a sentence in
+  // one, which left the text at three segments or more once the summary could go no shorter.
+  // Then the longer of the two is cut, until the text fits. Each cut is shorter than the last,
+  // so this always ends; a real name or postcode never gets here.
+  while (smsEncoding(body).segments > 2) {
+    const cutName = name.length >= postcode.length;
+    const field = cutName ? name : postcode;
+    if (field.length <= SMS_FIELD_MIN + 3) break;
+    const keep = Math.max(SMS_FIELD_MIN, field.length - Math.max(1, body.length - 306) - 3);
+    const shorter = `${field.slice(0, keep).trimEnd()}...`;
+    if (cutName) name = shorter;
+    else postcode = shorter;
     body = compose();
   }
   return { body, segments: smsEncoding(body).segments };
@@ -229,12 +259,18 @@ function link(url: string, label = url): string {
 /** The email for an agent-answered call: the text's details, plus the transcript. */
 export function callEmail(input: CallEmailInput): EmailContent {
   const label = URGENCY_LABEL[input.urgency ?? "other"];
+  // One line each, so a line break in what the caller said can't reach the subject, or fake a
+  // "Number:" line of its own in the text.
+  const callerName = oneLine(input.callerName ?? "") || null;
+  const postcode = oneLine(input.postcode ?? "") || null;
   const who = [
-    input.callerName ?? "Unknown caller",
+    callerName ?? "Unknown caller",
     input.callbackNumber ? nationalNumber(input.callbackNumber) : "number withheld",
   ].join(", ");
   const firstLine = input.summary.split("\n")[0]?.trim() ?? "";
-  const subject = `${label}: ${who}${firstLine ? ` - ${firstLine}` : ""}`.slice(0, 150);
+  // A header: a line break or control character in it could end the subject early or start a
+  // header of its own, wherever along the way the email is put together.
+  const subject = oneLine(`${label}: ${who}${firstLine ? ` - ${firstLine}` : ""}`).slice(0, 150);
   const when = formatUkDateTime(input.startedAt);
   const speaker = (turn: TranscriptTurn) => (turn.role === "agent" ? "Assistant" : "Caller");
 
@@ -242,9 +278,9 @@ export function callEmail(input: CallEmailInput): EmailContent {
     `${label} call to ${input.businessName}`,
     when,
     "",
-    `Caller: ${input.callerName ?? "not given"}`,
+    `Caller: ${callerName ?? "not given"}`,
     `Number: ${input.callbackNumber ? `${nationalNumber(input.callbackNumber)} (tel:${input.callbackNumber})` : "withheld"}`,
-    `Postcode: ${input.postcode ?? "not given"}`,
+    `Postcode: ${postcode ?? "not given"}`,
     ...(rangFrom(input)
       ? [`Rang from: ${nationalNumber(rangFrom(input)!)} (tel:${rangFrom(input)!})`]
       : []),
@@ -258,7 +294,9 @@ export function callEmail(input: CallEmailInput): EmailContent {
     "",
     "Transcript",
     ...(input.transcript
-      ? input.transcript.map((turn) => `${speaker(turn)}: ${turn.text}`)
+      ? input.transcript.length > 0
+        ? input.transcript.map((turn) => `${speaker(turn)}: ${turn.text}`)
+        : ["(none)"]
       : ["(no longer available)"]),
     "",
     "--",
@@ -271,14 +309,14 @@ export function callEmail(input: CallEmailInput): EmailContent {
       `<h1 style="font-size: 20px; margin: 0 0 4px;">${escapeHtml(label)} call to ${escapeHtml(input.businessName)}</h1>`,
       `<p style="margin: 0; color: #555;">${escapeHtml(when)}</p>`,
       detailsTable([
-        ["Caller", escapeHtml(input.callerName ?? "not given")],
+        ["Caller", escapeHtml(callerName ?? "not given")],
         [
           "Number",
           input.callbackNumber
             ? link(`tel:${input.callbackNumber}`, nationalNumber(input.callbackNumber))
             : "withheld",
         ],
-        ["Postcode", escapeHtml(input.postcode ?? "not given")],
+        ["Postcode", escapeHtml(postcode ?? "not given")],
         ...(rangFrom(input)
           ? ([["Rang from", link(`tel:${rangFrom(input)!}`, nationalNumber(rangFrom(input)!))]] as [
               string,
@@ -295,14 +333,14 @@ export function callEmail(input: CallEmailInput): EmailContent {
         input.recordingUrl ? ` &middot; ${link(input.recordingUrl, "Listen to the recording")}` : ""
       }</p>`,
       `<h2 style="font-size: 16px; margin: 24px 0 8px;">Transcript</h2>`,
-      input.transcript
+      input.transcript && input.transcript.length > 0
         ? input.transcript
             .map(
               (turn) =>
                 `<p style="margin: 0 0 8px;"><strong>${speaker(turn)}:</strong> ${escapeHtml(turn.text)}</p>`,
             )
             .join("\n")
-        : `<p style="margin: 0; color: #666;">(no longer available)</p>`,
+        : `<p style="margin: 0; color: #666;">${input.transcript ? "(none)" : "(no longer available)"}</p>`,
     ].join("\n"),
   );
 

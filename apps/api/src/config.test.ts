@@ -85,6 +85,30 @@ describe("loadConfig", () => {
     ]);
   });
 
+  it("reports what production needs alongside a setting that fails at the type level", () => {
+    // zod skips an object's refinements once a field fails its type, so a missing DATABASE_URL
+    // or a PORT that isn't a number used to hide every missing production setting until the
+    // next start.
+    const { problems } = configErrorFor({ NODE_ENV: "production", PORT: "abc" });
+    const expected = [
+      "DATABASE_URL is missing",
+      expect.stringMatching(/^PORT is invalid/),
+      "RETELL_API_KEY is missing",
+      "TWILIO_ACCOUNT_SID is missing",
+      "TWILIO_AUTH_TOKEN is missing",
+      "PUBLIC_BASE_URL is missing",
+      "FALLBACK_VOICEMAIL_URL is missing",
+      "ANTHROPIC_API_KEY is missing",
+      "ADMIN_DATABASE_URL is missing",
+      "TWILIO_SMS_FROM is missing",
+      "SIGNING_SECRET is missing",
+      "POSTMARK_SERVER_TOKEN is missing",
+      "EMAIL_FROM is missing",
+    ];
+    expect(problems).toEqual(expect.arrayContaining(expected));
+    expect(problems).toHaveLength(expected.length);
+  });
+
   it("never includes values in the error", () => {
     // A recognisable marker rather than a realistic-looking secret, so secret scanners
     // (GitGuardian watches this repo) don't flag the test itself.

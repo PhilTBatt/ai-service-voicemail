@@ -2,7 +2,7 @@
 // the transcript and the recording. The recording needs the login token, which an <audio> tag
 // can't send, so it's fetched as a file first and played from memory; nothing is stored in the
 // browser.
-import type { CallHandledView, CallView } from "@callmate/shared";
+import { tradespersonFlags, type CallHandledView, type CallView } from "@callmate/shared";
 import { useEffect, useState } from "react";
 import { Link, useLocation, useParams } from "react-router";
 import { asError, useApi, useLoad } from "../api.ts";
@@ -79,8 +79,11 @@ export function CallPage() {
         <div className="cluster">
           <UrgencyBadge urgency={data.urgency} />
           {data.viaFallback && <Badge icon={Voicemail}>Voicemail</Badge>}
-          {data.flags.map((flag) => (
-            <Badge key={flag} tone="danger">
+          {/* The summary's notes about the caller, in grey: the urgency badge carries the
+              alarm. The pipeline's own flags (a price named, a summary doubted) are for the
+              admin's review queue, and used to show here as red badges (Phil, 2026-11-11). */}
+          {tradespersonFlags(data.flags).map((flag) => (
+            <Badge key={flag} tone="neutral">
               {flag}
             </Badge>
           ))}

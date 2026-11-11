@@ -1107,20 +1107,37 @@ export interface ExpiredRecording {
   providerCallId: string;
   recordingRef: string;
   viaFallback: boolean;
+  /** Earlier runs that couldn't delete it. */
+  attempts: number;
+  /** Whether the alert that it looks stuck has been raised: it's said once per recording. */
+  alerted: boolean;
 }
 
-/** Calls whose recording is older than the retention period and not yet deleted. */
+/** How many recordings retention takes from the database at a time. */
+export const RECORDING_BATCH_SIZE = 200;
+
+/**
+ * Calls whose recording is older than the retention period and not yet deleted: the ones no run
+ * has failed on first, oldest first, then the ones that have failed least. Ordered by age alone,
+ * recordings that can never be deleted stayed at the front for good, and a batch of them kept
+ * every newer one waiting. `skip` leaves out the calls this run has already failed on, so the
+ * next batch moves past them. The partial index on started_at (20261110120000) still finds the
+ * rows: only the recordings past their 30 days are sorted, however big calls grows.
+ */
 export async function findExpiredRecordings(
   admin: AdminPool,
   olderThan: Date,
-  limit = 200,
+  { limit = RECORDING_BATCH_SIZE, skip = [] }: { limit?: number; skip?: readonly string[] } = {},
 ): Promise<ExpiredRecording[]> {
   const { rows } = await admin.query<ExpiredRecording>(
     `SELECT tenant_id AS "tenantId", id AS "callId", provider_call_id AS "providerCallId",
-            recording_ref AS "recordingRef", via_fallback AS "viaFallback"
-     FROM calls WHERE recording_ref IS NOT NULL AND started_at < $1
-     ORDER BY started_at LIMIT $2`,
-    [olderThan, limit],
+            recording_ref AS "recordingRef", via_fallback AS "viaFallback",
+            recording_delete_attempts AS attempts,
+            recording_delete_alerted_at IS NOT NULL AS alerted
+     FROM calls
+     WHERE recording_ref IS NOT NULL AND started_at < $1 AND NOT (id = ANY($3::uuid[]))
+     ORDER BY recording_delete_attempts, started_at, id LIMIT $2`,
+    [olderThan, limit, skip],
   );
   return rows;
 }
@@ -1128,6 +1145,26 @@ export async function findExpiredRecordings(
 /** Forgets a recording once the provider has deleted it. */
 export async function clearRecording(admin: AdminPool, callId: string): Promise<void> {
   await admin.query("UPDATE calls SET recording_ref = NULL WHERE id = $1", [callId]);
+}
+
+/**
+ * Counts a failed deletion against the call, and notes when the alert about it has been raised
+ * (only ever set once: a later run leaves the first time as it was). Returns the new count.
+ */
+export async function recordRecordingDeleteFailure(
+  admin: AdminPool,
+  callId: string,
+  { alertedAt }: { alertedAt: Date | null },
+): Promise<number> {
+  const { rows } = await admin.query<{ attempts: number }>(
+    `UPDATE calls
+     SET recording_delete_attempts = recording_delete_attempts + 1,
+         recording_delete_alerted_at = COALESCE(recording_delete_alerted_at, $2)
+     WHERE id = $1
+     RETURNING recording_delete_attempts AS attempts`,
+    [callId, alertedAt],
+  );
+  return rows[0]?.attempts ?? 0;
 }
 
 /** How many rows one retention statement touches: well inside the pool's 10-second statement timeout. */
@@ -1232,7 +1269,10 @@ export interface BillingOverview {
     totalPence: number;
     status: string;
     failureReason: string | null;
-    /** A failed payment GoCardless can be asked to collect again. */
+    /**
+     * A failed payment GoCardless can be asked to retry, or a cancelled one a new payment can
+     * be made for: only while the business has an active Direct Debit to make it against.
+     */
     canCollectAgain: boolean;
   }[];
 }
@@ -1257,7 +1297,10 @@ export async function billingOverview(
       `SELECT b.id AS "chargeId", b.tenant_id AS "tenantId", t.business_name AS "businessName",
               b.period_start::text AS "periodStart", b.period_end::text AS "periodEnd",
               b.total_pence AS "totalPence", b.status, b.failure_reason AS "failureReason",
-              (b.status = 'failed' AND b.payment_ref IS NOT NULL) AS "canCollectAgain"
+              (b.payment_ref IS NOT NULL AND (b.status = 'failed' OR (b.status = 'cancelled'
+                 AND EXISTS (SELECT 1 FROM payment_mandates m
+                             WHERE m.tenant_id = b.tenant_id AND m.status = 'active'))))
+                AS "canCollectAgain"
        FROM billing_charges b JOIN tenants t ON t.id = b.tenant_id
        WHERE b.status = ANY($1)
        ORDER BY b.period_start DESC, t.business_name

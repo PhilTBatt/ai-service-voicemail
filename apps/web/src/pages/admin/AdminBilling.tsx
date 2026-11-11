@@ -1,5 +1,6 @@
 // Billing at a glance (Step 12): this month's money, and the charges that need a person. A
-// failed payment can be collected again here, as GoCardless's own retry of it.
+// failed payment can be collected again here, as GoCardless's own retry of it; a cancelled one
+// as a new payment for the month, while the business has a Direct Debit to take it from.
 import type { AdminBillingView } from "@callmate/shared";
 import { useState } from "react";
 import { Link } from "react-router";
@@ -32,10 +33,15 @@ export function AdminBilling() {
   if (billing.status === "error") return <ErrorNote error={billing.error} retry={billing.reload} />;
   const { thisMonth, attention, available, environment } = billing.data;
 
-  const collectAgain = async (chargeId: string, businessName: string) => {
+  const collectAgain = async (chargeId: string, businessName: string, status: string) => {
     const yes = await confirm({
       title: `Collect ${businessName}'s payment again?`,
-      body: "GoCardless retries the same payment from the business's Direct Debit. It can do this up to three times.",
+      // GoCardless can retry a failed payment, but not a cancelled one: that month gets a new
+      // payment instead, so the two say what will actually happen.
+      body:
+        status === "cancelled"
+          ? "The payment was cancelled, and GoCardless can't retry a cancelled one, so this makes a new payment for the same month from the business's Direct Debit."
+          : "GoCardless retries the same payment from the business's Direct Debit. It can do this up to three times.",
       confirmLabel: "Collect again",
     });
     if (!yes) return;
@@ -143,7 +149,9 @@ export function AdminBilling() {
                           icon={RotateCcw}
                           loading={busy === charge.chargeId}
                           disabled={busy !== null}
-                          onClick={() => void collectAgain(charge.chargeId, charge.businessName)}
+                          onClick={() =>
+                            void collectAgain(charge.chargeId, charge.businessName, charge.status)
+                          }
                         >
                           Collect again
                         </Button>

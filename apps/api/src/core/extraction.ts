@@ -23,6 +23,12 @@ export type CallExtraction = z.infer<typeof callExtractionSchema>;
 export const EXTRACTION_FAILED_SUMMARY = "Couldn't summarise, see the transcript";
 
 /**
+ * Stored for an agent call whose transcript has no words in it (the caller rang off straight
+ * away, or the platform sent none): the tradesperson still hears that someone rang.
+ */
+export const EMPTY_TRANSCRIPT_SUMMARY = "Nothing to summarise, the call has no transcript";
+
+/**
  * How a call's urgency is decided: by the problem, never by how calm or pushy the caller is.
  * Shared with the eval judge (evals/judge.ts), which marked a deliberate "emergency" for a
  * calmly mentioned gas smell as unsupported when it didn't know these rules (2026-11-07).

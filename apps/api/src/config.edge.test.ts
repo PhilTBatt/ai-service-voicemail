@@ -133,6 +133,18 @@ describe("production", () => {
     ]);
   });
 
+  it("names a missing production setting even when DATABASE_URL is missing too", () => {
+    // A field missing outright used to stop zod before the production check, so this start
+    // said only "DATABASE_URL is missing", and the next one "SIGNING_SECRET is missing".
+    const env: Record<string, string> = { ...PRODUCTION };
+    delete env["DATABASE_URL"];
+    delete env["SIGNING_SECRET"];
+    expect([...problemsFor(env)].sort()).toEqual([
+      "DATABASE_URL is missing",
+      "SIGNING_SECRET is missing",
+    ]);
+  });
+
   it("still checks the shape of a required setting that is there", () => {
     expect(
       problemsFor({ ...PRODUCTION, FALLBACK_VOICEMAIL_URL: "http://insecure.example.com" }),
@@ -295,6 +307,29 @@ describe("PUBLIC_BASE_URL and ALTERNATE_BASE_URL", () => {
         .alternateBaseUrl,
     ).toBe("https://callmate-api.example.net");
   });
+
+  it("refuses the same address twice even when another setting fails at the type level", () => {
+    expect(
+      problemsFor({
+        PUBLIC_BASE_URL: "https://callmate.example.com",
+        ALTERNATE_BASE_URL: "https://callmate.example.com/other",
+      }),
+    ).toEqual([
+      "DATABASE_URL is missing",
+      "ALTERNATE_BASE_URL is invalid: must be a different address from PUBLIC_BASE_URL",
+    ]);
+  });
+
+  it("names an address the schema refused once, not again as the same as the other", () => {
+    // ws: parses as a URL with the same host, but the schema has already said it's wrong.
+    expect(
+      problemsFor({
+        ...valid,
+        PUBLIC_BASE_URL: "https://callmate.example.com",
+        ALTERNATE_BASE_URL: "ws://callmate.example.com",
+      }),
+    ).toEqual([expect.stringMatching(/^ALTERNATE_BASE_URL is invalid(?!: must be a different)/)]);
+  });
 });
 
 describe("DASHBOARD_ORIGIN", () => {
@@ -414,6 +449,16 @@ describe("VAT", () => {
       ).toMatch(/^VAT_REGISTRATION_FROM is invalid/);
     },
   );
+
+  it("names the missing half even when another setting fails at the type level", () => {
+    expect(
+      [...problemsFor({ PORT: "port", VAT_REGISTRATION_NUMBER: "GB123456789" })].sort(),
+    ).toEqual([
+      "DATABASE_URL is missing",
+      expect.stringMatching(/^PORT is invalid/),
+      "VAT_REGISTRATION_FROM is missing",
+    ]);
+  });
 });
 
 describe("Clerk", () => {

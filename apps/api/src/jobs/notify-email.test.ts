@@ -35,7 +35,7 @@ function deps(overrides: Partial<Omit<NotifyEmailDeps, "email">> = {}): TestDeps
 
 async function makeCall(
   kind: "agent" | "voicemail",
-  overrides: { email?: string | null; recorded?: boolean } = {},
+  overrides: { email?: string | null; recorded?: boolean; flags?: string[] } = {},
 ) {
   const tenantId = await createTenant(admin, {
     businessName: "Email Plumbing",
@@ -50,7 +50,7 @@ async function makeCall(
                             recording_ref)
          VALUES ($1, $2, '+447700900123', '2026-11-07T09:00:00Z', '2026-11-07T09:02:00Z', 120,
                  E'agent: Hi, how can I help?\\ncaller: My boiler is leaking & I smell gas.',
-                 'Boiler leaking; caller smelt gas.', 'emergency', '{"mentioned gas smell"}',
+                 'Boiler leaking; caller smelt gas.', 'emergency', $4::text[],
                  '{"callerName":"Sam","callbackNumber":"+447700900123","postcode":"XQ12 3JL"}', $3)
          RETURNING id`
       : `INSERT INTO calls (tenant_id, provider_call_id, caller_number, started_at, ended_at,
@@ -58,7 +58,12 @@ async function makeCall(
          VALUES ($1, $2, '+447700900123', '2026-11-07T09:00:00Z', '2026-11-07T09:01:00Z', 0,
                  'voicemail', $3, true, '{"recordingSeconds": 42}')
          RETURNING id`,
-    [tenantId, `call_${randomUUID()}`, recordingRef],
+    [
+      tenantId,
+      `call_${randomUUID()}`,
+      recordingRef,
+      ...(kind === "agent" ? [overrides.flags ?? ["mentioned gas smell"]] : []),
+    ],
   );
   return { tenantId, callId: rows[0]!.id };
 }
@@ -106,6 +111,28 @@ describe("runNotifyEmail", () => {
     expect(await notificationRows(tenantId, callId)).toEqual([
       { channel: "email", status: "sent", attempts: 1, provider_ref: message!.providerRef },
     ]);
+  });
+
+  // Phil's decision (2026-11-11): the pipeline's own flags are for the admin's review queue,
+  // and the email showed them to the tradesperson in its "Flags" line.
+  it("lists the summary's notes as flags, never the pipeline's own", async () => {
+    const { tenantId, callId } = await makeCall("agent", {
+      flags: ["mentioned gas smell", "guardrail:price", "judge:failed", "extraction_failed"],
+    });
+    const d = deps();
+    await runNotifyEmail(d, { tenantId, callId });
+    const [message] = d.email.sent;
+    expect(message!.text).toContain("Flags: mentioned gas smell\n");
+    for (const part of [message!.text, message!.html]) {
+      expect(part).not.toMatch(/guardrail:|judge:|extraction_failed/);
+    }
+  });
+
+  it("leaves the Flags line out when the pipeline's are the only ones", async () => {
+    const { tenantId, callId } = await makeCall("agent", { flags: ["guardrail:safety"] });
+    const d = deps();
+    await runNotifyEmail(d, { tenantId, callId });
+    expect(d.email.sent[0]!.text).not.toContain("Flags:");
   });
 
   it("leaves the recording line out when there is no recording", async () => {

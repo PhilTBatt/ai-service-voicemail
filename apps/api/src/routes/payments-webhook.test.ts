@@ -153,11 +153,17 @@ describe("POST /webhooks/gocardless", () => {
           [chargeId],
         )
       ).rows[0];
+    /** Delivers one payment event; its ID, which a failure's email is keyed by. */
     const send = async (action: string, cause: string | null = null) => {
-      const { rawBody, headers } = payments.webhookFor([
-        event({ resourceType: "payments", action, cause, links: { payment: paymentRef } }),
-      ]);
+      const sent = event({
+        resourceType: "payments",
+        action,
+        cause,
+        links: { payment: paymentRef },
+      });
+      const { rawBody, headers } = payments.webhookFor([sent]);
       expect((await post(rawBody, headers)).status).toBe(204);
+      return sent.id;
     };
 
     await send("submitted");
@@ -169,7 +175,7 @@ describe("POST /webhooks/gocardless", () => {
     alert.mockClear();
     enqueueBillingEmail.mockClear();
     // A charge-back after it was paid out wins.
-    await send("charged_back", "refund_requested");
+    const chargedBack = await send("charged_back", "refund_requested");
     expect(await status()).toEqual({ status: "charged_back", failure_reason: "refund_requested" });
     expect(alert).toHaveBeenCalledWith("billing-payment-failed", {
       tenantId,
@@ -178,7 +184,7 @@ describe("POST /webhooks/gocardless", () => {
       reason: "refund_requested",
     });
     expect(enqueueBillingEmail).toHaveBeenCalledWith(
-      { tenantId, kind: "payment_failed", ref: chargeId },
+      { tenantId, kind: "payment_failed", ref: `${chargeId}:${chargedBack}`, chargeId },
       expect.anything(),
     );
     // BUILD_PLAN Step 12: a failed payment does not suspend the business.
@@ -193,14 +199,15 @@ describe("POST /webhooks/gocardless", () => {
     expect(await status()).toEqual({ status: "paid_out", failure_reason: null });
     alert.mockClear();
     enqueueBillingEmail.mockClear();
-    await send("failed", "insufficient_funds");
+    const failed = await send("failed", "insufficient_funds");
     expect(alert).toHaveBeenCalledWith(
       "billing-payment-failed",
       expect.objectContaining({ tenantId, status: "failed", reason: "insufficient_funds" }),
     );
     expect(alert).toHaveBeenCalledTimes(1);
+    // Its own email, not taken for the charge-back's: the business is told of each failure.
     expect(enqueueBillingEmail).toHaveBeenCalledWith(
-      { tenantId, kind: "payment_failed", ref: chargeId },
+      { tenantId, kind: "payment_failed", ref: `${chargeId}:${failed}`, chargeId },
       expect.anything(),
     );
     expect(await status()).toEqual({ status: "failed", failure_reason: "insufficient_funds" });
@@ -208,6 +215,59 @@ describe("POST /webhooks/gocardless", () => {
     alert.mockClear();
     await send("failed", "insufficient_funds");
     expect(alert).not.toHaveBeenCalled();
+  });
+
+  it("alerts and emails nobody for a chargeback reversed, or for a failure older than the payment's success", async () => {
+    const tenantId = await createTenant(admin, {
+      businessName: "Reversed Plumbing",
+      trade: "plumber",
+    });
+    const paymentRef = `PM${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+    const chargeId = await withTenant(
+      app,
+      tenantId,
+      async (client) =>
+        (
+          await client.query<{ id: string }>(
+            `INSERT INTO billing_charges (tenant_id, period_start, period_end, period_index,
+               billable_seconds, fee_pence, overage_minutes, overage_pence, vat_rate_percent,
+               vat_pence, total_pence, lines, status, payment_ref)
+             VALUES ($1, '2026-07-14', '2026-08-14', 1, 0, 9900, 0, 0, 0, 0, 9900, '[]', 'pending', $2)
+             RETURNING id`,
+            [tenantId, paymentRef],
+          )
+        ).rows[0]!.id,
+    );
+    const status = async () =>
+      (
+        await admin.query<{ status: string }>("SELECT status FROM billing_charges WHERE id = $1", [
+          chargeId,
+        ])
+      ).rows[0]?.status;
+    const send = async (action: string, createdAt: string, cause: string | null = null) => {
+      const { rawBody, headers } = payments.webhookFor([
+        event({
+          resourceType: "payments",
+          action,
+          cause,
+          links: { payment: paymentRef },
+          createdAt: new Date(createdAt),
+        }),
+      ]);
+      expect((await post(rawBody, headers)).status).toBe(204);
+    };
+
+    await send("paid_out", "2026-08-20T09:00:00.000Z");
+    await send("charged_back", "2026-09-01T09:00:00.000Z", "refund_requested");
+    alert.mockClear();
+    enqueueBillingEmail.mockClear();
+    await send("chargeback_cancelled", "2026-09-08T09:00:00.000Z");
+    expect(await status()).toBe("paid_out");
+    // A failure from before all that, its delivery retried only now.
+    await send("failed", "2026-08-17T09:00:00.000Z", "insufficient_funds");
+    expect(await status()).toBe("paid_out");
+    expect(alert).not.toHaveBeenCalled();
+    expect(enqueueBillingEmail).not.toHaveBeenCalled();
   });
 
   it("follows a mandate that's replaced, and one reinstated after it ended", async () => {

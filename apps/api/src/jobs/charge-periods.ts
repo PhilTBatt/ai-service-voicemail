@@ -3,6 +3,7 @@
 // rounded up once for the month, VAT if registered), recorded, and collected by Direct Debit,
 // and the receipt queued. Safe to run again, or to stop part-way:
 // - the charge row is made first, one per business per month, before the provider is asked;
+//   of two runs at once, the one that makes it collects it, and the other moves on;
 // - the payment is asked for with an idempotency key from the business and the month, so a
 //   repeat after a crash gets the same payment back, never a second;
 // - a month with nothing to collect from (no Direct Debit) is tried again each morning.
@@ -148,7 +149,7 @@ export async function chargePeriod(
         [tenantId, period.periodStart],
       )
     ).rows[0];
-    if (existing) return { ...existing, isNew: false };
+    if (existing) return { ...existing, isNew: false, lostRace: false };
     const usage = (
       await client.query<{ billable_seconds: number }>(
         "SELECT billable_seconds::int FROM usage_periods WHERE tenant_id = $1 AND period_start = $2",
@@ -184,12 +185,17 @@ export async function chargePeriod(
         : charge.totalPence < MIN_COLLECTABLE_PENCE
           ? "below_minimum"
           : "collecting";
+    // Two runs at once (the queue retrying one that's slow, say) can both find no row above
+    // and both get here. The second insert then waits for the first and does nothing, rather
+    // than failing on the one-row-per-month key: a failure would fail that run, and the queue
+    // would retry it, again and again while the other is still going.
     const inserted = (
       await client.query<ChargeRow>(
         `INSERT INTO billing_charges (tenant_id, period_start, period_end, period_index,
            billable_seconds, fee_pence, overage_minutes, overage_pence, vat_rate_percent,
            vat_pence, total_pence, vat_number, lines, status)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+         ON CONFLICT (tenant_id, period_start) DO NOTHING
          RETURNING id, status, total_pence`,
         [
           tenantId,
@@ -208,10 +214,21 @@ export async function chargePeriod(
           status,
         ],
       )
-    ).rows[0]!;
-    return { ...inserted, isNew: true };
+    ).rows[0];
+    if (inserted) return { ...inserted, isNew: true, lostRace: false };
+    // The other run's row, committed by now (the insert waited for it). That run is asking
+    // for the payment, so this one leaves the month to it.
+    const theirs = (
+      await client.query<ChargeRow>(
+        "SELECT id, status, total_pence FROM billing_charges WHERE tenant_id = $1 AND period_start = $2",
+        [tenantId, period.periodStart],
+      )
+    ).rows[0];
+    if (!theirs) throw new Error(`No charge for ${period.periodStart} after a conflicting insert`);
+    return { ...theirs, isNew: false, lostRace: true };
   });
 
+  if (row.lostRace) return "already-done";
   if (row.status === "nothing_due") return row.isNew ? "nothing-due" : "already-done";
   if (row.status === "below_minimum") return row.isNew ? "below-minimum" : "already-done";
   if (row.status !== "collecting" && row.status !== "no_mandate") return "already-done";
@@ -235,13 +252,12 @@ export async function chargePeriod(
     return "already-done";
   }
 
-  const description = `AnswerMate, ${formatDate(period.periodStart)} to ${formatDate(lastDayOf(period.periodEnd))}`;
   let receipt;
   try {
     receipt = await payments.createPayment({
       mandateRef,
       amountPence: row.total_pence,
-      description,
+      description: paymentDescription(period.periodStart, period.periodEnd),
       metadata: { tenantId, periodStart: period.periodStart },
       idempotencyKey: `charge:${tenantId}:${period.periodStart}`,
     });
@@ -289,7 +305,7 @@ export async function chargePeriod(
   // The payment as the provider has it. Usually waiting to be submitted; on a retry after a
   // crash it may have moved on, or ended, and that's what's recorded. Only a month still
   // mid-collection is updated, so a webhook that got there first isn't undone.
-  const status = PROVIDER_PAYMENT_STATUS[receipt.status] ?? "pending";
+  const status = chargeStatusOf(receipt.status);
   const bad = status === "failed" || status === "cancelled" || status === "charged_back";
   const recorded = await withTenant(pool, tenantId, async (client) => {
     const { rowCount } = await client.query(
@@ -315,6 +331,20 @@ export async function chargePeriod(
     return "refused";
   }
   return "collected";
+}
+
+/** What the business's bank statement and GoCardless's emails say the payment is for. */
+export function paymentDescription(periodStart: string, periodEnd: string): string {
+  return `AnswerMate, ${formatDate(periodStart)} to ${formatDate(lastDayOf(periodEnd))}`;
+}
+
+/**
+ * A payment's status at the provider, as a charge's: what the run records for a payment it
+ * has just made (or found made), and Collect again for a new one. One it doesn't know (the
+ * provider adding one) is taken as waiting, and the webhook moves it on from there.
+ */
+export function chargeStatusOf(providerStatus: string): string {
+  return PROVIDER_PAYMENT_STATUS[providerStatus] ?? "pending";
 }
 
 /** GoCardless's payment statuses, as a charge's. */

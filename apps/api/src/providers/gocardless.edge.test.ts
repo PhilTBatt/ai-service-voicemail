@@ -285,4 +285,13 @@ describe("webhooks GoCardless wouldn't send", () => {
     expect(() => parse([{ ...event, links: { payment: 12345 } }])).toThrow(PaymentsWebhookError);
     expect(() => parse([{ ...event, action: null }])).toThrow(PaymentsWebhookError);
   });
+
+  it("reads each event's own time, and refuses one that isn't a time", () => {
+    // Payment events are put in order by this time, so it has to be one.
+    const [parsed] = parse([{ ...event, created_at: "2026-10-28T10:15:02.123Z" }]);
+    expect(parsed?.createdAt.toISOString()).toBe("2026-10-28T10:15:02.123Z");
+    for (const createdAt of ["yesterday", "", "2026-13-45T99:00:00Z"]) {
+      expect(() => parse([{ ...event, created_at: createdAt }])).toThrow(PaymentsWebhookError);
+    }
+  });
 });

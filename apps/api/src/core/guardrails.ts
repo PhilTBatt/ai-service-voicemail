@@ -2,7 +2,12 @@
 // agent says in real time, so the agent's turns are checked afterwards for what it must never
 // do: quote prices, commit to times, and give safety advice beyond the approved scripts. A
 // match flags the call for review.
-import { COMMITMENT_PATTERNS, PRICE_PATTERNS, givesSafetyAdvice } from "@callmate/shared";
+import {
+  COMMITMENT_PATTERNS,
+  PRICE_PATTERNS,
+  SAFETY_ADVICE_PATTERNS,
+  guardrailText,
+} from "@callmate/shared";
 import type { TranscriptTurn } from "../providers/voice.ts";
 import { DANGER_SCRIPT, GAS_EMERGENCY_NUMBER, gasScript, waterScript } from "./scripts.ts";
 
@@ -23,10 +28,8 @@ export interface ScanOptions {
 
 const sentencesOf = (text: string): string[] =>
   text.split(/(?<=[.!?])\s+/).filter((sentence) => sentence.trim() !== "");
-/** Curly apostrophes as straight ones, which is what the patterns are written with. */
-const straighten = (text: string): string => text.replaceAll(/[‘’]/g, "'");
-const normalise = (text: string): string =>
-  straighten(text).replaceAll(/\s+/g, " ").trim().toLowerCase();
+/** As the patterns read it (look-alikes, curly apostrophes, spacing), to compare with a script. */
+const normalise = (text: string): string => guardrailText(text).trim().toLowerCase();
 
 /**
  * Appendix A's scripts that give advice, sentence by sentence, for both regions. Built from
@@ -85,14 +88,15 @@ export function scanAgentTurns(
     const fromScripts = wholeScripts ? new Set<number>() : scriptSentences(sentences);
     sentences.forEach((sentence, index) => {
       if (fromScripts.has(index)) return;
+      // The excerpt as said; the match on the normalised text, so a full-width "￡５０" is a price.
       const excerpt = sentence.trim().slice(0, 160);
-      const plain = straighten(sentence);
+      const plain = guardrailText(sentence);
       // A sentence can break more than one rule; record each.
       if (PRICE_PATTERNS.some((p) => p.test(plain))) hits.push({ rule: "price", excerpt });
       if (COMMITMENT_PATTERNS.some((p) => p.test(plain))) {
         hits.push({ rule: "commitment", excerpt });
       }
-      if (givesSafetyAdvice(plain)) hits.push({ rule: "safety", excerpt });
+      if (SAFETY_ADVICE_PATTERNS.some((p) => p.test(plain))) hits.push({ rule: "safety", excerpt });
     });
   }
   return hits;

@@ -88,6 +88,36 @@ describe("the logger never writes personal data, whatever shape it arrives in", 
     }
   });
 
+  it("masks numbers, addresses and postcodes typed in full-width characters", () => {
+    // A phone keyboard set to Japanese or Chinese, or text pasted from a PDF, gives full-width
+    // digits and signs, which the patterns' \d and + never matched.
+    // Checked as exact output: a leak left in full-width form wouldn't contain the plain
+    // fragments expectClean looks for.
+    for (const [shape, mask] of [
+      ["０７７００ ９００４５６", "[phone]"],
+      ["＋４４７７００９００４５６", "[phone]"],
+      ["+４４ ７７００ ９００４５６", "[phone]"],
+      ["０１１３ ４９６ ０３２１", "[phone]"],
+      ["ｓａｍ．ｃａｌｌｅｒ＠ｅｘａｍｐｌｅ．ｃｏｍ", "[email]"],
+      ["ＸＱ７ ４ＬＢ", "[postcode]"],
+    ]) {
+      expect(redactText(`reach me: ${shape} today`), shape).toBe(`reach me: ${mask} today`);
+    }
+    const { logger, lines } = capture();
+    logger.warn("Caller left details", { note: "ring ０７７００ ９００４５６ at ＸＱ７ ４ＬＢ" });
+    const written = lines.join("");
+    expectClean(written);
+    expect(written).not.toMatch(/[０-９Ａ-Ｚ]/);
+    expect(written).toContain("ring [phone] at [postcode]");
+  });
+
+  it("masks a postcode written with a hyphen or a dash for its space", () => {
+    for (const shape of ["XQ7-4LB", "xq7-4lb", "XQ7 - 4LB", "XQ7–4LB", "XQ7‐4LB", "XQ7－4LB"]) {
+      const out = redactText(`job at ${shape} please`);
+      expect(out, shape).toBe("job at [postcode] please");
+    }
+  });
+
   it("masks emails and postcodes inside URLs and query strings", () => {
     const url = `https://callmate.example.com/api/x?email=sam.caller%40example.com&to=%2B447700900456&pc=XQ7%204LB`;
     expectClean(redactText(url));

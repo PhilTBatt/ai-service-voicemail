@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type { PgBoss } from "pg-boss";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { NOTIFY_EMERGENCY_QUEUE, PROCESS_CALL_QUEUE, startQueue } from "../jobs/queue.ts";
+import { logger } from "../logger.ts";
 import { TEST_ADMIN_DATABASE_URL, TEST_DATABASE_URL } from "../testing/databases.ts";
 import { sampleCallEndedEvent } from "../testing/agent-fixture.ts";
 import type { CallEndedEvent, FunctionCallEvent } from "../providers/voice.ts";
@@ -85,6 +86,67 @@ describe("recordCallEnded", () => {
         data: { tenantId, callId: result.callId, providerCallId: e.providerCallId },
       },
     ]);
+  });
+
+  // A negative Retell product cost failed call_costs' "units >= 0" check, which rolled back the
+  // whole call: lost, on every redelivery and every reconciliation run.
+  it("stores the call and its good cost lines, leaving out any the table can't hold", async () => {
+    const { tenantId, number } = await makeTenant();
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => logger);
+    try {
+      const e = event(number, {
+        costs: [
+          { component: "retell:voice_minutes", units: 8.25, unitType: "usd_cents" },
+          { component: "retell:credit", units: -3.5, unitType: "usd_cents" },
+          { component: "retell:llm", units: 1e12, unitType: "usd_cents" },
+          { component: "retell:tts", units: Number.NaN, unitType: "usd_cents" },
+          { component: "retell:\u0000odd", units: 1, unitType: "usd_cents" },
+          { component: "retell:duration", units: 90, unitType: "seconds" },
+        ],
+      });
+      const result = await recordCallEnded(app, boss, e);
+      expect(result).toMatchObject({ outcome: "stored", tenantId });
+      if (result.outcome !== "stored") throw new Error("unreachable");
+
+      const costs = await withTenant(
+        app,
+        tenantId,
+        async (client) =>
+          (
+            await client.query(
+              "SELECT component, units FROM call_costs WHERE call_id = $1 ORDER BY component",
+              [result.callId],
+            )
+          ).rows as unknown[],
+      );
+      expect(costs).toEqual([
+        { component: "retell:duration", units: "90.0000" },
+        { component: "retell:voice_minutes", units: "8.2500" },
+      ]);
+      expect(await jobsFor(e.providerCallId)).toHaveLength(1);
+
+      const message = "Cost line the database can't hold: left out, the call stored";
+      for (const [component, reason] of [
+        ["retell:credit", "negative"],
+        ["retell:llm", "too large"],
+        ["retell:tts", "not a number"],
+        ["retell:odd", "NUL character"],
+      ]) {
+        expect(warn).toHaveBeenCalledWith(message, {
+          tenantId,
+          callId: result.callId,
+          component,
+          reason,
+        });
+      }
+      expect(warn).toHaveBeenCalledTimes(4);
+      // Nothing about the caller in the warnings: no number, no transcript.
+      const logged = JSON.stringify(warn.mock.calls);
+      expect(logged).not.toContain("7700");
+      expect(logged).not.toContain("tap");
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("adds billable seconds to the tenant's usage period, and bills nothing for a call under 5 s", async () => {

@@ -2,7 +2,7 @@
 // networks we know divert codes for (Appendix C), and the signup form's rules, shared so the
 // page checks the form exactly as the API does.
 import { z } from "zod";
-import { ukMobileSchema } from "./settings.ts";
+import { emailAddressSchema, ukMobileSchema } from "./settings.ts";
 import { TRADES } from "./trades.ts";
 
 export const LEGAL_DOCUMENT_TYPES = ["terms", "dpa", "privacy_notice"] as const;
@@ -115,7 +115,7 @@ export const signupInputSchema = z.object({
   contactName: z.string().trim().min(1, "can't be empty").max(60, "keep it under 60 characters"),
   mobile: ukMobileSchema,
   /** Where call emails go. Null: the address they signed in with. */
-  email: z.email("must be an email address").nullable(),
+  email: emailAddressSchema.nullable(),
   mobileNetwork: z.enum(MOBILE_NETWORK_KEYS),
   usesNetworkVoicemail: z.boolean(),
   /** The version of each document the person saw and ticked. */

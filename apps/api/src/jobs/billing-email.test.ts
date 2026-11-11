@@ -73,6 +73,36 @@ describe("runBillingEmail", () => {
     expect(rows).toEqual([{ status: "sent", provider_ref: expect.any(String) as string }]);
   });
 
+  it("tells the business each time a month's payment fails, once per failure", async () => {
+    // Failed, collected again, failed again: two failures of one charge, each its own email.
+    const { tenantId, chargeId } = await chargedBusiness();
+    const d = deps();
+    const failure = (eventId: string) =>
+      runBillingEmail(d, {
+        tenantId,
+        kind: "payment_failed",
+        ref: `${chargeId}:${eventId}`,
+        chargeId,
+      });
+    expect(await failure("EV_FIRST_FAILURE")).toBe("sent");
+    expect(await failure("EV_SECOND_FAILURE")).toBe("sent");
+    // The second job for one failure (pg-boss running it twice) sends nothing more.
+    expect(await failure("EV_SECOND_FAILURE")).toBe("already-sent");
+    expect(d.email.sent).toHaveLength(2);
+    expect(d.email.sent.map((sent) => sent.text)).toEqual([
+      expect.stringContaining("£99.00"),
+      expect.stringContaining("£99.00"),
+    ]);
+    const { rows } = await admin.query<{ ref: string }>(
+      "SELECT ref FROM billing_emails WHERE tenant_id = $1 AND kind = 'payment_failed' ORDER BY ref",
+      [tenantId],
+    );
+    expect(rows.map((row) => row.ref)).toEqual([
+      `${chargeId}:EV_FIRST_FAILURE`,
+      `${chargeId}:EV_SECOND_FAILURE`,
+    ]);
+  });
+
   it("links a business whose Direct Debit ended back to its Account tab", async () => {
     const { tenantId } = await chargedBusiness();
     const d = deps();

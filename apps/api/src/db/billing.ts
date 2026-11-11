@@ -4,6 +4,7 @@
 import { AI_ANSWERING_PLAN, monthlyFeePence, type BillingView } from "@callmate/shared";
 import type pg from "pg";
 import { billingPeriodFor, ukDateOf } from "../core/billing.ts";
+import { startOfUkDate } from "../core/usage.ts";
 import { directDebitState } from "./direct-debit.ts";
 import { withTenant } from "./tenant.ts";
 
@@ -31,9 +32,13 @@ export async function loadBillingView(
     // that day (decision 019): such a month isn't shown as one to be charged for.
     const leftOn =
       tenant.cancellation_requested_at === null ? null : ukDateOf(tenant.cancellation_requested_at);
+    const anchor = tenant.billing_start_date;
+    // The billing start date is the database's UK date when the business went live, and `now`
+    // is this server's clock. A moment behind the database's on go-live day, it's still the
+    // day before: that's the first month, not an error (billingPeriodFor throws before it).
     const current =
-      tenant.billing_start_date !== null && tenant.status !== "demo"
-        ? billingPeriodFor(tenant.billing_start_date, now)
+      anchor !== null && tenant.status !== "demo"
+        ? billingPeriodFor(anchor, ukDateOf(now) < anchor ? startOfUkDate(anchor) : now)
         : null;
     if (current && (leftOn === null || current.periodStart < leftOn)) {
       const usage = (

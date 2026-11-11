@@ -48,11 +48,12 @@ async function seed(admin: AdminPool): Promise<void> {
   );
 
   const sparks = await createTenant(admin, { businessName: "Other Sparks", trade: "electrician" });
-  // Flagged as if the agent had named a price, so the admin's review queue has a call in it.
+  // Flagged as if the agent had named a price, so the admin's review queue has a call in it,
+  // with a note from the summary too: the call page shows the note and not the review flag.
   await admin.query(
     `INSERT INTO calls (tenant_id, provider_call_id, started_at, ended_at, summary, urgency, flags)
      VALUES ($1, 'call_e2e_2', now() - interval '2 hours', now() - interval '119 minutes',
-             'Fuse box tripping.', 'routine', '{guardrail:price}')`,
+             'Fuse box tripping.', 'routine', '{guardrail:price,"mentioned burning smell"}')`,
     [sparks],
   );
 

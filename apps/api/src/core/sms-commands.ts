@@ -44,11 +44,16 @@ function monthNumber(name: string): number | null {
 
 /**
  * Reads the date after HOLIDAY. Accepts 2026-12-12, 12/12/2026, 12/12/26, 12/12 and
- * "12 Dec" or "12 December". Without a year it means the next time that date comes round.
- * Past dates are invalid: a holiday that's already over isn't one.
+ * "12 Dec" or "12 December", with or without "until", "till", "til" or "to" before it.
+ * Without a year it means the next time that date comes round. Past dates are invalid: a
+ * holiday that's already over isn't one.
  */
 export function parseHolidayDate(text: string, today: Temporal.PlainDate): string | null {
-  const t = text.trim().toLowerCase();
+  // "HOLIDAY until 20/12" is how people write it, and was answered "didn't understand that date".
+  const t = text
+    .trim()
+    .toLowerCase()
+    .replace(/^(?:until|till|til|to)\s+/, "");
   let candidate: { year: number | undefined; month: number; day: number } | null = null;
 
   const iso = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(t);

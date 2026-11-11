@@ -263,6 +263,27 @@ test.describe("called back", () => {
   });
 });
 
+test.describe("a call's flags", () => {
+  // Phil's decision (2026-11-11): the pipeline's own flags are for the admin's review queue. The
+  // call page showed "guardrail:price" as a red badge; now it shows the summary's notes, in grey.
+  test("the call page shows the summary's note but not the review flag, which the queue keeps", async ({
+    page,
+    request,
+  }) => {
+    const sparks = await tenantIdOf(request, OTHER_SPARKS);
+    const callId = await callIdOf(request, sparks, FUSE_BOX);
+    await openAs(page, ADMIN, `/tenants/${sparks}/calls/${callId}`);
+    const note = page.getByText("mentioned burning smell", { exact: true });
+    await expect(note).toBeVisible();
+    await expect(note).toHaveAttribute("data-tone", "neutral");
+    await expect(page.getByText("guardrail:price")).toHaveCount(0);
+
+    await page.goto("/admin");
+    await expect(page.getByRole("heading", { name: "Calls to review" })).toBeVisible();
+    await expect(page.getByText("Named a price", { exact: true })).toBeVisible();
+  });
+});
+
 test.describe("leaving", () => {
   let leaver: string | undefined;
 

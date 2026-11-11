@@ -11,6 +11,13 @@ import { logger } from "../logger.ts";
  * worker (whose admin pool holds one connection through a whole deletion, under its advisory
  * lock), with the API kept to one copy (infra/main.bicep): 17 in normal running, 34 at the peak
  * of a release plus the migration job's one. The load test (npm run load) passes at these sizes.
+ *
+ * The one-off task job (callmate-task: the Deploy workflow's "task" step) runs one script from
+ * apps/api/src/scripts with pools of its own, at most one of each at its default size
+ * (create-demo-business has all three): 4 + 2 + 2 = 8 more, so 25 while a task runs. It shares
+ * the deploy-production concurrency group with a release, and its step waits for the script to
+ * finish, so a task never runs during a release and the peak stays 35. Run while a release is
+ * going (by hand from the Azure portal, say), it would ask for 43 and be refused connections.
  */
 export const APP_POOL_MAX = 4;
 export const ADMIN_POOL_MAX = 2;

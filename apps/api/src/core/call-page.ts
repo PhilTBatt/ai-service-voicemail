@@ -3,7 +3,7 @@
 // JSON. Built from the same view the dashboard shows (routes/call-view.ts), so both say the
 // same thing. No script at all, and everything from the call goes through escapeHtml:
 // transcripts and summaries are what callers said, and a caller can say anything.
-import type { CallView } from "@callmate/shared";
+import { tradespersonFlags, type CallView } from "@callmate/shared";
 import { CALL_LINK_TTL_MS } from "./signed-links.ts";
 import { URGENCY_LABEL, escapeHtml, formatUkDateTime, nationalNumber } from "./notifications.ts";
 
@@ -112,7 +112,11 @@ export function callPageHtml(call: CallView, { handledUrl }: { handledUrl?: stri
   ].join(" · ");
 
   const body = [
-    `<p><span class="badge ${urgencyClass}">${escapeHtml(label)}</span>${call.flags
+    // The summary's notes about the caller, as plain badges. The pipeline's own flags (a price
+    // named, a summary doubted) are for the admin's review queue, not the tradesperson.
+    `<p><span class="badge ${urgencyClass}">${escapeHtml(label)}</span>${tradespersonFlags(
+      call.flags,
+    )
       .map((flag) => `<span class="badge">${escapeHtml(flag)}</span>`)
       .join("")}</p>`,
     `<h1>${escapeHtml(caller)}</h1>`,

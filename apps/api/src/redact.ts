@@ -24,8 +24,9 @@ const UK_PHONE_BARE = /(?<![A-Za-z0-9])(?:44[1-9]\d{8,9}|7\d{9})\b/g;
 const INTERNATIONAL_PHONE = /(?:\+|(?<![A-Za-z0-9])00)[1-9](?:[\s.+-]?\d){7,14}\b/g;
 
 // UK postcodes in all six shapes (A9 9AA to AA9A 9AA), any case, with or without the space,
-// or with a + for it (as in a form-encoded body).
-const POSTCODE = /\b[A-Z]{1,2}\d[A-Z\d]?(?:\s+|\+)?\d[A-Z]{2}\b/gi;
+// with a + for it (as in a form-encoded body), or with a hyphen or dash for it (LS1-4AP, as
+// people type them into forms), spaced or not.
+const POSTCODE = /\b[A-Z]{1,2}\d[A-Z\d]?(?:\s*[-‐-―−]\s*|\s+|\+)?\d[A-Z]{2}\b/gi;
 
 // Signed call-page links (core/signed-links.ts): the token is a seven-day credential.
 const CALL_TOKEN = /\/c\/[0-9a-f]{32}\.[0-9a-z]{1,8}\.[A-Za-z0-9_-]{22}(?![A-Za-z0-9_-])/g;
@@ -61,7 +62,11 @@ function decodePercents(text: string): string {
 
 export function redactText(text: string): string {
   return (
-    decodePercents(text)
+    // NFKC first: it folds the look-alike forms a phone keyboard or a pasted document can give
+    // (full-width digits ０７７００, a full-width ＋ or ＠, ligatures) into the plain characters
+    // the patterns know, so "０７７００ ９００１２３" can't slip past as text. The log line
+    // then carries the folded text, which reads the same.
+    decodePercents(text.normalize("NFKC"))
       // The call link first: about one expiry in thirteen encodes to a postcode-shaped piece
       // (".tp00aa."), and redacting that alone would leave the call ID and its MAC in the log.
       .replace(CALL_TOKEN, "/c/[token]")

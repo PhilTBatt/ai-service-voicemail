@@ -70,6 +70,19 @@ describe("the month a business is in", () => {
     });
   });
 
+  it("shows the first month when this server's clock is a moment behind the database's on go-live day", async () => {
+    // The database dated going live 11 November (its clock just past UK midnight); this
+    // server's clock still says 10 November. Before, that was an error, and the page a 500.
+    const tenantId = await business({ anchor: "2026-11-11" });
+    expect((await view(tenantId, "2026-11-10T23:59:59.900Z"))?.period).toEqual({
+      start: "2026-11-11",
+      end: "2026-12-11",
+      month: 1,
+      feePence: 9900,
+      billableSeconds: 0,
+    });
+  });
+
   it("turns over at UK midnight, which is 23:00 UTC in summer", async () => {
     const tenantId = await business();
     expect((await view(tenantId, "2026-10-13T22:59:59Z"))?.period).toMatchObject({

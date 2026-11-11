@@ -29,16 +29,34 @@ describe("ukMobileFromInput", () => {
     ["+44 7700 900123", "+447700900123"],
     ["447700900123", "+447700900123"],
     [" 07700900123\n", "+447700900123"],
+    // 00 for the +, as phoneFromInput reads it: these used to be refused.
+    ["0044 7700 900123", "+447700900123"],
+    ["0044 (0)7700 900123", "+447700900123"],
+    ["00447700900123", "+447700900123"],
   ])("reads %j as %s", (input, expected) => {
     expect(ukMobileFromInput(input)).toBe(expected);
   });
 
-  it.each(["0113 496 0100", "+441134960100", "7700900123", "+4477009001234", "", undefined])(
-    "refuses %j",
-    (input) => {
-      expect(ukMobileFromInput(input)).toBeNull();
-    },
-  );
+  it("reads every UK mobile the way phoneFromInput does", () => {
+    for (const given of ["0044 7700 900123", "0044 (0)7700 900123", "+44 (0)7700 900123"]) {
+      expect(ukMobileFromInput(given), given).toBe(phoneFromInput(given));
+    }
+  });
+
+  it.each([
+    "0113 496 0100",
+    "+441134960100",
+    "7700900123",
+    "+4477009001234",
+    "",
+    undefined,
+    // Another country's number (a US fictional 555-01xx one), or a UK landline, written with 00
+    "001 202 555 0143",
+    "0044 113 496 0100",
+    "00 7700 900123",
+  ])("refuses %j", (input) => {
+    expect(ukMobileFromInput(input)).toBeNull();
+  });
 });
 
 describe("phoneFromInput", () => {
