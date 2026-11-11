@@ -1,6 +1,7 @@
 // Phil's view of the whole service: is it healthy, which calls need a look, how much each
 // business is using, and what that costs us. The API answers these only for the admin role; this page is just a view.
 import type {
+  AdminBillingView,
   CallReviewedView,
   CancellationsView,
   CostRowView,
@@ -15,8 +16,14 @@ import type {
 import { useState } from "react";
 import { Link } from "react-router";
 import { asError, useApi, useLoad } from "../api.ts";
-import { formatDuration, formatPence, formatPhone } from "../format.ts";
-import { formatUkDateTime } from "../time.ts";
+import {
+  CHARGE_STATUS_LABELS,
+  formatDuration,
+  formatPence,
+  formatPhone,
+  humanise,
+} from "../format.ts";
+import { addDays, formatDate, formatUkDateTime } from "../time.ts";
 import { ErrorNote, StatusBadge, UrgencyBadge } from "../ui.tsx";
 
 export function AdminPage() {
@@ -24,11 +31,102 @@ export function AdminPage() {
     <>
       <h1>Admin</h1>
       <Health />
+      <Billing />
       <Leaving />
       <ReviewQueue />
       <Usage />
       <Costs />
     </>
+  );
+}
+
+/**
+ * Billing at a glance (Step 12): this month's money, and the charges that need a person.
+ * A failed payment can be collected again here, as GoCardless's own retry of it.
+ */
+function Billing() {
+  const { api } = useApi();
+  const billing = useLoad(() => api<AdminBillingView>("/admin/billing"), "admin-billing");
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<Error | null>(null);
+
+  if (billing.status === "loading") return <p className="muted">Loading billing…</p>;
+  if (billing.status === "error") return <ErrorNote error={billing.error} retry={billing.reload} />;
+  const { thisMonth, attention, available } = billing.data;
+
+  const collectAgain = async (chargeId: string, businessName: string) => {
+    if (!window.confirm(`Ask GoCardless to collect ${businessName}'s payment again?`)) return;
+    setBusy(chargeId);
+    setError(null);
+    try {
+      await api(`/admin/charges/${chargeId}/collect-again`, { method: "POST", body: {} });
+      billing.reload();
+    } catch (caught) {
+      setError(asError(caught));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <section>
+      <h2>Billing</h2>
+      <div className="stats">
+        <Money label="Collected this month" pence={thisMonth.collectedPence} />
+        <Money label="Being collected" pence={thisMonth.collectingPence} />
+        <Money label="Not collected" pence={thisMonth.problemPence} />
+      </div>
+      <p className="muted">
+        By the day each month was charged. Prices before VAT unless VAT is set up.
+      </p>
+      {attention.length === 0 ? (
+        <p className="muted">No payments need you.</p>
+      ) : (
+        <div className="card error">
+          <h3>Payments that need you</h3>
+          <p className="muted">
+            Nothing is switched off for not paying: suspending a business is on its Account tab.
+            "Owed, no Direct Debit" is collected by itself once the business sets one up.
+          </p>
+          <ul className="list">
+            {attention.map((charge) => (
+              <li key={charge.chargeId}>
+                <Link to={`/tenants/${charge.tenantId}/settings#billing`}>
+                  {charge.businessName}
+                </Link>
+                , {formatDate(charge.periodStart)} to {formatDate(addDays(charge.periodEnd, -1))}:{" "}
+                {formatPence(charge.totalPence)},{" "}
+                {CHARGE_STATUS_LABELS[charge.status] ?? charge.status}
+                {charge.failureReason ? ` (${humanise(charge.failureReason)})` : ""}
+                {charge.canCollectAgain && available && (
+                  <>
+                    {" "}
+                    <button
+                      type="button"
+                      className="secondary"
+                      disabled={busy !== null}
+                      onClick={() => void collectAgain(charge.chargeId, charge.businessName)}
+                    >
+                      {busy === charge.chargeId ? "Asking…" : "Collect again"}
+                    </button>
+                  </>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {error && <ErrorNote error={error} />}
+    </section>
+  );
+}
+
+function Money({ label, pence }: { label: string; pence: number }) {
+  return (
+    <div className="card stat">
+      <strong>{formatPence(pence)}</strong>
+      <span className="muted">{label}</span>
+    </div>
   );
 }
 

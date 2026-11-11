@@ -42,13 +42,22 @@ export class GoCardlessApiError extends Error {
   readonly status: number;
   /** GoCardless's own type: "validation_failed", "invalid_state", "invalid_api_usage", "gocardless". */
   readonly type: string | null;
+  /** Each error's reason code ("retry_failed", "cancellation_failed", "mandate_is_inactive"...). */
+  readonly reasons: readonly string[];
 
-  constructor(status: number, path: string, type: string | null, detail: string) {
+  constructor(
+    status: number,
+    path: string,
+    type: string | null,
+    detail: string,
+    reasons: readonly string[] = [],
+  ) {
     // The provider's own words can quote a name or an address. Errors are logged, and stored
     // with failed jobs in the queue's tables, so the detail is redacted here, once.
     super(`GoCardless ${redactText(path)} failed: HTTP ${status} ${redactText(detail)}`);
     this.status = status;
     this.type = type;
+    this.reasons = reasons;
   }
 }
 
@@ -252,11 +261,28 @@ export class GoCardlessPaymentsProvider implements PaymentsProvider {
         z.object({}).passthrough(),
       );
     } catch (error) {
-      // Already cancelled (or never active): GoCardless answers "invalid_state", which for
-      // "make sure it's cancelled" is success.
-      if (error instanceof GoCardlessApiError && error.type === "invalid_state") return;
+      // Already cancelled (or never active): GoCardless refuses with "cancellation_failed"
+      // (its docs) as an invalid state, which for "make sure it's cancelled" is success.
+      if (
+        error instanceof GoCardlessApiError &&
+        (error.type === "invalid_state" || error.reasons.includes("cancellation_failed"))
+      ) {
+        return;
+      }
       throw error;
     }
+  }
+
+  async retryPayment(paymentRef: string): Promise<{ status: string }> {
+    // Only a failed payment can be retried, and only while its mandate is active; GoCardless
+    // refuses anything else ("retry_failed"), which stays a GoCardlessApiError for the caller.
+    const retried = await this.call(
+      "POST",
+      `/payments/${encodeURIComponent(paymentRef)}/actions/retry`,
+      { data: {} },
+      paymentSchema,
+    );
+    return { status: retried.payments.status };
   }
 
   verifyAndParseWebhook(rawBody: Buffer, headers: WebhookHeaders): PaymentsEvent[] {
@@ -350,6 +376,9 @@ export class GoCardlessPaymentsProvider implements PaymentsProvider {
         path,
         parsed.success ? (parsed.data.error.type ?? null) : null,
         detail.slice(0, 200),
+        parsed.success
+          ? (parsed.data.error.errors ?? []).flatMap((e) => (e.reason ? [e.reason] : []))
+          : [],
       );
     }
     const parsed = schema.safeParse(json);

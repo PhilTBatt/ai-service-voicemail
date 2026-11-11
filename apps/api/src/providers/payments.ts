@@ -101,6 +101,11 @@ export interface PaymentsProvider {
   /** Cancels a mandate (a business leaving, Step 13). Safe to repeat. */
   cancelMandate(mandateRef: string): Promise<void>;
   /**
+   * Tries a failed payment again, as the same payment (the provider's own retry). Refused by
+   * the provider for anything but a failed payment on an active mandate.
+   */
+  retryPayment(paymentRef: string): Promise<{ status: string }>;
+  /**
    * Verifies a webhook's signature over the exact bytes received and returns its events.
    * Throws PaymentsWebhookError for a bad or missing signature, or a malformed body.
    */

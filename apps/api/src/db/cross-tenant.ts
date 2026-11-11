@@ -1190,6 +1190,77 @@ export async function activeNumberFor(
   return rows[0] ?? null;
 }
 
+/** What the admin's Billing section shows (Step 12): money this month, and what needs a person. */
+export interface BillingOverview {
+  /** Since the start of this UK calendar month, by the day each charge was made. */
+  thisMonth: { collectedPence: number; collectingPence: number; problemPence: number };
+  attention: {
+    chargeId: string;
+    tenantId: string;
+    businessName: string;
+    periodStart: string;
+    periodEnd: string;
+    totalPence: number;
+    status: string;
+    failureReason: string | null;
+    /** A failed payment GoCardless can be asked to collect again. */
+    canCollectAgain: boolean;
+  }[];
+}
+
+/** Statuses that need a person: the money didn't come, and won't by itself. */
+const NEEDS_ATTENTION = ["failed", "cancelled", "charged_back", "no_mandate"];
+
+export async function billingOverview(
+  admin: AdminPool,
+  monthStart: Date,
+): Promise<BillingOverview> {
+  const [totals, attention] = await Promise.all([
+    admin.query<{ collected: number; collecting: number; problem: number }>(
+      `SELECT
+         COALESCE(sum(total_pence) FILTER (WHERE status IN ('confirmed', 'paid_out')), 0)::int AS collected,
+         COALESCE(sum(total_pence) FILTER (WHERE status IN ('collecting', 'pending', 'submitted')), 0)::int AS collecting,
+         COALESCE(sum(total_pence) FILTER (WHERE status = ANY($2)), 0)::int AS problem
+       FROM billing_charges WHERE created_at >= $1`,
+      [monthStart, NEEDS_ATTENTION],
+    ),
+    admin.query<BillingOverview["attention"][number]>(
+      `SELECT b.id AS "chargeId", b.tenant_id AS "tenantId", t.business_name AS "businessName",
+              b.period_start::text AS "periodStart", b.period_end::text AS "periodEnd",
+              b.total_pence AS "totalPence", b.status, b.failure_reason AS "failureReason",
+              (b.status = 'failed' AND b.payment_ref IS NOT NULL) AS "canCollectAgain"
+       FROM billing_charges b JOIN tenants t ON t.id = b.tenant_id
+       WHERE b.status = ANY($1)
+       ORDER BY b.period_start DESC, t.business_name
+       LIMIT 50`,
+      [NEEDS_ATTENTION],
+    ),
+  ]);
+  const row = totals.rows[0]!;
+  return {
+    thisMonth: {
+      collectedPence: row.collected,
+      collectingPence: row.collecting,
+      problemPence: row.problem,
+    },
+    attention: attention.rows,
+  };
+}
+
+/** Which business a charge belongs to, for the admin acting on it. A malformed ID is simply none. */
+export async function tenantIdForCharge(
+  admin: AdminPool,
+  chargeId: string,
+): Promise<string | null> {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(chargeId))
+    return null;
+  const { rows } = await admin.query<{ tenant_id: string }>(
+    "SELECT tenant_id FROM billing_charges WHERE id = $1",
+    [chargeId],
+  );
+  return rows[0]?.tenant_id ?? null;
+}
+
 export interface BillableTenant {
   tenantId: string;
   /** The UK date it went live: its billing months run from here. */

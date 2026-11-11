@@ -2,6 +2,7 @@
 // /api/admin behind authenticate() and requireRole("admin"), so nothing here is reachable by
 // an owner or the reseller. Cross-tenant reads go through the admin pool, as decision 006 says.
 import type {
+  AdminBillingView,
   AvailableNumbersView,
   CallReviewedView,
   CancellationsView,
@@ -13,6 +14,7 @@ import type {
   ProvisionedNumberView,
   ReleasedNumberView,
   ReviewQueueView,
+  SuspensionView,
   UsageView,
 } from "@callmate/shared";
 import { ONBOARDING_STATES } from "@callmate/shared";
@@ -24,9 +26,13 @@ import type { AlertFn } from "../alerts.ts";
 import { releaseDueAt } from "../core/offboarding.ts";
 import { CURRENT_PRICES, describePrices, poundsToPence } from "../core/prices.ts";
 import { startOfUkDate, usagePeriodFor } from "../core/usage.ts";
+import { ukDateOf } from "../core/billing.ts";
+import { collectAgain, setSuspended } from "../db/billing-actions.ts";
 import {
   activeNumberFor,
   auditAdminAction,
+  billingOverview,
+  tenantIdForCharge,
   tenantExists,
   withAdvisoryLock,
   estimateCosts,
@@ -47,6 +53,7 @@ import { withTenant } from "../db/tenant.ts";
 import type { EnqueueOffboarding } from "../jobs/offboarding.ts";
 import type { EnqueueOnboarding } from "../jobs/onboarding.ts";
 import { countDeadLettered, recentDeadLetters } from "../jobs/queue.ts";
+import type { PaymentsProvider } from "../providers/payments.ts";
 import { PurchaseNotAllowedError, type TelephonyProvider } from "../providers/telephony.ts";
 import { presentCallSummary } from "./call-view.ts";
 import { principalOf, requireRole } from "./dashboard-auth.ts";
@@ -71,6 +78,8 @@ export interface AdminOptions {
   enqueueOnboarding?: EnqueueOnboarding | undefined;
   /** Deleting a business's data (BUILD_PLAN Step 13). */
   enqueueOffboarding?: EnqueueOffboarding | undefined;
+  /** Collecting a failed payment again (Step 12). Absent until GoCardless is configured. */
+  payments?: PaymentsProvider | undefined;
   now?: () => Date;
 }
 
@@ -82,6 +91,8 @@ const pilotBody = z.object({ pilot: z.boolean() });
 const deleteDataBody = z.object({ confirm: z.literal(true), businessName: z.string() });
 /** Releasing a number can't be undone: the page sends this only after a confirmation dialog. */
 const releaseBody = z.object({ confirm: z.literal(true) });
+/** Suspending stops a business's calls being answered: the page confirms first. */
+const suspendBody = z.object({ confirm: z.literal(true) });
 const isTenantId = (value: unknown): value is string => z.uuid().safeParse(value).success;
 /** The review queue's page cursor: "<started at, ISO>|<call id>", as nextBefore gave it. */
 const reviewCursor = z.string().transform((value, ctx) => {
@@ -117,10 +128,89 @@ export function adminRouter({
   numbers,
   enqueueOnboarding,
   enqueueOffboarding,
+  payments,
   now = () => new Date(),
 }: AdminOptions) {
   const router = Router();
   router.use(requireRole("admin"));
+
+  // Billing at a glance (Step 12): this month's money, and the charges that need a person.
+  router.get("/billing", async (_req, res) => {
+    const today = ukDateOf(now());
+    const overview = await billingOverview(admin, startOfUkDate(`${today.slice(0, 7)}-01`));
+    res.json({ available: payments !== undefined, ...overview } satisfies AdminBillingView);
+  });
+
+  // A failed payment, collected again: GoCardless's own retry of the same payment.
+  router.post("/charges/:chargeId/collect-again", async (req, res) => {
+    if (!payments) {
+      res.status(503).json({ error: "Payments aren't set up on this server" });
+      return;
+    }
+    const { chargeId } = req.params;
+    const tenantId = await tenantIdForCharge(admin, chargeId);
+    if (!tenantId) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    let result;
+    try {
+      result = await collectAgain(pool, payments, tenantId, chargeId, principalOf(res).userId);
+    } catch (error) {
+      // GoCardless's refusal (retried three times already, or the Direct Debit has ended):
+      // its own words, which are already redacted, for the admin to read.
+      const status = (error as { status?: unknown }).status;
+      if (typeof status === "number" && status >= 400 && status < 500) {
+        res.status(409).json({
+          error: `GoCardless won't collect it again: ${(error as Error).message}`,
+        });
+        return;
+      }
+      throw error;
+    }
+    if (result.outcome === "not-found") {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    if (result.outcome === "not-failed") {
+      res.status(409).json({
+        error: `Only a failed payment can be collected again; this one is ${result.status}`,
+      });
+      return;
+    }
+    res.json({ status: result.status });
+  });
+
+  // Suspending a business (Step 12: never automatic) and resuming it. Suspended, its callers
+  // get the fallback voicemail. The page asks for a confirmation before suspending.
+  router.post("/tenants/:tenantId/suspend", async (req, res) => {
+    if (!suspendBody.safeParse(req.body).success) {
+      res.status(400).json({ error: "Suspending needs { confirm: true }" });
+      return;
+    }
+    await suspension(req.params.tenantId, true, res);
+  });
+  router.post("/tenants/:tenantId/resume", async (req, res) => {
+    await suspension(req.params.tenantId, false, res);
+  });
+
+  async function suspension(tenantId: string, suspend: boolean, res: import("express").Response) {
+    if (!isTenantId(tenantId) || !(await tenantExists(admin, tenantId))) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    const result = await setSuspended(pool, tenantId, suspend, principalOf(res).userId);
+    if (result.outcome === "not-allowed") {
+      res.status(409).json({
+        error: suspend
+          ? `Only an answering or paused business can be suspended; this one is ${result.status}`
+          : `Only a suspended business can be resumed; this one is ${result.status}`,
+        status: result.status,
+      });
+      return;
+    }
+    res.json({ outcome: result.outcome, status: result.status } satisfies SuspensionView);
+  }
 
   // One screen: is the service healthy right now? Counts over the last 24 hours, and the
   // syncs that are currently failing.

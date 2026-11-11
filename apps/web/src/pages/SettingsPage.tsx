@@ -11,6 +11,7 @@ import {
   type DocumentsView,
   type MeView,
   type NotificationSettings,
+  type SuspensionView,
   type TenantView,
 } from "@callmate/shared";
 import { useEffect, useRef, useState } from "react";
@@ -42,6 +43,9 @@ export function SettingsPage({ me }: { me: MeView }) {
       <NumberSection tenant={tenant.data} isAdmin={me.role === "admin"} onBought={tenant.reload} />
       <Notifications key={`n-${tenant.data.id}`} tenant={tenant.data} />
       <Billing key={`b-${tenant.data.id}`} tenant={tenant.data} />
+      {me.role === "admin" && (
+        <Suspension key={`s-${tenant.data.id}`} tenant={tenant.data} onChanged={tenant.reload} />
+      )}
       <Documents
         key={`d-${tenant.data.id}`}
         tenant={tenant.data}
@@ -424,6 +428,59 @@ function Billing({ tenant }: { tenant: TenantView }) {
           </ul>
         </>
       )}
+    </section>
+  );
+}
+
+/**
+ * Suspending a business (admin only; Step 12: never automatic, say for not paying). Its callers
+ * get the fallback voicemail until it's resumed. The business's own on/off switch and texts
+ * can't undo it.
+ */
+function Suspension({ tenant, onChanged }: { tenant: TenantView; onChanged: () => void }) {
+  const { api } = useApi();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+  const suspended = tenant.status === "suspended";
+  if (!suspended && tenant.status !== "live" && tenant.status !== "paused") return null;
+
+  const act = async () => {
+    const question = suspended
+      ? `Resume ${tenant.businessName}? Its calls go back to the assistant.`
+      : `Suspend ${tenant.businessName}? Every caller gets the voicemail until you resume it. The business isn't told by us.`;
+    if (!window.confirm(question)) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api<SuspensionView>(`/admin/tenants/${tenant.id}/${suspended ? "resume" : "suspend"}`, {
+        method: "POST",
+        body: suspended ? {} : { confirm: true },
+      });
+      onChanged();
+    } catch (caught) {
+      setError(asError(caught));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className={`card ${suspended ? "error" : ""}`}>
+      <h2>Suspension</h2>
+      <p>
+        {suspended
+          ? "This business is suspended: callers get the voicemail, and its own switch can't turn the assistant back on."
+          : "Suspending stops the assistant answering for this business until you resume it. Nothing does this automatically, missed payments included."}
+      </p>
+      <button
+        type="button"
+        className={suspended ? "" : "danger"}
+        disabled={busy}
+        onClick={() => void act()}
+      >
+        {busy ? "One moment…" : suspended ? "Resume" : "Suspend"}
+      </button>
+      {error && <ErrorNote error={error} />}
     </section>
   );
 }

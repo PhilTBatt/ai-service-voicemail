@@ -186,6 +186,7 @@ export function dashboardRouter({
       numbers,
       enqueueOnboarding: enqueueOnboardingWith(boss),
       enqueueOffboarding: enqueueOffboardingWith(boss),
+      payments: billing?.payments,
       ...(now && { now }),
     }),
   );

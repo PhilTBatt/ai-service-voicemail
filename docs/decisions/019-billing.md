@@ -16,7 +16,7 @@
    - **Test businesses never pay**, like the demo line: a business from a test link is Phil trying the service.
    - **A business that leaves is charged for the month it left in**, and none after: a month that began before it asked to leave is charged in full, one that began on or after isn't. (Callers hear "service has ended" from the moment it asks, so there's a case for charging that month pro rata instead.)
    - **A £0 month** (a pilot's free month inside its minutes) is recorded but sends no payment and no email.
-   - **A failed payment isn't collected again automatically**: the business is emailed and Phil alerted; collecting it again is from the GoCardless dashboard until there's a reason to automate it. When that's done, the charge follows the same payment through to paid.
+   - **A failed payment isn't collected again automatically**: the business is emailed and Phil alerted; collecting it again is a button on the Admin page (**Collect again**: GoCardless's own retry of the same payment), and the charge follows it through to paid.
    - **A month owing less than £1** (GoCardless's Bacs minimum: a pilot's free month a few minutes over) is recorded and not collected: waived, in effect.
    - **No call before the day a business goes live is billed**, the test call included (BUILD_PLAN Step 12: test calls excluded). A call the same day it goes live counts.
 8. **Only the bank failing a payment is the customer's payment failing.** A Direct Debit GoCardless won't collect from is ended here too and the month waits for a new one; anything else GoCardless refuses (a wrong token, a malformed request) fails the morning's run so it's retried, then dead-lettered with an alert, and the business is told nothing. (From the review of 2026-11-10.)

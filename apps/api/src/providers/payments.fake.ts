@@ -99,6 +99,15 @@ export class FakePaymentsProvider implements PaymentsProvider {
     this.cancelledMandates.push(mandateRef);
   }
 
+  readonly retried: string[] = [];
+
+  async retryPayment(paymentRef: string): Promise<{ status: string }> {
+    await Promise.resolve();
+    this.failIfTold();
+    this.retried.push(paymentRef);
+    return { status: "submitted" };
+  }
+
   /** A signed webhook request for events, as the provider would send it. */
   webhookFor(events: PaymentsEvent[]): { rawBody: Buffer; headers: WebhookHeaders } {
     const rawBody = Buffer.from(

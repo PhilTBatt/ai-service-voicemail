@@ -247,6 +247,30 @@ export interface DirectDebitStartView {
   authorisationUrl: string;
 }
 
+/** GET /api/admin/billing: this month's money, and the charges that need a person (Step 12). */
+export interface AdminBillingView {
+  /** Whether payments are set up on this server; without, nothing can be collected again. */
+  available: boolean;
+  thisMonth: { collectedPence: number; collectingPence: number; problemPence: number };
+  attention: {
+    chargeId: string;
+    tenantId: string;
+    businessName: string;
+    periodStart: string;
+    periodEnd: string;
+    totalPence: number;
+    status: string;
+    failureReason: string | null;
+    canCollectAgain: boolean;
+  }[];
+}
+
+/** POST /api/admin/tenants/:id/suspend and /resume */
+export interface SuspensionView {
+  outcome: "suspended" | "resumed" | "unchanged";
+  status: string;
+}
+
 /** PUT /api/admin/kill-switch */
 export interface KillSwitchView {
   killSwitchOn: boolean;

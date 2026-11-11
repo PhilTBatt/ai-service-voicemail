@@ -10,6 +10,7 @@ import {
   type AvailableNumbersView,
   type CallReviewedView,
   type CancellationsView,
+  type AdminBillingView,
   type BillingView,
   type DirectDebitStartView,
   type HealthView,
@@ -31,6 +32,7 @@ import {
   inviteUser,
 } from "../db/cross-tenant.ts";
 import { createPool } from "../db/pool.ts";
+import { withTenant } from "../db/tenant.ts";
 import { FakeAuthProvider } from "../providers/auth.fake.ts";
 import { FakePaymentsProvider } from "../providers/payments.fake.ts";
 import { FakeTelephonyProvider } from "../providers/telephony.fake.ts";
@@ -376,6 +378,28 @@ describe("authorisation matrix", () => {
       body: {},
       method: "POST",
     },
+    { name: "GET /admin/billing", path: "/admin/billing" },
+    // A charge that doesn't exist: 404 even for the admin, so nothing is collected.
+    {
+      name: "POST /admin/charges/:id/collect-again",
+      path: `/admin/charges/${randomUUID()}/collect-again`,
+      body: {},
+      method: "POST",
+    },
+    // No confirmation: refused (400) even for the admin, so nothing is suspended.
+    {
+      name: "POST /admin/tenants/:id/suspend",
+      path: `/admin/tenants/${tenantA}/suspend`,
+      body: {},
+      method: "POST",
+    },
+    // Business A is onboarding, not suspended: 409 even for the admin.
+    {
+      name: "POST /admin/tenants/:id/resume",
+      path: `/admin/tenants/${tenantA}/resume`,
+      body: {},
+      method: "POST",
+    },
   ];
   // What tenant A's data looks like to each person. "allowed" means the door opened: the
   // request may still 400, 404 or 409 on its merits (no audio at the fake, invalid body).
@@ -398,6 +422,10 @@ describe("authorisation matrix", () => {
       "GET /admin/cancellations": 403,
       "POST /admin/tenants/:id/release-number": 403,
       "POST /admin/tenants/:id/delete-data": 403,
+      "GET /admin/billing": 403,
+      "POST /admin/charges/:id/collect-again": 403,
+      "POST /admin/tenants/:id/suspend": 403,
+      "POST /admin/tenants/:id/resume": 403,
       "POST /signup-links": 403,
     },
     ownerB: { "GET /me": "allowed", "GET /tenants": "allowed", default: 403 },
@@ -1248,6 +1276,112 @@ describe("billing (Step 12)", () => {
     expect((await send("POST", `/tenants/${tenant}/billing/direct-debit`, {}, owner)).status).toBe(
       409,
     );
+  });
+});
+
+describe("billing for the admin (Step 12)", () => {
+  /** A live business with one month's charge in the given state, written as the run writes it. */
+  async function chargedBusiness(status: string, paymentRef: string | null) {
+    const tenant = await createTenant(admin, { businessName: "Owing Plumbing", trade: "plumber" });
+    await admin.query(
+      "UPDATE tenants SET status = 'live', onboarding_state = 'live' WHERE id = $1",
+      [tenant],
+    );
+    const chargeId = await withTenant(
+      app,
+      tenant,
+      async (client) =>
+        (
+          await client.query<{ id: string }>(
+            `INSERT INTO billing_charges (tenant_id, period_start, period_end, period_index,
+               billable_seconds, fee_pence, overage_minutes, overage_pence, vat_rate_percent,
+               vat_pence, total_pence, lines, status, payment_ref, failure_reason, created_at)
+             VALUES ($1, '2026-10-01', '2026-11-01', 0, 0, 9900, 0, 0, 0, 0, 9900, '[]', $2, $3,
+                     'insufficient_funds', '2026-11-02T06:00:00Z')
+             RETURNING id`,
+            [tenant, status, paymentRef],
+          )
+        ).rows[0]!.id,
+    );
+    return { tenant, chargeId };
+  }
+
+  it("lists what needs a person, and collects a failed payment again as the same payment", async () => {
+    const paymentRef = `PM${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+    const { tenant, chargeId } = await chargedBusiness("failed", paymentRef);
+    const view = await json<AdminBillingView>(get("/admin/billing", tokens.admin));
+    expect(view.available).toBe(true);
+    expect(view.thisMonth.problemPence).toBeGreaterThanOrEqual(9900);
+    expect(view.attention).toContainEqual({
+      chargeId,
+      tenantId: tenant,
+      businessName: "Owing Plumbing",
+      periodStart: "2026-10-01",
+      periodEnd: "2026-11-01",
+      totalPence: 9900,
+      status: "failed",
+      failureReason: "insufficient_funds",
+      canCollectAgain: true,
+    });
+
+    const collected = await send(
+      "POST",
+      `/admin/charges/${chargeId}/collect-again`,
+      {},
+      tokens.admin,
+    );
+    expect(collected.status).toBe(200);
+    expect(payments.retried).toContain(paymentRef);
+    const { rows } = await admin.query(
+      "SELECT status, failure_reason FROM billing_charges WHERE id = $1",
+      [chargeId],
+    );
+    expect(rows).toEqual([{ status: "pending", failure_reason: null }]);
+    // Not failed any more: a second press is refused before GoCardless is asked.
+    const again = await send("POST", `/admin/charges/${chargeId}/collect-again`, {}, tokens.admin);
+    expect(again.status).toBe(409);
+    expect(payments.retried.filter((ref) => ref === paymentRef)).toHaveLength(1);
+  });
+
+  it("says GoCardless's refusal plainly when it won't collect again", async () => {
+    const paymentRef = `PM${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+    const { chargeId } = await chargedBusiness("failed", paymentRef);
+    payments.willFail(
+      Object.assign(new Error("GoCardless failed: HTTP 422 retry_failed"), { status: 422 }),
+    );
+    const response = await send(
+      "POST",
+      `/admin/charges/${chargeId}/collect-again`,
+      {},
+      tokens.admin,
+    );
+    expect(response.status).toBe(409);
+    expect(((await response.json()) as { error: string }).error).toMatch(/won't collect it again/);
+  });
+
+  it("suspends a business by hand and resumes it, and its own switch can't undo it", async () => {
+    const { tenant } = await chargedBusiness("failed", null);
+    const owner = await personFor(tenant);
+    expect(
+      (await send("POST", `/admin/tenants/${tenant}/suspend`, { confirm: true }, tokens.admin))
+        .status,
+    ).toBe(200);
+    const status = async () =>
+      (await admin.query<{ status: string }>("SELECT status FROM tenants WHERE id = $1", [tenant]))
+        .rows[0]?.status;
+    expect(await status()).toBe("suspended");
+    // The business's own switch only moves between answering and paused.
+    expect((await send("PUT", `/tenants/${tenant}/switch`, { on: true }, owner)).status).toBe(409);
+    expect(await status()).toBe("suspended");
+    expect((await send("POST", `/admin/tenants/${tenant}/resume`, {}, tokens.admin)).status).toBe(
+      200,
+    );
+    expect(await status()).toBe("live");
+    const audit = await admin.query<{ action: string }>(
+      "SELECT action FROM audit_log WHERE tenant_id = $1 AND action LIKE 'tenant.%suspended' ORDER BY created_at",
+      [tenant],
+    );
+    expect(audit.rows.map((row) => row.action)).toEqual(["tenant.suspended", "tenant.unsuspended"]);
   });
 });
 

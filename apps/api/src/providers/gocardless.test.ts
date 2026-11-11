@@ -313,6 +313,34 @@ describe("GoCardlessPaymentsProvider", () => {
     expect(other).toMatchObject({ status: 401 });
   });
 
+  it("retries a failed payment as the same payment, and takes an already-cancelled mandate as done", async () => {
+    const api = stub([
+      {
+        status: 200,
+        json: { payments: { id: "PM1", status: "submitted", charge_date: "2026-11-16" } },
+      },
+      {
+        status: 422,
+        json: {
+          error: {
+            type: "invalid_api_usage",
+            code: 422,
+            message: "Mandate already cancelled",
+            errors: [{ reason: "cancellation_failed", message: "Mandate already cancelled" }],
+          },
+        },
+      },
+    ]);
+    const p = provider(api);
+    expect(await p.retryPayment("PM1")).toEqual({ status: "submitted" });
+    expect(api.requests[0]).toMatchObject({
+      method: "POST",
+      url: "https://api-sandbox.gocardless.com/payments/PM1/actions/retry",
+      body: { data: {} },
+    });
+    await expect(p.cancelMandate("MD1")).resolves.toBeUndefined();
+  });
+
   it("gives up on a request GoCardless never answers", async () => {
     const hung: typeof fetch = (_input, init) =>
       new Promise((_resolve, reject) => {
