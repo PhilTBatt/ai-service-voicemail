@@ -69,7 +69,11 @@ export async function runChargePeriods(deps: ChargePeriodsDeps): Promise<ChargeR
   let lastError: unknown = null;
   for (const tenant of await listBillableTenants(deps.admin)) {
     try {
+      // The months already settled, in one look: without it, every morning opened a
+      // transaction for every month since the business went live, more each month.
+      const settled = await settledMonths(deps.pool, tenant.tenantId);
       for (const period of endedPeriods(tenant.billingStartDate, today, tenant.leftOn)) {
+        if (settled.has(period.periodStart)) continue;
         const outcome = await chargePeriod(deps, tenant, period);
         if (outcome === "already-done") continue;
         counts.periods += 1;
@@ -97,6 +101,23 @@ export async function runChargePeriods(deps: ChargePeriodsDeps): Promise<ChargeR
     });
   }
   return counts;
+}
+
+/**
+ * A business's months with nothing left for the morning run to do: charged and handed to the
+ * provider (or settled since), nothing due, or under the minimum. A month still being asked
+ * for ('collecting', after a crash) or owed with no Direct Debit ('no_mandate') isn't settled:
+ * chargePeriod picks those up again. Anything else, chargePeriod would answer "already-done".
+ */
+async function settledMonths(pool: pg.Pool, tenantId: string): Promise<Set<string>> {
+  const { rows } = await withTenant(pool, tenantId, (client) =>
+    client.query<{ period_start: string }>(
+      `SELECT period_start::text FROM billing_charges
+       WHERE tenant_id = $1 AND status NOT IN ('collecting', 'no_mandate')`,
+      [tenantId],
+    ),
+  );
+  return new Set(rows.map((row) => row.period_start));
 }
 
 interface ChargeRow {

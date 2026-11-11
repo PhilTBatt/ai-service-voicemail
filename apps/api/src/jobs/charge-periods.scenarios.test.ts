@@ -181,73 +181,81 @@ const ZERO_RUN = {
 };
 
 describe("a pilot's first year, run every morning", () => {
-  it("charges each month once, the morning after it ends, at the pilot's price then the plan's", async () => {
-    // Live on 31 January 2027: months end on the last day of shorter months.
-    const anchor = "2027-01-31";
-    const starts = [
-      "2027-01-31",
-      "2027-02-28",
-      "2027-03-31",
-      "2027-04-30",
-      "2027-05-31",
-      "2027-06-30",
-      "2027-07-31",
-      "2027-08-31",
-      "2027-09-30",
-      "2027-10-31",
-      "2027-11-30",
-      "2027-12-31",
-    ];
-    const ends = [...starts.slice(1), "2028-01-31"];
-    const { tenantId, mandateRef } = await business({
-      anchor,
-      isPilot: true,
-      // The free month two minutes over (40p, under the £1 minimum); the second month 50 over.
-      usage: { "2027-01-31": 202 * 60, "2027-02-28": 250 * 60 - 30 },
-    });
-    const { payments, run, emails, alert } = harness([tenantId]);
+  // Thirty-six morning runs against real Postgres: longer than Vitest's 5-second default when
+  // the whole suite shares the machine (it timed out there once, on 2026-11-11).
+  it(
+    "charges each month once, the morning after it ends, at the pilot's price then the plan's",
+    { timeout: 30_000 },
+    async () => {
+      // Live on 31 January 2027: months end on the last day of shorter months.
+      const anchor = "2027-01-31";
+      const starts = [
+        "2027-01-31",
+        "2027-02-28",
+        "2027-03-31",
+        "2027-04-30",
+        "2027-05-31",
+        "2027-06-30",
+        "2027-07-31",
+        "2027-08-31",
+        "2027-09-30",
+        "2027-10-31",
+        "2027-11-30",
+        "2027-12-31",
+      ];
+      const ends = [...starts.slice(1), "2028-01-31"];
+      const { tenantId, mandateRef } = await business({
+        anchor,
+        isPilot: true,
+        // The free month two minutes over (40p, under the £1 minimum); the second month 50 over.
+        usage: { "2027-01-31": 202 * 60, "2027-02-28": 250 * 60 - 30 },
+      });
+      const { payments, run, emails, alert } = harness([tenantId]);
 
-    for (const end of ends) {
-      // The evening before a month ends: nothing new.
-      const before = await run(new Date(startOfUkDate(end).getTime() - 60_000));
-      expect(before, `before ${end}`).toEqual(ZERO_RUN);
-      // The morning after: exactly that month.
-      const counts = await run(morningOf(end));
-      expect(counts.periods, `on ${end}`).toBe(1);
-      // Run again the same morning: nothing more.
-      expect(await run(morningOf(end))).toEqual(ZERO_RUN);
-    }
+      for (const end of ends) {
+        // The evening before a month ends: nothing new.
+        const before = await run(new Date(startOfUkDate(end).getTime() - 60_000));
+        expect(before, `before ${end}`).toEqual(ZERO_RUN);
+        // The morning after: exactly that month.
+        const counts = await run(morningOf(end));
+        expect(counts.periods, `on ${end}`).toBe(1);
+        // Run again the same morning: nothing more.
+        expect(await run(morningOf(end))).toEqual(ZERO_RUN);
+      }
 
-    const rows = await charges(tenantId);
-    expect(rows.map((row) => [row.period_start, row.period_end])).toEqual(
-      starts.map((start, i) => [start, ends[i]]),
-    );
-    expect(rows.map((row) => row.period_index)).toEqual(starts.map((_, i) => i));
-    expect(rows.map((row) => row.fee_pence)).toEqual([
-      0, 4900, 4900, 4900, 9900, 9900, 9900, 9900, 9900, 9900, 9900, 9900,
-    ]);
-    expect(rows.map((row) => row.total_pence)).toEqual([
-      40, 5900, 4900, 4900, 9900, 9900, 9900, 9900, 9900, 9900, 9900, 9900,
-    ]);
-    expect(rows[0]).toMatchObject({
-      status: "below_minimum",
-      overage_minutes: 2,
-      payment_ref: null,
-    });
-    expect(rows.slice(1).every((row) => row.status === "pending")).toBe(true);
+      const rows = await charges(tenantId);
+      expect(rows.map((row) => [row.period_start, row.period_end])).toEqual(
+        starts.map((start, i) => [start, ends[i]]),
+      );
+      expect(rows.map((row) => row.period_index)).toEqual(starts.map((_, i) => i));
+      expect(rows.map((row) => row.fee_pence)).toEqual([
+        0, 4900, 4900, 4900, 9900, 9900, 9900, 9900, 9900, 9900, 9900, 9900,
+      ]);
+      expect(rows.map((row) => row.total_pence)).toEqual([
+        40, 5900, 4900, 4900, 9900, 9900, 9900, 9900, 9900, 9900, 9900, 9900,
+      ]);
+      expect(rows[0]).toMatchObject({
+        status: "below_minimum",
+        overage_minutes: 2,
+        payment_ref: null,
+      });
+      expect(rows.slice(1).every((row) => row.status === "pending")).toBe(true);
 
-    // One payment per month collected, oldest first, each keyed by the business and the month.
-    expect(payments.payments.map((p) => [p.idempotencyKey, p.amountPence, p.mandateRef])).toEqual(
-      rows
-        .slice(1)
-        .map((row) => [`charge:${tenantId}:${row.period_start}`, row.total_pence, mandateRef]),
-    );
-    expect(new Set(payments.requests).size).toBe(11);
-    expect(emails("receipt")).toHaveLength(11);
-    expect(alert).not.toHaveBeenCalled();
-    // A year's takings: 40p waived, £59 + 2 × £49 + 8 × £99.
-    expect(payments.payments.reduce((sum, p) => sum + p.amountPence, 0)).toBe(5900 + 9800 + 79_200);
-  });
+      // One payment per month collected, oldest first, each keyed by the business and the month.
+      expect(payments.payments.map((p) => [p.idempotencyKey, p.amountPence, p.mandateRef])).toEqual(
+        rows
+          .slice(1)
+          .map((row) => [`charge:${tenantId}:${row.period_start}`, row.total_pence, mandateRef]),
+      );
+      expect(new Set(payments.requests).size).toBe(11);
+      expect(emails("receipt")).toHaveLength(11);
+      expect(alert).not.toHaveBeenCalled();
+      // A year's takings: 40p waived, £59 + 2 × £49 + 8 × £99.
+      expect(payments.payments.reduce((sum, p) => sum + p.amountPence, 0)).toBe(
+        5900 + 9800 + 79_200,
+      );
+    },
+  );
 });
 
 describe("missed mornings", () => {
