@@ -1,7 +1,8 @@
 // The billing emails (BUILD_PLAN Step 12): a receipt for each month's charge, a note when a
 // payment couldn't be collected, and one when a Direct Debit ends. Pure: the job fills them in.
-// Called receipts rather than invoices: the wording of a VAT invoice is the accountant's to
-// confirm first (BUILD_PLAN Step 12 🛑), and until Brockersby is VAT registered there's no VAT.
+// Called receipts rather than invoices: until Brockersby is VAT registered there's no VAT, and a
+// VAT invoice needs more than these show (HMRC VAT Notice 700/21 section 4.1: a sequential
+// number, both sides' names and addresses). Those come before the VAT settings do.
 import { formatPence } from "./billing.ts";
 import { escapeHtml } from "./notifications.ts";
 

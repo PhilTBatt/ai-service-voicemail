@@ -1,6 +1,6 @@
 # 018: The external uptime check
 
-**Date:** 2026-11-10 · **Status:** proposed, for Phil to pick · **BUILD_PLAN:** Step 8, Monitoring
+**Date:** 2026-11-10 · **Status:** accepted 2026-11-10 (Phil set up the UptimeRobot monitors) · **BUILD_PLAN:** Step 8, Monitoring
 
 ## The question
 
