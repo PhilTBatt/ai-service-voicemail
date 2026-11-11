@@ -2,10 +2,16 @@
 // a failed or refused send does to the count, the UK time across the clock changes, and the
 // redaction of everything a detail can carry.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { alertEmailer, alertMessage, installAlertEmail } from "./alert-email.ts";
+import {
+  ALERT_EMAIL_RETRY_FIRST_MS,
+  alertEmailer,
+  alertMessage,
+  installAlertEmail,
+} from "./alert-email.ts";
 import { ALERTS, raiseAlert, setAlertSink } from "./alerts.ts";
 import type { OutboundPolicy } from "./core/outbound-allowlist.ts";
 import { logger } from "./logger.ts";
+import type { EmailProvider } from "./providers/email.ts";
 import { FakeEmailProvider } from "./providers/email.fake.ts";
 
 const TO = "alerts@example.com";
@@ -74,6 +80,16 @@ describe("the throttle", () => {
     }
     expect(subjects()).toHaveLength(2);
     expect(subjects()[1]).toBe("[AnswerMate] webhook-signature-spike (+2)");
+  });
+
+  it("sends one email when the same alert comes twice at once, counting the other", async () => {
+    // The window now starts once the email has gone, so the second mustn't slip in meanwhile.
+    const { sink, advance, subjects } = emailer();
+    await Promise.all([sink("guardrail-hit", {}), sink("guardrail-hit", {})]);
+    expect(subjects()).toEqual(["[AnswerMate] guardrail-hit"]);
+    advance(15 * MINUTE);
+    await sink("guardrail-hit", {});
+    expect(subjects()).toEqual(["[AnswerMate] guardrail-hit", "[AnswerMate] guardrail-hit (+1)"]);
   });
 
   it("takes its own interval when given one", async () => {
@@ -184,7 +200,7 @@ describe("a send that doesn't happen", () => {
     expect(email.sent.map((sent) => sent.to)).toEqual(["someone-else@example.com"]);
   });
 
-  it("logs a failed send with the error, and the alert's window still runs", async () => {
+  it("logs a failed send with the error, starts no window, and loses none of the alerts", async () => {
     const error = vi.spyOn(logger, "error").mockImplementation(() => logger);
     const { sink, email, advance, subjects } = emailer();
     email.willFail("Postmark is down");
@@ -193,12 +209,15 @@ describe("a send that doesn't happen", () => {
       alert: "job-dead-lettered",
       error: expect.objectContaining({ message: "Postmark is down" }) as unknown,
     });
-    // Best effort, by design: the failed email isn't retried at once, and the alert is still in
-    // the log. The next one after the window says how many it stood in for.
+    // The provider gets its minute before anything is tried again, however many alerts come.
     await sink("job-dead-lettered", {});
-    advance(15 * MINUTE);
-    await sink("job-dead-lettered", {});
-    expect(subjects()).toEqual(["[AnswerMate] job-dead-lettered (+1)"]);
+    expect(email.sent).toHaveLength(0);
+    // A minute on, not fifteen: the failed send started no window. The email stands in for all
+    // three alerts, the failed one included, and shows the newest.
+    advance(ALERT_EMAIL_RETRY_FIRST_MS);
+    await sink("job-dead-lettered", { queue: "notify-email" });
+    expect(subjects()).toEqual(["[AnswerMate] job-dead-lettered (+2)"]);
+    expect(email.sent[0]?.text).toContain('"queue": "notify-email"');
   });
 
   it("never throws when the details can't be turned into JSON", async () => {
@@ -206,6 +225,81 @@ describe("a send that doesn't happen", () => {
     const { sink, email } = emailer();
     await expect(sink("guardrail-hit", { big: 10n })).resolves.toBeUndefined();
     expect(email.sent).toHaveLength(0);
+  });
+
+  it("doesn't take details it can't write out for the provider failing", async () => {
+    vi.spyOn(logger, "error").mockImplementation(() => logger);
+    const { sink, subjects } = emailer();
+    await sink("guardrail-hit", { big: 10n });
+    // No wait for a retry: the provider never failed, so the next alert goes straight out.
+    await sink("agent-sync-failed", {});
+    expect(subjects()).toEqual(["[AnswerMate] agent-sync-failed"]);
+  });
+});
+
+describe("an email provider that's down", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** The sink on a fake clock (its timers and Date both), with a provider down for a while. */
+  function outage(downFromMs: number, upAgainMs: number) {
+    vi.useFakeTimers({ now: start });
+    vi.spyOn(logger, "error").mockImplementation(() => logger);
+    const delivered = new FakeEmailProvider();
+    /** When each send was tried, in minutes from the start. */
+    const tries: number[] = [];
+    const provider: EmailProvider = {
+      send: (message) => {
+        const elapsed = Date.now() - start.getTime();
+        tries.push(elapsed / MINUTE);
+        return elapsed >= downFromMs && elapsed < upAgainMs
+          ? Promise.reject(new Error("Postmark is down"))
+          : delivered.send(message);
+      },
+    };
+    const sink = alertEmailer({ email: provider, to: TO, outbound: testPolicy });
+    return { sink, tries, subjects: () => delivered.sent.map((sent) => sent.subject) };
+  }
+
+  it("tries once per retry, however many alerts come, backing off to every 15 minutes", async () => {
+    const { sink, tries, subjects } = outage(0, 60 * MINUTE);
+    for (const alert of ALERTS) await sink(alert, { tenantId: "t1" });
+    // The same alert again while it waits: counted, not tried.
+    for (let i = 0; i < 3; i += 1) await sink("sms-undelivered", { tenantId: "t2" });
+
+    await vi.advanceTimersByTimeAsync(60 * MINUTE);
+    // The first alert's own try, then one per retry: after 1, 2, 4 and 8 minutes, then 15.
+    expect(tries.filter((minute) => minute < 60)).toEqual([0, 1, 3, 7, 15, 30, 45]);
+    // Back at the hour: one email for each alert, none lost, saying what it stood in for.
+    expect([...subjects()].sort()).toEqual(
+      ALERTS.map((alert) =>
+        alert === "sms-undelivered" ? `[AnswerMate] ${alert} (+3)` : `[AnswerMate] ${alert}`,
+      ).sort(),
+    );
+    // And then nothing more is tried.
+    const triedByThen = tries.length;
+    await vi.advanceTimersByTimeAsync(60 * MINUTE);
+    expect(tries).toHaveLength(triedByThen);
+    expect(triedByThen).toBe(7 + ALERTS.length);
+  });
+
+  it("keeps to the throttle on a retry: an alert emailed just before the outage waits out its window", async () => {
+    const { sink, subjects } = outage(MINUTE, 2 * MINUTE);
+    await sink("guardrail-hit", {}); // goes
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    await sink("agent-sync-failed", {}); // fails
+    await sink("guardrail-hit", {}); // held: its window runs, and the provider's failing
+    // The retry a minute later sends the one that failed, and not the one in its window.
+    await vi.advanceTimersByTimeAsync(9 * MINUTE);
+    expect(subjects()).toEqual(["[AnswerMate] guardrail-hit", "[AnswerMate] agent-sync-failed"]);
+    await vi.advanceTimersByTimeAsync(5 * MINUTE);
+    await sink("guardrail-hit", {});
+    expect(subjects()).toEqual([
+      "[AnswerMate] guardrail-hit",
+      "[AnswerMate] agent-sync-failed",
+      "[AnswerMate] guardrail-hit (+1)",
+    ]);
   });
 });
 

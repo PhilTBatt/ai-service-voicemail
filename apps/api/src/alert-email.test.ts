@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { alertEmailer, alertMessage } from "./alert-email.ts";
+import { ALERT_EMAIL_RETRY_FIRST_MS, alertEmailer, alertMessage } from "./alert-email.ts";
 import { raiseAlert, setAlertSink } from "./alerts.ts";
 import { logger } from "./logger.ts";
 import { FakeEmailProvider } from "./providers/email.fake.ts";
@@ -98,6 +98,25 @@ describe("alertEmailer", () => {
       "Alert email failed",
       expect.objectContaining({ alert: "job-dead-lettered" }),
     );
+  });
+
+  it("still emails a once-a-month alert whose send failed, with no other alert to prompt it", async () => {
+    vi.useFakeTimers({ now: start });
+    try {
+      vi.spyOn(logger, "error").mockImplementation(() => logger);
+      const email = new FakeEmailProvider().willFail("Postmark is down");
+      const sink = alertEmailer({ email, to: TO, outbound });
+      // The 06:00 billing run's only alert about this business this month.
+      await sink("billing-no-mandate", { tenantId: "t1" });
+      expect(email.sent).toHaveLength(0);
+      await vi.advanceTimersByTimeAsync(ALERT_EMAIL_RETRY_FIRST_MS);
+      expect(email.sent.map((sent) => sent.subject)).toEqual(["[AnswerMate] billing-no-mandate"]);
+      expect(email.sent[0]?.text).toContain('"tenantId": "t1"');
+      // When the alert was raised, not when its email finally went.
+      expect(email.sent[0]?.text).toContain("At: 10 Nov 2026, 14:03 (UK time)");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("is what raiseAlert hands every alert to, without waiting on it", async () => {

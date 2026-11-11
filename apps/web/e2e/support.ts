@@ -1,19 +1,27 @@
-// Shared steps for the browser tests that came after the smoke tests (journeys, pages). Not a
-// test file itself: playwright.config.ts only runs *.e2e.ts.
+// Shared steps for the browser tests that came after the smoke tests (journeys, numbers, pages).
+// Not a test file itself: playwright.config.ts only runs *.e2e.ts.
 //
 // The tests share one seeded database (apps/api/src/testing/e2e-server.ts) and run one at a
-// time, in file order: journeys.e2e.ts, then pages.e2e.ts, then smoke.e2e.ts. So a test either
-// puts back what it changed (in an afterEach hook, through the API, so a failure halfway can't
-// leave the seeded business switched off for every test after it) or changes a business of its
-// own, made through a fresh signup link. A hook, not a `finally`: once a test has run out of
-// time, Playwright has closed its request before a `finally` runs, but hooks still get one.
+// time, in file order: journeys.e2e.ts, numbers.e2e.ts, pages.e2e.ts, then smoke.e2e.ts. So a
+// test either puts back what it changed (in an afterEach hook, through the API, so a failure
+// halfway can't leave the seeded business switched off for every test after it) or changes a
+// business of its own, made through a fresh signup link. A hook, not a `finally`: once a test
+// has run out of time, Playwright has closed its request before a `finally` runs, but hooks
+// still get one.
 import type { CallListView, CreatedSignupLinkView, TenantListView } from "@callmate/shared";
-import { expect, type APIRequestContext, type Page } from "@playwright/test";
+import { expect, type APIRequestContext, type APIResponse, type Page } from "@playwright/test";
 
 export const ADMIN = "admin@example.com";
 export const OWNER = "owner@example.com";
 export const FERN_LANE = "Fern Lane Plumbing";
 export const OTHER_SPARKS = "Other Sparks";
+
+/**
+ * The header that has the test API buy numbers from its stand-in for Twilio: "on", or
+ * "switched-off" for a server with TWILIO_PURCHASES_ENABLED off. Without it the API has no
+ * number buying at all. Named in apps/api/src/testing/e2e-server.ts too, which reads it.
+ */
+export const NUMBERS_HEADER = "x-e2e-numbers";
 
 /** The token the sign-in stand-in stores (src/testing/clerk-stub.tsx), and the API reads. */
 function tokenFor(email: string): string {
@@ -34,6 +42,21 @@ export async function openAs(page: Page, email: string, path: string): Promise<v
   await page.goto(path);
 }
 
+/** Calls the API as someone and gives back whatever it answered, for checking a refusal. */
+export function apiResponseAs(
+  request: APIRequestContext,
+  email: string,
+  method: "GET" | "PUT" | "POST",
+  path: string,
+  body?: unknown,
+): Promise<APIResponse> {
+  return request.fetch(`/api${path}`, {
+    method,
+    headers: { authorization: `Bearer ${tokenFor(email)}` },
+    ...(body !== undefined && { data: body }),
+  });
+}
+
 /** Calls the API as someone, for setting a test up or putting things back afterwards. */
 export async function apiAs<T = unknown>(
   request: APIRequestContext,
@@ -42,11 +65,7 @@ export async function apiAs<T = unknown>(
   path: string,
   body?: unknown,
 ): Promise<T> {
-  const response = await request.fetch(`/api${path}`, {
-    method,
-    headers: { authorization: `Bearer ${tokenFor(email)}` },
-    ...(body !== undefined && { data: body }),
-  });
+  const response = await apiResponseAs(request, email, method, path, body);
   expect(response.ok(), `${method} ${path}: ${response.status()} ${await response.text()}`).toBe(
     true,
   );

@@ -38,6 +38,8 @@ What that gives, for 100 businesses: 2.4 Erlangs, about 7 lines, so:
 
 The real app, routes and database code, against the test database, with the fakes for every outside service: Twilio, the voice platform, the login provider. The fakes check webhook signatures with fixed test keys, and the k6 script signs with the same keys, so signature checking is part of what's measured. Nothing leaves the machine. The worker isn't running, so jobs queue up unprocessed, as they would for a minute in a busy hour.
 
+The worker's side is tested on its own (2026-11-11): `worker-jobs.concurrency.test.ts` runs the worker's real job registration against the test database with fakes, eight calls at once with an LLM that takes 2 s, and checks they run four at a time with every message sent once. Its concurrency (`WORK_OPTIONS` in `worker-jobs.ts`) takes process-call from about 5 to 12 calls a minute to 20 to 48, against about 12 in the busy hour of 1,000 businesses. Not yet measured: the worker under k6's traffic, and the real LLM's time per call.
+
 ## 5. The limits (thresholds)
 
 - Errors under 1% and checks above 99%.

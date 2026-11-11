@@ -5,6 +5,7 @@
 import type pg from "pg";
 import { raiseAlert, type AlertFn } from "../alerts.ts";
 import { checkOutbound, type OutboundPolicy } from "../core/outbound-allowlist.ts";
+import { applyEarlyReceipt, mediumOf, raiseReceiptAlert } from "../db/delivery-receipts.ts";
 import { withTenant } from "../db/tenant.ts";
 import { logger } from "../logger.ts";
 import { redactText } from "../redact.ts";
@@ -141,7 +142,7 @@ export async function deliverNotification(
     }
     throw error; // the queue retries with backoff; the row shows how many times
   }
-  await withTenant(pool, tenantId, async (client) => {
+  const early = await withTenant(pool, tenantId, async (client) => {
     await client.query(
       `UPDATE notifications SET status = 'sent', provider_ref = $3
        WHERE call_id = $1 AND channel = $2`,
@@ -161,7 +162,14 @@ export async function deliverNotification(
         ],
       );
     }
+    // The provider may already have said what became of it: it can call back before this
+    // transaction commits, and that receipt was kept for now (db/delivery-receipts.ts).
+    return applyEarlyReceipt(client, mediumOf(channel), result.providerRef);
   });
   logger.info("Notification sent", { tenantId, callId, channel });
+  if (early) {
+    logger.info("Delivery receipt applied on sending", { tenantId, callId, channel });
+    raiseReceiptAlert(alert, tenantId, early);
+  }
   return "sent";
 }

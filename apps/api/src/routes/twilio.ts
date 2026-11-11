@@ -18,9 +18,9 @@ import {
   smsReply,
   voicemailDone,
 } from "../core/twiml.ts";
-import { findTenantIdByMobile, findTenantIdByProviderRef } from "../db/cross-tenant.ts";
+import { findTenantIdByMobile } from "../db/cross-tenant.ts";
+import { recordReceipt } from "../db/delivery-receipts.ts";
 import { loadInboundCallContext } from "../db/inbound-call.ts";
-import { withTenant } from "../db/tenant.ts";
 import { applySmsCommand } from "../db/tenant-commands.ts";
 import type { EnqueueNotifications } from "../jobs/enqueue-notifications.ts";
 import { storeFallbackVoicemail } from "../db/voicemails.ts";
@@ -378,33 +378,31 @@ export function twilioRouter({
       res.status(204).end();
       return;
     }
-    const tenantId = await findTenantIdByProviderRef(pool, messageSid);
-    if (tenantId === null) {
-      logger.info("Delivery receipt for a text we don't know", { messageSid, status });
-      res.status(204).end();
-      return;
-    }
-    const row = await withTenant(
+    const { tenantId } = await recordReceipt(
       pool,
-      tenantId,
-      async (client) =>
-        (
-          await client.query<{ call_id: string }>(
-            `UPDATE notifications SET status = $2, failure_code = $3
-             WHERE provider_ref = $1 AND status IN ('sent', 'delivered', 'undelivered')
-             RETURNING call_id`,
-            [messageSid, final, final === "undelivered" ? (errorCode ?? null) : null],
-          )
-        ).rows[0],
+      {
+        medium: "sms",
+        providerRef: messageSid,
+        status: final,
+        failureCode: final === "undelivered" ? (errorCode ?? null) : null,
+        alert:
+          final === "undelivered"
+            ? {
+                name:
+                  errorCode === OPTED_OUT_ERROR_CODE ? "recipient-opted-out" : "sms-undelivered",
+                details: { errorCode: errorCode ?? null },
+              }
+            : null,
+      },
+      alert,
     );
-    if (row && final === "undelivered") {
-      alert(errorCode === OPTED_OUT_ERROR_CODE ? "recipient-opted-out" : "sms-undelivered", {
-        tenantId,
-        callId: row.call_id,
-        errorCode: errorCode ?? null,
-      });
+    if (tenantId === null) {
+      // Twilio was quicker than the send job saving the ID, and the job applies it (alert and
+      // all) when it does; or it's a text that isn't a notification, and the receipt expires.
+      logger.info("Delivery receipt kept: no text has its ID yet", { messageSid, status });
+    } else {
+      logger.info("Delivery receipt handled", { messageSid, tenantId, status: final });
     }
-    logger.info("Delivery receipt handled", { messageSid, tenantId, status: final });
     res.status(204).end();
   });
 

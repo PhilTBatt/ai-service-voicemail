@@ -12,6 +12,7 @@ import {
 } from "../core/spike.ts";
 import { assignPhoneNumber, createAdminPool, createTenant } from "../db/cross-tenant.ts";
 import { createPool } from "../db/pool.ts";
+import { deliverNotification } from "../jobs/deliver-notification.ts";
 import { FakeTelephonyProvider } from "../providers/telephony.fake.ts";
 import { FakeVoiceProvider } from "../providers/voice.fake.ts";
 import { TEST_ADMIN_DATABASE_URL, TEST_DATABASE_URL } from "../testing/databases.ts";
@@ -854,5 +855,87 @@ describe("POST /webhooks/twilio/sms-status", () => {
       "http://localhost:3000/webhooks/twilio/sms-status",
     );
     expect(response.status).toBe(403);
+  });
+
+  describe("a receipt that arrives before the send job has saved the text's ID", () => {
+    const TO = "+447700900001";
+    /** A tenant and a call with no text yet: the send job is about to create it. */
+    async function makeCall() {
+      const { tenantId } = await makeTenant("live");
+      const { rows } = await admin.query<{ id: string }>(
+        `INSERT INTO calls (tenant_id, provider_call_id, started_at, ended_at, summary)
+         VALUES ($1, $2, now(), now(), 'A job.') RETURNING id`,
+        [tenantId, `call_${randomUUID()}`],
+      );
+      return { tenantId, callId: rows[0]!.id, messageSid: `SM${randomUUID().replace(/-/g, "")}` };
+    }
+    /** Sends a text whose provider calls back with `receipts` before it has even answered. */
+    const sendWithReceiptsFirst = (
+      call: Awaited<ReturnType<typeof makeCall>>,
+      receipts: Record<string, string>[],
+    ) =>
+      deliverNotification(
+        { pool: app, outbound: { nodeEnv: "test", allowlist: new Set([TO]) }, alert },
+        {
+          tenantId: call.tenantId,
+          callId: call.callId,
+          channel: "sms",
+          to: TO,
+          send: async () => {
+            for (const receipt of receipts) {
+              const response = await post("/webhooks/twilio/sms-status", {
+                MessageSid: call.messageSid,
+                ...receipt,
+              });
+              expect(response.status).toBe(204);
+            }
+            return { providerRef: call.messageSid };
+          },
+        },
+      );
+    const alertsAbout = (callId: string) =>
+      alert.mock.calls.filter(([, details]) => (details as { callId?: string }).callId === callId);
+
+    it("still marks the text undelivered, and alerts exactly once", async () => {
+      const call = await makeCall();
+      const undelivered = { MessageStatus: "undelivered", ErrorCode: "30003" };
+      // Twilio's callbacks aren't reliably retried, but one can still come twice.
+      expect(await sendWithReceiptsFirst(call, [undelivered, undelivered])).toBe("sent");
+      expect(await row(call.messageSid)).toEqual({ status: "undelivered", failure_code: "30003" });
+      expect(alertsAbout(call.callId)).toEqual([
+        ["sms-undelivered", { tenantId: call.tenantId, callId: call.callId, errorCode: "30003" }],
+      ]);
+
+      // The same receipt again once the ID is saved changes nothing and tells nobody twice.
+      await post("/webhooks/twilio/sms-status", { MessageSid: call.messageSid, ...undelivered });
+      expect(await row(call.messageSid)).toEqual({ status: "undelivered", failure_code: "30003" });
+      expect(alertsAbout(call.callId)).toHaveLength(1);
+    });
+
+    it("names an opt-out that arrives early", async () => {
+      const call = await makeCall();
+      await sendWithReceiptsFirst(call, [{ MessageStatus: "failed", ErrorCode: "21610" }]);
+      expect(alertsAbout(call.callId)).toEqual([
+        [
+          "recipient-opted-out",
+          { tenantId: call.tenantId, callId: call.callId, errorCode: "21610" },
+        ],
+      ]);
+    });
+
+    it("marks it delivered after an early 'sent', and a late 'sent' can't undo that", async () => {
+      const call = await makeCall();
+      await sendWithReceiptsFirst(call, [
+        { MessageStatus: "sent" },
+        { MessageStatus: "delivered" },
+      ]);
+      expect(await row(call.messageSid)).toEqual({ status: "delivered", failure_code: null });
+      await post("/webhooks/twilio/sms-status", {
+        MessageSid: call.messageSid,
+        MessageStatus: "sent",
+      });
+      expect(await row(call.messageSid)).toEqual({ status: "delivered", failure_code: null });
+      expect(alertsAbout(call.callId)).toEqual([]);
+    });
   });
 });

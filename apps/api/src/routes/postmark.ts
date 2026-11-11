@@ -3,14 +3,14 @@
 // allowlist, so the webhook URL registered at Postmark carries a username and password that
 // must match POSTMARK_WEBHOOK_SECRET. A bounce or complaint marks the email undelivered
 // with Postmark's reason and raises an alert; a complaint is also Postmark deactivating that
-// address for good.
+// address for good. An event that arrives before the send job has saved the email's ID is kept,
+// and the job applies it when it saves the ID (db/delivery-receipts.ts).
 import { timingSafeEqual } from "node:crypto";
 import { Router, json } from "express";
 import type pg from "pg";
 import { z } from "zod";
 import { raiseAlert, type AlertFn } from "../alerts.ts";
-import { findTenantIdByProviderRef } from "../db/cross-tenant.ts";
-import { withTenant } from "../db/tenant.ts";
+import { recordReceipt } from "../db/delivery-receipts.ts";
 import { logger } from "../logger.ts";
 
 export interface PostmarkRouteOptions {
@@ -68,34 +68,27 @@ export function postmarkRouter({ pool, webhookSecret, alert = raiseAlert }: Post
       res.status(204).end();
       return;
     }
-    const tenantId = await findTenantIdByProviderRef(pool, messageId);
-    if (tenantId === null) {
-      logger.info("Postmark event for an email we don't know", { record, type });
-      res.status(204).end();
-      return;
-    }
-    const row = await withTenant(
+    const { tenantId } = await recordReceipt(
       pool,
-      tenantId,
-      async (client) =>
-        (
-          await client.query<{ call_id: string }>(
-            `UPDATE notifications SET status = 'undelivered', failure_code = $2
-             WHERE provider_ref = $1 AND channel = 'email' AND status IN ('sent', 'delivered', 'undelivered')
-             RETURNING call_id`,
-            [messageId, type],
-          )
-        ).rows[0],
+      {
+        medium: "email",
+        providerRef: messageId,
+        status: "undelivered",
+        failureCode: type,
+        alert: {
+          name: record === "SpamComplaint" ? "email-spam-complaint" : "email-bounced",
+          details: { type, addressDeactivated: inactive ?? false },
+        },
+      },
+      alert,
     );
-    if (row) {
-      alert(record === "SpamComplaint" ? "email-spam-complaint" : "email-bounced", {
-        tenantId,
-        callId: row.call_id,
-        type,
-        addressDeactivated: inactive ?? false,
-      });
+    if (tenantId === null) {
+      // Either quicker than the send job saving the ID, which applies it when it does, or an
+      // email that isn't a notification (a billing email, say), whose event expires.
+      logger.info("Postmark event kept: no email has its ID yet", { record, type });
+    } else {
+      logger.info("Postmark event handled", { record, type, tenantId });
     }
-    logger.info("Postmark event handled", { record, type, tenantId });
     res.status(204).end();
   });
 

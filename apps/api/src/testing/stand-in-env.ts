@@ -1,6 +1,7 @@
 // Every setting the API and the worker can use, filled with stand-ins, for the tests that check
 // what each one switches on (worker-jobs.test.ts, server-app.test.ts). Nothing is ever sent with
-// them: those tests only build the app and the job list, and never let a job run.
+// them: those tests only build the app and the job list, and never let a job run. The one that
+// does (worker-jobs.concurrency.test.ts) gives registerJobs a fake for every provider.
 import { TEST_ADMIN_DATABASE_URL, TEST_DATABASE_URL } from "./databases.ts";
 
 export const STAND_IN_ENV = {

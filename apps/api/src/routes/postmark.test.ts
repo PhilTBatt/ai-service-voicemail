@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createApp } from "../app.ts";
 import { createAdminPool, createTenant } from "../db/cross-tenant.ts";
 import { createPool } from "../db/pool.ts";
+import { deliverNotification } from "../jobs/deliver-notification.ts";
 import { TEST_ADMIN_DATABASE_URL, TEST_DATABASE_URL } from "../testing/databases.ts";
 
 const app = createPool(TEST_DATABASE_URL);
@@ -87,6 +88,42 @@ describe("POST /webhooks/postmark", () => {
       "email-spam-complaint",
       expect.objectContaining({ type: "SpamComplaint" }),
     );
+  });
+
+  it("applies a bounce that arrives before the send job has saved the email's ID, alerting once", async () => {
+    const tenantId = await createTenant(admin, { businessName: "Quick Bounce", trade: "plumber" });
+    const { rows } = await admin.query<{ id: string }>(
+      `INSERT INTO calls (tenant_id, provider_call_id, started_at, ended_at, summary)
+       VALUES ($1, $2, now(), now(), 'A job.') RETURNING id`,
+      [tenantId, `call_${randomUUID()}`],
+    );
+    const callId = rows[0]!.id;
+    const messageId = randomUUID();
+    const bounce = { RecordType: "Bounce", Type: "HardBounce", MessageID: messageId };
+    const to = "sam@example.com";
+    alert.mockClear();
+    const outcome = await deliverNotification(
+      { pool: app, outbound: { nodeEnv: "test", allowlist: new Set([to]) }, alert },
+      {
+        tenantId,
+        callId,
+        channel: "email",
+        to,
+        // Postmark reports the bounce before our record of the send has its ID.
+        send: async () => {
+          expect((await post(bounce)).status).toBe(204);
+          return { providerRef: messageId };
+        },
+      },
+    );
+    expect(outcome).toBe("sent");
+    expect(await row(messageId)).toEqual({ status: "undelivered", failure_code: "HardBounce" });
+    expect(alert.mock.calls).toEqual([
+      ["email-bounced", { tenantId, callId, type: "HardBounce", addressDeactivated: false }],
+    ]);
+    // Postmark sending it again (it retries a webhook that failed) tells nobody twice.
+    await post(bounce);
+    expect(alert).toHaveBeenCalledTimes(1);
   });
 
   it("ignores a transient bounce, unknown messages and other record types", async () => {

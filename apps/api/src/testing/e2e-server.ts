@@ -4,6 +4,7 @@
 // starts it (apps/web/playwright.config.ts) and stops it afterwards.
 //
 // Fictional data only (CLAUDE.md): Ofcom drama-range numbers, example.com addresses.
+import { createServer } from "node:http";
 import { createApp } from "../app.ts";
 import {
   assignPhoneNumber,
@@ -16,13 +17,66 @@ import {
 import { createPool } from "../db/pool.ts";
 import { startQueue } from "../jobs/queue.ts";
 import { logger } from "../logger.ts";
+import type { NumberConfiguration, PurchasedNumber } from "../providers/telephony.ts";
 import { FakeTelephonyProvider } from "../providers/telephony.fake.ts";
 import { FakeVoiceProvider } from "../providers/voice.fake.ts";
+import type { NumberProvisioning } from "../routes/admin.ts";
 import { TEST_ADMIN_DATABASE_URL, TEST_DATABASE_URL } from "./databases.ts";
 import { E2eAuthProvider } from "./e2e-auth.ts";
 import prepareTestDatabase from "./global-setup.ts";
 
 export const E2E_API_PORT = 3100;
+
+/**
+ * The request header that picks how this server buys numbers (apps/web/e2e/support.ts names it
+ * too). Without it, it can't, as a server without Twilio's settings can't: journeys.e2e.ts
+ * checks the page says so. "on" buys from a stand-in for Twilio, with purchases allowed and the
+ * UK bundle and address in place; "switched-off" is the same with TWILIO_PURCHASES_ENABLED off.
+ * A header rather than a second server because the routes take their numbers setup once, when
+ * they're built, and the dashboard reaches this server through one address (vite.config.ts).
+ */
+const NUMBERS_HEADER = "x-e2e-numbers";
+
+/**
+ * The fake Twilio, stocked for the admin's number card: its own five Leeds numbers (0113 496 0100
+ * to 0104) and three from 01632 960, Ofcom's drama ranges both, so a search by area code has
+ * something to leave out. As Twilio does, it stops offering a number once it's bought, so a test
+ * retried on the same server finds another rather than one the database already holds.
+ */
+class E2eNumberShop extends FakeTelephonyProvider {
+  constructor(options: { purchasesEnabled: boolean }) {
+    super(options);
+    this.available.push(
+      ...["+441632960100", "+441632960101", "+441632960102"].map((number) => ({
+        number,
+        locality: null,
+        region: null,
+      })),
+    );
+  }
+
+  override async purchaseNumber(
+    number: string,
+    config: NumberConfiguration,
+    options: { live: boolean },
+  ): Promise<PurchasedNumber> {
+    const bought = await super.purchaseNumber(number, config, options);
+    const sold = this.available.findIndex((offer) => offer.number === bought.number);
+    if (sold !== -1) this.available.splice(sold, 1);
+    return bought;
+  }
+}
+
+/** Buying numbers as server-app.ts wires it, but from the stand-in, never from Twilio. */
+function numbersSetup(purchasesEnabled: boolean): NumberProvisioning {
+  return {
+    telephony: new E2eNumberShop({ purchasesEnabled }),
+    publicBaseUrl: `http://localhost:${E2E_API_PORT}`,
+    fallbackVoicemailUrl: "https://example.com/e2e-fallback-voicemail",
+    purchasesEnabled,
+    ukRegulatoryReady: true,
+  };
+}
 
 /** Who and what the smoke tests expect to find. */
 async function seed(admin: AdminPool): Promise<void> {
@@ -69,16 +123,26 @@ const admin = createAdminPool(TEST_ADMIN_DATABASE_URL);
 await seed(admin);
 const boss = await startQueue(TEST_DATABASE_URL);
 
-const app = createApp({
+// One app for each numbers setup, sharing everything else: the database, the queue, and the
+// sign-in stand-in (which remembers who signed in, so it must be the one object).
+const dashboard = {
+  admin,
+  auth: new E2eAuthProvider(),
+  boss,
+  voice: new FakeVoiceProvider(),
+  telephony: new FakeTelephonyProvider(),
+};
+const withoutNumbers = createApp({ pool, dashboard });
+const withNumbers = createApp({ pool, dashboard: { ...dashboard, numbers: numbersSetup(true) } });
+const purchasesOff = createApp({
   pool,
-  dashboard: {
-    admin,
-    auth: new E2eAuthProvider(),
-    boss,
-    voice: new FakeVoiceProvider(),
-    telephony: new FakeTelephonyProvider(),
-  },
+  dashboard: { ...dashboard, numbers: numbersSetup(false) },
 });
-app.listen(E2E_API_PORT, () => {
+createServer((req, res) => {
+  const asked = req.headers[NUMBERS_HEADER];
+  const app =
+    asked === "on" ? withNumbers : asked === "switched-off" ? purchasesOff : withoutNumbers;
+  app(req, res);
+}).listen(E2E_API_PORT, () => {
   logger.info("Smoke-test API listening", { port: E2E_API_PORT });
 });

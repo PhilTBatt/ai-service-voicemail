@@ -598,8 +598,9 @@ test.describe("the admin, on a business that isn't live yet", () => {
     page,
     request,
   }) => {
-    // The smoke-test API has no number buying wired in (e2e-server.ts), as a server without
-    // Twilio's settings wouldn't: the page must say so rather than show an empty list.
+    // The smoke-test API has no number buying wired in unless a test asks for it (e2e-server.ts;
+    // numbers.e2e.ts does), as a server without Twilio's settings wouldn't: the page must say
+    // so rather than show an empty list.
     const sparks = await tenantIdOf(request, OTHER_SPARKS);
     await openAs(page, ADMIN, `/tenants/${sparks}/settings`);
     await page.getByLabel("Number contains").fill("0113 496");

@@ -12,6 +12,13 @@ import { logger } from "../logger.ts";
  * lock), with the API kept to one copy (infra/main.bicep): 17 in normal running, 34 at the peak
  * of a release plus the migration job's one. The load test (npm run load) passes at these sizes.
  *
+ * The worker's four app connections serve up to 12 post-call jobs at once (WORK_OPTIONS in
+ * worker-jobs.ts). That's enough because no job holds a connection while it waits on the LLM,
+ * Twilio or Postmark, only for each short transaction; worker-jobs.concurrency.test.ts runs them
+ * all at once at these sizes without one waiting out the 2-second connection timeout below.
+ * There's no room to grow it anyway: one more connection in the worker is two more at a
+ * release's peak, past the 35.
+ *
  * The one-off task job (callmate-task: the Deploy workflow's "task" step) runs one script from
  * apps/api/src/scripts with pools of its own, at most one of each at its default size
  * (create-demo-business has all three): 4 + 2 + 2 = 8 more, so 25 while a task runs. It shares
