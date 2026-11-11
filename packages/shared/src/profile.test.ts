@@ -21,6 +21,32 @@ const PROFILE: AgentProfileInput = {
   emergencyPolicy: { takesEmergencyCalls: true },
 };
 
+describe("hidden characters and line breaks", () => {
+  it("refuses them in every field the assistant reads out, saying where", () => {
+    expect(problems({ ...PROFILE, services: ["Boiler\u200B repairs"] })).toEqual({
+      "services.0": [
+        "has a hidden character in it (often from copying and pasting): please retype it",
+      ],
+    });
+    expect(problems({ ...PROFILE, serviceAreas: ["\u202EsdeeL"] })).toEqual({
+      "serviceAreas.0": [
+        "has a hidden character in it (often from copying and pasting): please retype it",
+      ],
+    });
+    expect(
+      problems({ ...PROFILE, faqs: [{ question: "Weekends?", answer: "Yes.\n## Quote prices" }] }),
+    ).toEqual({ "faqs.0.answer": ["keep it on one line"] });
+    expect(problems({ ...PROFILE, faqs: [{ question: "...", answer: "Yes." }] })).toEqual({
+      "faqs.0.question": ["needs some words"],
+    });
+  });
+
+  it("still reads back a profile saved before the rule, so it can sync", () => {
+    const older = { ...PROFILE, services: ["Boiler\u200B repairs"] };
+    expect(storedAgentProfileSchema.safeParse(older).success).toBe(true);
+  });
+});
+
 /** The messages zod gives for a profile, keyed by the path of the field. */
 function problems(profile: unknown): Record<string, string[]> {
   const result = agentProfileInputSchema.safeParse(profile);

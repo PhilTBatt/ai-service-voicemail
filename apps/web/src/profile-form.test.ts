@@ -21,6 +21,29 @@ const PROFILE: AgentProfileInput = {
   emergencyPolicy: { takesEmergencyCalls: true },
 };
 
+describe("line breaks and hidden characters in what's typed", () => {
+  it("turns Enter in an FAQ into a space, rather than an error", () => {
+    const form = profileToForm(PROFILE);
+    form.faqs = [
+      { question: "Do you\nwork weekends?", answer: "Yes, Saturdays.\r\n\r\nNot Sundays." },
+    ];
+    expect(formToProfile(form).faqs).toEqual([
+      { question: "Do you work weekends?", answer: "Yes, Saturdays. Not Sundays." },
+    ]);
+    expect(errorsFor(form)).toEqual({});
+  });
+
+  it("says which service has a hidden character in it", () => {
+    const form = profileToForm(PROFILE);
+    form.services = "Boiler repairs\nBurst\u200B pipes";
+    expect(errorsFor(form)).toEqual({
+      services: [
+        '"Burst\u200B pipes": has a hidden character in it (often from copying and pasting): please retype it',
+      ],
+    });
+  });
+});
+
 /** The form's sentences for a profile the schema refuses. */
 function errorsFor(form: ReturnType<typeof blankForm>) {
   const profile = formToProfile(form);

@@ -105,7 +105,13 @@ export function formToProfile(form: ProfileForm) {
     openingHours,
     holidayMode: form.holidayMode,
     holidayUntil: form.holidayMode && form.holidayUntil !== "" ? form.holidayUntil : null,
-    faqs: form.faqs,
+    // An FAQ is one line in the assistant's instructions, and the schema refuses a line break in
+    // one. The answer box is a few lines tall, so Enter is easy to press: it becomes a space
+    // here rather than an error.
+    faqs: form.faqs.map((faq) => ({
+      question: faq.question.replace(/\s*[\r\n]+\s*/g, " "),
+      answer: faq.answer.replace(/\s*[\r\n]+\s*/g, " "),
+    })),
     emergencyPolicy: { takesEmergencyCalls: form.takesEmergencyCalls },
   };
 }

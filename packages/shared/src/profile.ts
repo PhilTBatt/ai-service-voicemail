@@ -7,6 +7,7 @@
 // post-call scan uses. The length limits keep the prompt a sensible size.
 import { z } from "zod";
 import { givesSafetyAdvice, mentionsPrice, promisesTime } from "./guardrail-patterns.ts";
+import { plainTextProblem } from "./plain-text.ts";
 import { TRADES } from "./trades.ts";
 
 export const WEEKDAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const;
@@ -39,6 +40,10 @@ function spoken(maxLength: number, checked: boolean) {
     .max(maxLength, `keep it under ${maxLength} characters`);
   if (!checked) return text;
   return text
+    .superRefine((value, context) => {
+      const problem = plainTextProblem(value);
+      if (problem) context.addIssue({ code: "custom", message: problem });
+    })
     .refine(
       (value) => !mentionsPrice(value),
       "can't include prices: the assistant never quotes them",

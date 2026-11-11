@@ -2,6 +2,7 @@
 // networks we know divert codes for (Appendix C), and the signup form's rules, shared so the
 // page checks the form exactly as the API does.
 import { z } from "zod";
+import { plainTextProblem } from "./plain-text.ts";
 import { emailAddressSchema, ukMobileSchema } from "./settings.ts";
 import { TRADES } from "./trades.ts";
 
@@ -106,13 +107,29 @@ export const MOBILE_NETWORK_KEYS = Object.keys(MOBILE_NETWORKS) as [
   ...MobileNetwork[],
 ];
 
+/**
+ * A name the assistant says and the texts carry: one line of plain text (plain-text.ts), so a
+ * pasted hidden character or line break can't reach the prompt or a text.
+ */
+function nameSchema(maxLength: number) {
+  return z
+    .string()
+    .trim()
+    .min(1, "can't be empty")
+    .max(maxLength, `keep it under ${maxLength} characters`)
+    .superRefine((value, context) => {
+      const problem = plainTextProblem(value);
+      if (problem) context.addIssue({ code: "custom", message: problem });
+    });
+}
+
 export const signupInputSchema = z.object({
   /** The code from the signup link. */
   code: z.string().min(16, "this signup link isn't complete").max(100),
-  businessName: z.string().trim().min(1, "can't be empty").max(100, "keep it under 100 characters"),
+  businessName: nameSchema(100),
   trade: z.enum(TRADES),
   /** The tradesperson's name, as callers will hear it ("Sam will call you back"). */
-  contactName: z.string().trim().min(1, "can't be empty").max(60, "keep it under 60 characters"),
+  contactName: nameSchema(60),
   mobile: ukMobileSchema,
   /** Where call emails go. Null: the address they signed in with. */
   email: emailAddressSchema.nullable(),

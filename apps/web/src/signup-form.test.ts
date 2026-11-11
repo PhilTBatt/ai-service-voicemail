@@ -35,6 +35,29 @@ describe("signupProblems", () => {
     expect(JSON.stringify(problems)).not.toMatch(/expected one of/i);
   });
 
+  it("refuses a hidden character or a line break in the names, from the real schema", () => {
+    const result = signupInputSchema.safeParse({
+      code: "x".repeat(20),
+      // A right-to-left override would show this as "gnibmulP enaL nreF" reversed in places.
+      businessName: "\u202EFern Lane Plumbing",
+      trade: "plumber",
+      contactName: "Jo\nSmith",
+      mobile: "+447700900123",
+      email: null,
+      mobileNetwork: "ee",
+      usesNetworkVoicemail: false,
+      accepted: Object.fromEntries(LEGAL_DOCUMENT_TYPES.map((type) => [type, "v1"])),
+    });
+    expect(result.success).toBe(false);
+    const problems = signupProblems(result.success ? [] : result.error.issues, false);
+    expect(problems).toEqual({
+      businessName: [
+        "Has a hidden character in it (often from copying and pasting): please retype it",
+      ],
+      contactName: ["Keep it on one line"],
+    });
+  });
+
   it("says each message once, starting with a capital", () => {
     const issue = { path: ["businessName"], message: "can't be empty" };
     expect(signupProblems([issue, issue], false)).toEqual({ businessName: ["Can't be empty"] });
