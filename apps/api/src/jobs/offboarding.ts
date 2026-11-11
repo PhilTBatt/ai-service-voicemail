@@ -86,7 +86,7 @@ export interface DeletionDeps {
 }
 
 type ChannelOutcome =
-  "sent" | "blocked" | "already-sent" | "no-address" | "not-configured" | "failed";
+  "sent" | "blocked" | "already-sent" | "no-address" | "not-configured" | "failed" | "not-leaving";
 
 export interface CancellationNoticesOutcome {
   sms: ChannelOutcome;
@@ -116,6 +116,7 @@ interface TenantForNotices {
   notification_email: string | null;
   mobile_network: MobileNetwork | null;
   voicemail_restore_code: string | null;
+  status: string;
   sms_sent: boolean;
   email_sent: boolean;
 }
@@ -128,7 +129,7 @@ async function sendCancellationNotices(
     const row = (
       await client.query<TenantForNotices>(
         `SELECT business_name, notification_mobile, notification_email, mobile_network,
-                voicemail_restore_code,
+                voicemail_restore_code, status,
                 EXISTS (SELECT 1 FROM offboarding_messages m WHERE m.tenant_id = tenants.id
                         AND m.kind = 'cancellation' AND m.channel = 'sms' AND m.status = 'sent') AS sms_sent,
                 EXISTS (SELECT 1 FROM offboarding_messages m WHERE m.tenant_id = tenants.id
@@ -140,6 +141,11 @@ async function sendCancellationNotices(
     if (!row) throw new Error(`Tenant ${tenantId} not found`);
     return row;
   });
+  // Cancelled and then taken back (an admin's undo) before this ran: nothing to tell them.
+  if (tenant.status !== "cancelling" && tenant.status !== "cancelled") {
+    logger.info("Cancellation undone before its notices went: none sent", { tenantId });
+    return { sms: "not-leaving", email: "not-leaving" };
+  }
 
   const notice = {
     businessName: tenant.business_name,

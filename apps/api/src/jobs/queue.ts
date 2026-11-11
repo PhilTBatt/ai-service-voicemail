@@ -1,5 +1,6 @@
 import { PgBoss } from "pg-boss";
 import type pg from "pg";
+import { QUEUE_POOL_MAX } from "../db/pool.ts";
 import { logger } from "../logger.ts";
 
 export const SYNC_AGENT_QUEUE = "sync-agent";
@@ -44,6 +45,8 @@ export const BILLING_EMAIL_QUEUE = "billing-email";
 export async function startQueue(connectionString: string): Promise<PgBoss> {
   const boss = new PgBoss({
     connectionString,
+    // Within the connection budget (db/pool.ts): the default is 10.
+    max: QUEUE_POOL_MAX,
     schema: "pgboss",
     migrate: false,
     createSchema: false,

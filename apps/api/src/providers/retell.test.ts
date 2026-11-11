@@ -1,4 +1,5 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
+import { setAlertSink } from "../alerts.ts";
 import { sampleAgentDefinition, sampleCallEndedEvent } from "../testing/agent-fixture.ts";
 import { RetellApiStub } from "../testing/retell-stub.ts";
 import {
@@ -168,12 +169,30 @@ describe("RetellVoiceProvider webhooks", () => {
   });
 
   // Signed by Retell, so not a forgery: a 401 would count towards the signature alert.
-  it("ignores a correctly signed body in a shape it doesn't read, rather than refusing it", () => {
-    const { rawBody, headers } = signed({ event: "call_ended", call: { call_id: 42 } });
-    expect(provider().verifyAndParseWebhook(rawBody, headers)).toEqual({
-      type: "ignored",
-      reason: "unexpected shape",
-    });
+  it("ignores a correctly signed body in a shape it doesn't read, and alerts if it was a call", () => {
+    const sink = vi.fn(() => Promise.resolve());
+    setAlertSink(sink);
+    try {
+      const { rawBody, headers } = signed({ event: "call_ended", call: { call_id: 42 } });
+      expect(provider().verifyAndParseWebhook(rawBody, headers)).toEqual({
+        type: "ignored",
+        reason: "unexpected shape",
+      });
+      // A call we can't read is a call we'd lose: said loudly.
+      expect(sink).toHaveBeenCalledWith(
+        "voice-webhook-unreadable",
+        expect.objectContaining({ source: "webhook" }),
+      );
+      // Another event in a shape we don't know is nothing to worry about.
+      sink.mockClear();
+      const other = signed({ event: "transcript_updated", call: { call_id: 42 } });
+      expect(provider().verifyAndParseWebhook(other.rawBody, other.headers)).toMatchObject({
+        type: "ignored",
+      });
+      expect(sink).not.toHaveBeenCalled();
+    } finally {
+      setAlertSink(undefined);
+    }
   });
 
   it("keeps only speech from the transcript, not tool calls or node transitions", () => {

@@ -5,6 +5,7 @@ import type { PgBoss } from "pg-boss";
 import type pg from "pg";
 import { raiseAlert, type AlertFn } from "../alerts.ts";
 import {
+  billingSituation,
   directDebitEndedEmail,
   paymentFailedEmail,
   receiptEmail,
@@ -76,10 +77,11 @@ export async function runBillingEmail(
     ]);
     if (done.rowCount !== 0) return "already-sent" as const;
     const tenant = (
-      await client.query<{ business_name: string; notification_email: string | null }>(
-        "SELECT business_name, notification_email FROM tenants WHERE id = $1",
-        [tenantId],
-      )
+      await client.query<{
+        business_name: string;
+        notification_email: string | null;
+        status: string;
+      }>("SELECT business_name, notification_email, status FROM tenants WHERE id = $1", [tenantId])
     ).rows[0];
     if (!tenant) return null;
     let charge: ChargeRow | undefined;
@@ -142,14 +144,19 @@ export async function runBillingEmail(
           chargeDate: charge!.charge_date,
         })
       : kind === "payment_failed"
-        ? paymentFailedEmail(tenant.business_name, {
-            periodStart: charge!.period_start,
-            periodEnd: charge!.period_end,
-            totalPence: charge!.total_pence,
-          })
+        ? paymentFailedEmail(
+            tenant.business_name,
+            {
+              periodStart: charge!.period_start,
+              periodEnd: charge!.period_end,
+              totalPence: charge!.total_pence,
+            },
+            billingSituation(tenant.status),
+          )
         : directDebitEndedEmail(
             tenant.business_name,
             `${dashboardOrigin}/tenants/${tenantId}/settings#billing`,
+            billingSituation(tenant.status),
           );
   let receipt;
   try {

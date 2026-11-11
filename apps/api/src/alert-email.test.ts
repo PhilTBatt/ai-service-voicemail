@@ -57,6 +57,23 @@ describe("alertEmailer", () => {
     expect(email.sent[2]?.text).toContain("Plus 2 more of these since the last email about it.");
   });
 
+  it("emails each business's billing and delivery alerts, while outages stay one email", async () => {
+    const { email, sink } = emailer();
+    // The 06:00 run finds two businesses without a Direct Debit: both need doing.
+    await sink("billing-no-mandate", { tenantId: "t1" });
+    await sink("billing-no-mandate", { tenantId: "t2" });
+    await sink("billing-no-mandate", { tenantId: "t1" }); // the same business again: held
+    // An outage hitting two businesses is one problem, one email.
+    await sink("voice-platform-unreachable", { tenantId: "t1" });
+    await sink("voice-platform-unreachable", { tenantId: "t2" });
+    expect(email.sent.map((sent) => sent.subject)).toEqual([
+      "[AnswerMate] billing-no-mandate",
+      "[AnswerMate] billing-no-mandate",
+      "[AnswerMate] voice-platform-unreachable",
+    ]);
+    expect(email.sent[1]?.text).toContain('"tenantId": "t2"');
+  });
+
   it("never emails an address outside the allowlist outside production", async () => {
     const { email, sink } = emailer({ to: "someone-else@example.com" });
     await sink("guardrail-hit", {});

@@ -370,6 +370,13 @@ describe("authorisation matrix", () => {
       method: "POST",
     },
     { name: "GET /admin/cancellations", path: "/admin/cancellations" },
+    // No confirmation: refused (400) even for the admin, so nothing is undone.
+    {
+      name: "POST /admin/tenants/:id/undo-cancellation",
+      path: `/admin/tenants/${tenantA}/undo-cancellation`,
+      body: {},
+      method: "POST",
+    },
     // No confirmation in the body: refused (400) even for the admin, so nothing is released.
     {
       name: "POST /admin/tenants/:id/release-number",
@@ -426,6 +433,7 @@ describe("authorisation matrix", () => {
       "PUT /admin/tenants/:id/pilot": 403,
       "POST /admin/tenants/:id/onboarding/divert-instructions": 403,
       "GET /admin/cancellations": 403,
+      "POST /admin/tenants/:id/undo-cancellation": 403,
       "POST /admin/tenants/:id/release-number": 403,
       "POST /admin/tenants/:id/delete-data": 403,
       "GET /admin/billing": 403,
@@ -1007,7 +1015,7 @@ describe("invitations", () => {
   it("refuses to invite an address twice", async () => {
     const email = `twice-${randomUUID()}@example.com`;
     expect((await inviteUser(admin, { email, role: "owner" })).outcome).toBe("invited");
-    expect(await inviteUser(admin, { email: email.toUpperCase(), role: "admin" })).toEqual({
+    expect(await inviteUser(admin, { email: email.toUpperCase(), role: "admin" })).toMatchObject({
       outcome: "exists",
       role: "owner",
     });
@@ -1084,7 +1092,9 @@ describe("cancellation", () => {
     const tenant = await createTenant(admin, { businessName: "Leaving Locks", trade: "locksmith" });
     await admin.query("UPDATE tenants SET status = 'live' WHERE id = $1", [tenant]);
     const owner = await personFor(tenant);
-    expect((await send("POST", `/tenants/${tenant}/cancel`, {}, owner)).status).toBe(200);
+    expect((await send("POST", `/tenants/${tenant}/cancel`, { confirm: true }, owner)).status).toBe(
+      200,
+    );
 
     const row = await admin.query<{ cancellation_requested_at: Date }>(
       "SELECT cancellation_requested_at FROM tenants WHERE id = $1",
@@ -1105,6 +1115,66 @@ describe("cancellation", () => {
       cancellationRequestedAt: "2026-11-07T10:00:00.000Z",
       releaseDueAt: "2026-12-07T10:00:00.000Z",
     });
+  });
+
+  // Before, only a live or paused business could leave: a drop-out that never went live, or a
+  // suspended one, could never reach the number release or the data deletion.
+  it("lets a business that never went live, or a suspended one, leave too", async () => {
+    for (const status of ["onboarding", "suspended"]) {
+      const tenant = await createTenant(admin, {
+        businessName: `Leaving ${status}`,
+        trade: "roofer",
+      });
+      await admin.query("UPDATE tenants SET status = $2 WHERE id = $1", [tenant, status]);
+      const cancelled = await send(
+        "POST",
+        `/tenants/${tenant}/cancel`,
+        { confirm: true },
+        tokens.admin,
+      );
+      expect(cancelled.status, status).toBe(200);
+      expect(await cancelled.json(), status).toEqual({
+        outcome: "cancelling",
+        status: "cancelling",
+      });
+    }
+  });
+
+  it("lets the admin undo a cancellation until the number is released, back to how it was", async () => {
+    const tenant = await createTenant(admin, {
+      businessName: "Changed Mind Gas",
+      trade: "plumber",
+    });
+    await admin.query("UPDATE tenants SET status = 'paused' WHERE id = $1", [tenant]);
+    const owner = await personFor(tenant);
+    expect((await send("POST", `/tenants/${tenant}/cancel`, { confirm: true }, owner)).status).toBe(
+      200,
+    );
+
+    const undo = (body: unknown, token = tokens.admin) =>
+      send("POST", `/admin/tenants/${tenant}/undo-cancellation`, body, token);
+    expect((await undo({})).status).toBe(400); // the confirmation is required
+    expect((await undo({ confirm: true }, owner)).status).toBe(403); // admin only
+    const undone = await undo({ confirm: true });
+    expect(undone.status).toBe(200);
+    expect(await undone.json()).toEqual({ outcome: "restored", status: "paused" });
+    const row = await admin.query<{ status: string; cancellation_requested_at: Date | null }>(
+      "SELECT status, cancellation_requested_at FROM tenants WHERE id = $1",
+      [tenant],
+    );
+    expect(row.rows[0]).toEqual({ status: "paused", cancellation_requested_at: null });
+    const audit = await admin.query<{ action: string }>(
+      "SELECT action FROM audit_log WHERE tenant_id = $1 AND action LIKE 'tenant.cancel%' ORDER BY created_at",
+      [tenant],
+    );
+    expect(audit.rows.map((r) => r.action)).toEqual([
+      "tenant.cancel-requested",
+      "tenant.cancel-undone",
+    ]);
+
+    // Not once the number is gone: it has left for good.
+    await admin.query("UPDATE tenants SET status = 'cancelled' WHERE id = $1", [tenant]);
+    expect((await undo({ confirm: true })).status).toBe(409);
   });
 
   it("releases a leaving business's number only once its 30 days are up, then it's cancelled", async () => {
@@ -1263,10 +1333,10 @@ describe("cancellation", () => {
     const tenant = await createTenant(admin, { businessName: "Leaving Locks", trade: "locksmith" });
     await admin.query("UPDATE tenants SET status = 'live' WHERE id = $1", [tenant]);
     const owner = await personFor(tenant);
-    const first = await send("POST", `/tenants/${tenant}/cancel`, {}, owner);
+    const first = await send("POST", `/tenants/${tenant}/cancel`, { confirm: true }, owner);
     expect(first.status).toBe(200);
     expect(await first.json()).toEqual({ outcome: "cancelling", status: "cancelling" });
-    const again = await send("POST", `/tenants/${tenant}/cancel`, {}, owner);
+    const again = await send("POST", `/tenants/${tenant}/cancel`, { confirm: true }, owner);
     expect(again.status).toBe(409);
     expect(await again.json()).toMatchObject({ status: "cancelling" });
     const audit = await admin.query<{ actor_user_id: string | null; details: unknown }>(
@@ -1347,6 +1417,22 @@ describe("CSV export", () => {
 });
 
 describe("billing (Step 12)", () => {
+  // The month a business leaves in is charged; none after. The Account tab used to quote the
+  // next month's fee as still to come.
+  it("shows no month to be charged for once one starts after the business left", async () => {
+    const tenant = await createTenant(admin, { businessName: "Left Roofing", trade: "roofer" });
+    const owner = await personFor(tenant);
+    // Live since 14 September; asked to leave on 10 October; the test clock is 7 November, in
+    // the month that began on 14 October, after it left.
+    await admin.query(
+      `UPDATE tenants SET status = 'cancelling', billing_start_date = '2026-09-14',
+                          cancellation_requested_at = '2026-10-10T09:00:00Z' WHERE id = $1`,
+      [tenant],
+    );
+    const view = await json<BillingView>(get(`/tenants/${tenant}/billing`, owner));
+    expect(view).toMatchObject({ period: null, leftOn: "2026-10-10" });
+  });
+
   it("shows the plan, the billing month once live, and walks a Direct Debit from start to active", async () => {
     const tenant = await createTenant(admin, {
       businessName: "Billed Plumbing",
@@ -1367,6 +1453,7 @@ describe("billing (Step 12)", () => {
       },
       isPilot: false,
       period: null,
+      leftOn: null,
       directDebit: { status: "none", since: null, endReason: null },
       charges: [],
     });
@@ -1867,6 +1954,54 @@ describe("admin screens", () => {
       ).status,
     ).toBe(404);
     expect(telephony.purchased.size).toBe(before);
+  });
+
+  it("buys nothing for a business that has left: it would pay for a number it can never release", async () => {
+    const tenant = await createTenant(admin, { businessName: "Gone Glazing", trade: "roofer" });
+    await admin.query("UPDATE tenants SET status = 'cancelled' WHERE id = $1", [tenant]);
+    const before = telephony.purchased.size;
+    const response = await send(
+      "POST",
+      `/admin/tenants/${tenant}/number`,
+      { number: telephony.available[2]!.number, confirm: true },
+      tokens.admin,
+    );
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      error: "This business is cancelled: it doesn't need a number",
+    });
+    expect(telephony.purchased.size).toBe(before);
+  });
+
+  it("buys nothing without the UK bundle and address, which Twilio would refuse", async () => {
+    const server = createApp({
+      pool: app,
+      dashboard: {
+        admin,
+        auth,
+        boss,
+        numbers: { telephony, ...NUMBER_URLS, purchasesEnabled: true, ukRegulatoryReady: false },
+      },
+    }).listen(0);
+    await once(server, "listening");
+    try {
+      const { port } = server.address() as AddressInfo;
+      const tenant = await createTenant(admin, {
+        businessName: "No Bundle Plumbing",
+        trade: "plumber",
+      });
+      const before = telephony.purchased.size;
+      const response = await fetch(`http://127.0.0.1:${port}/api/admin/tenants/${tenant}/number`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${tokens.admin}`, "content-type": "application/json" },
+        body: JSON.stringify({ number: telephony.available[3]!.number, confirm: true }),
+      });
+      expect(response.status).toBe(409);
+      expect(((await response.json()) as { error: string }).error).toContain("twilio-bundle-sid");
+      expect(telephony.purchased.size).toBe(before);
+    } finally {
+      await new Promise((resolve) => server.close(() => resolve(undefined)));
+    }
   });
 
   it("buys nothing while purchases are switched off on the server, but still searches", async () => {

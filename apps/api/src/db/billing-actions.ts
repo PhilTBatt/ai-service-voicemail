@@ -96,3 +96,54 @@ export async function setSuspended(
     return { outcome: suspend ? "suspended" : "resumed", status: wanted };
   });
 }
+
+export type UndoCancellationResult =
+  { outcome: "restored"; status: TenantStatus } | { outcome: "not-allowed"; status: TenantStatus };
+
+const RESTORABLE: readonly TenantStatus[] = ["live", "paused", "suspended", "onboarding"];
+
+/**
+ * Takes back a cancellation (an audit finding, 2026-11-11: before this, a tradesperson who
+ * changed their mind heard "service has ended" for 30 days, with only SQL to fix it). Only
+ * while the business is still cancelling, i.e. its number hasn't been released. It goes back to
+ * the status it left from, as the cancellation's own audit row recorded it (read through the
+ * admin pool, the only one that may read the log), or paused if that can't be found, so the
+ * owner switches it on themselves.
+ */
+export async function undoCancellation(
+  pool: pg.Pool,
+  admin: pg.Pool,
+  tenantId: string,
+  actorUserId: string,
+): Promise<UndoCancellationResult> {
+  const recorded = (
+    await admin.query<{ from: string | null }>(
+      `SELECT details->>'from' AS "from" FROM audit_log
+       WHERE tenant_id = $1 AND action = 'tenant.cancel-requested'
+       ORDER BY created_at DESC LIMIT 1`,
+      [tenantId],
+    )
+  ).rows[0]?.from;
+  const restore: TenantStatus = RESTORABLE.includes(recorded as TenantStatus)
+    ? (recorded as TenantStatus)
+    : "paused";
+  return withTenant(pool, tenantId, async (client) => {
+    const row = (
+      await client.query<{ status: TenantStatus }>(
+        "SELECT status FROM tenants WHERE id = $1 FOR UPDATE",
+        [tenantId],
+      )
+    ).rows[0];
+    if (!row) throw new Error(`Tenant ${tenantId} not found`);
+    if (row.status !== "cancelling") return { outcome: "not-allowed", status: row.status };
+    await client.query(
+      "UPDATE tenants SET status = $2, cancellation_requested_at = NULL WHERE id = $1",
+      [tenantId, restore],
+    );
+    await client.query(
+      "INSERT INTO audit_log (tenant_id, actor_user_id, action, details) VALUES ($1, $2, 'tenant.cancel-undone', $3)",
+      [tenantId, actorUserId, { via: "dashboard", to: restore }],
+    );
+    return { outcome: "restored", status: restore };
+  });
+}

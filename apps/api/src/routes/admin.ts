@@ -15,6 +15,7 @@ import type {
   ReleasedNumberView,
   ReviewQueueView,
   SuspensionView,
+  UndoCancellationView,
   UsageView,
 } from "@callmate/shared";
 import { ONBOARDING_STATES } from "@callmate/shared";
@@ -27,7 +28,7 @@ import { releaseDueAt } from "../core/offboarding.ts";
 import { CURRENT_PRICES, describePrices, poundsToPence } from "../core/prices.ts";
 import { startOfUkDate, usagePeriodFor } from "../core/usage.ts";
 import { ukDateOf } from "../core/billing.ts";
-import { collectAgain, setSuspended } from "../db/billing-actions.ts";
+import { collectAgain, setSuspended, undoCancellation } from "../db/billing-actions.ts";
 import {
   activeNumberFor,
   auditAdminAction,
@@ -57,6 +58,7 @@ import type { EnqueueOnboarding } from "../jobs/onboarding.ts";
 import { countDeadLettered, recentDeadLetters } from "../jobs/queue.ts";
 import type { PaymentsProvider } from "../providers/payments.ts";
 import { PurchaseNotAllowedError, type TelephonyProvider } from "../providers/telephony.ts";
+import { TwilioApiError } from "../providers/twilio.ts";
 import { presentCallSummary } from "./call-view.ts";
 import { principalOf, requireRole } from "./dashboard-auth.ts";
 
@@ -68,6 +70,11 @@ export interface NumberProvisioning {
   fallbackVoicemailUrl: string;
   /** TWILIO_PURCHASES_ENABLED. Off, the admin screen can search for numbers but not buy one. */
   purchasesEnabled: boolean;
+  /**
+   * TWILIO_BUNDLE_SID and TWILIO_ADDRESS_SID are both set: a UK number can't be bought without
+   * an approved bundle and address (decision 009), and Twilio refuses the purchase otherwise.
+   */
+  ukRegulatoryReady?: boolean;
   alert?: AlertFn;
 }
 
@@ -140,7 +147,11 @@ export function adminRouter({
   router.get("/billing", async (_req, res) => {
     const today = ukDateOf(now());
     const overview = await billingOverview(admin, startOfUkDate(`${today.slice(0, 7)}-01`));
-    res.json({ available: payments !== undefined, ...overview } satisfies AdminBillingView);
+    res.json({
+      available: payments !== undefined,
+      environment: payments?.environment ?? null,
+      ...overview,
+    } satisfies AdminBillingView);
   });
 
   // A failed payment, collected again: GoCardless's own retry of the same payment.
@@ -194,6 +205,29 @@ export function adminRouter({
   });
   router.post("/tenants/:tenantId/resume", async (req, res) => {
     await suspension(req.params.tenantId, false, res);
+  });
+
+  // Taking back a cancellation, while the number hasn't been released: the business goes back
+  // to how it was before it asked to leave. Behind a confirmation, and audited.
+  router.post("/tenants/:tenantId/undo-cancellation", async (req, res) => {
+    if (!suspendBody.safeParse(req.body).success) {
+      res.status(400).json({ error: "Undoing a cancellation needs { confirm: true }" });
+      return;
+    }
+    const { tenantId } = req.params;
+    if (!isTenantId(tenantId) || !(await tenantExists(admin, tenantId))) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    const result = await undoCancellation(pool, admin, tenantId, principalOf(res).userId);
+    if (result.outcome === "not-allowed") {
+      res.status(409).json({
+        error: `Only a business that's leaving, with its number not yet released, can have its cancellation undone; this one is ${result.status}`,
+        status: result.status,
+      });
+      return;
+    }
+    res.json({ outcome: "restored", status: result.status } satisfies UndoCancellationView);
   });
 
   async function suspension(tenantId: string, suspend: boolean, res: import("express").Response) {
@@ -385,9 +419,25 @@ export function adminRouter({
       });
       return;
     }
+    if (numbers.ukRegulatoryReady === false) {
+      res.status(409).json({
+        error:
+          "A UK number needs the approved bundle and address: set twilio-bundle-sid and twilio-address-sid (RUNBOOK section 16)",
+      });
+      return;
+    }
     const { tenantId } = req.params;
     if (!(await tenantExists(admin, tenantId))) {
       res.status(404).json({ error: "Not found" });
+      return;
+    }
+    // Only for a business that will use it: one that has left would pay for a number playing
+    // "service has ended" for good, with no release (that needs it to be leaving).
+    const { status } = (
+      await admin.query<{ status: string }>("SELECT status FROM tenants WHERE id = $1", [tenantId])
+    ).rows[0]!;
+    if (!["onboarding", "live", "paused", "demo"].includes(status)) {
+      res.status(409).json({ error: `This business is ${status}: it doesn't need a number` });
       return;
     }
     // One purchase at a time for a business. Two at once (two tabs, say) would both find no
@@ -417,6 +467,11 @@ export function adminRouter({
       } catch (error) {
         if (error instanceof PurchaseNotAllowedError) {
           return { status: 409, body: { error: "Twilio refused: purchases aren't enabled" } };
+        }
+        // Twilio said no (the number went to someone else since the search, or the bundle
+        // isn't approved): its own reason, redacted, instead of a bare 500.
+        if (error instanceof TwilioApiError && error.status >= 400 && error.status < 500) {
+          return { status: 409, body: { error: error.message } };
         }
         throw error;
       }

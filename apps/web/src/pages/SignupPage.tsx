@@ -32,6 +32,10 @@ export function SignupPage() {
         <section className="card error">
           <h2>This link can't be used</h2>
           <p>{link.error.message}. Ask whoever sent it for a new one.</p>
+          {/* Someone tapping the old link after signing up wants their dashboard. */}
+          <p>
+            Already signed up? <a href="/">Open your dashboard</a>.
+          </p>
         </section>
       )}
       {link.status === "ready" && (
@@ -282,7 +286,16 @@ function SignupForm({ code, link }: { code: string; link: SignupLinkView }) {
             ))}
           </ul>
         )}
-        {error && <ErrorNote error={error} />}
+        {error && (
+          <>
+            <ErrorNote error={error} />
+            {/already have an AnswerMate account/i.test(error.message) && (
+              <p>
+                <a href="/">Open your dashboard</a>
+              </p>
+            )}
+          </>
+        )}
         <button type="submit" disabled={busy}>
           {busy ? "Setting up…" : "Set up my business"}
         </button>

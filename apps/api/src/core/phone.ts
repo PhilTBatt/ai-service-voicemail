@@ -34,6 +34,8 @@ export function phoneFromInput(value: string | null | undefined): string | null 
   if (value === undefined || value === null) return null;
   let digits = value.replace(/[\s().-]/g, "");
   if (digits.startsWith("+440")) digits = `+44${digits.slice(4)}`;
+  // "7700 900123": a mobile written without its leading 0 (the extraction sometimes drops it).
+  if (/^7\d{9}$/.test(digits)) digits = `+44${digits}`;
   if (digits.startsWith("00")) digits = `+${digits.slice(2)}`;
   else if (digits.startsWith("0")) digits = `+44${digits.slice(1)}`;
   else if (digits.startsWith("44")) digits = `+${digits}`;

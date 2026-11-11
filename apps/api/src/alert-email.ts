@@ -21,7 +21,33 @@ export interface AlertEmailOptions {
   minIntervalMs?: number;
 }
 
-/** The sink: one email per alert name per interval, the rest counted into the next one. */
+/**
+ * Alerts about one business needing something done: throttled per business, not per alert, so
+ * two businesses in the same 15 minutes (the 06:00 billing run finds two without a Direct
+ * Debit, say) each get their email. Before, the second was only counted into a later email
+ * that, for a once-a-month alert, never came. Outage-type alerts stay one per alert name, so a
+ * provider down for fifty businesses is one email, not fifty.
+ */
+const PER_BUSINESS: ReadonlySet<AlertName> = new Set<AlertName>([
+  "notification-no-mobile",
+  "notification-no-email",
+  "notification-refused",
+  "recipient-opted-out",
+  "email-bounced",
+  "email-spam-complaint",
+  "number-bought-not-recorded",
+  "deletion-confirmation-not-sent",
+  "payment-mandate-ended",
+  "billing-no-mandate",
+  "billing-payment-failed",
+]);
+
+function throttleKey(alert: AlertName, details: Record<string, unknown>): string {
+  const tenantId = details["tenantId"];
+  return PER_BUSINESS.has(alert) && typeof tenantId === "string" ? `${alert}:${tenantId}` : alert;
+}
+
+/** The sink: one email per alert (per business, for some) per interval, the rest counted. */
 export function alertEmailer({
   email,
   to,
@@ -29,17 +55,18 @@ export function alertEmailer({
   now = () => new Date(),
   minIntervalMs = ALERT_EMAIL_MIN_INTERVAL_MS,
 }: AlertEmailOptions): AlertSink {
-  const lastSent = new Map<AlertName, { at: number; suppressed: number }>();
+  const lastSent = new Map<string, { at: number; suppressed: number }>();
 
   return async (alert, details) => {
     const at = now();
-    const last = lastSent.get(alert);
+    const key = throttleKey(alert, details);
+    const last = lastSent.get(key);
     if (last && at.getTime() - last.at < minIntervalMs) {
       last.suppressed += 1;
       return;
     }
     const suppressed = last?.suppressed ?? 0;
-    lastSent.set(alert, { at: at.getTime(), suppressed: 0 });
+    lastSent.set(key, { at: at.getTime(), suppressed: 0 });
 
     const decision = checkOutbound(outbound, to);
     if (!decision.allowed) {

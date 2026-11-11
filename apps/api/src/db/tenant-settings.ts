@@ -58,6 +58,9 @@ export type CancellationResult =
  * the tradesperson is texted and emailed how to remove their divert, and after 30 days an admin
  * can release the number (BUILD_PLAN Step 13).
  */
+/** The statuses a business can leave from. */
+export const CANCELLABLE: readonly TenantStatus[] = ["live", "paused", "suspended", "onboarding"];
+
 export async function requestCancellation(
   pool: pg.Pool,
   tenantId: string,
@@ -72,7 +75,10 @@ export async function requestCancellation(
       )
     ).rows[0];
     if (!row) throw new Error(`Tenant ${tenantId} not found`);
-    if (row.status !== "live" && row.status !== "paused") {
+    // A business can leave from anything but leaving already: one that never went live (a
+    // drop-out, a test) and one that's suspended included. Before, those could never reach the
+    // number release or the data deletion that follow.
+    if (!CANCELLABLE.includes(row.status)) {
       return { outcome: "not-allowed", status: row.status };
     }
     // The 30 days of "service has ended" count from now (core/offboarding.ts).

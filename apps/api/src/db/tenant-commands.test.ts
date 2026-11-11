@@ -148,6 +148,18 @@ describe("applySmsCommand", () => {
     expect(isGsm7(reply)).toBe(true);
   });
 
+  it("STATUS says holiday mode is off once the holiday's last day has passed", async () => {
+    const { tenantId } = await makeTenant("live");
+    // Away until 14 July; today (NOW) is the 15th.
+    await admin.query(
+      "UPDATE agent_profiles SET holiday_mode = true, holiday_until = '2026-07-14' WHERE tenant_id = $1",
+      [tenantId],
+    );
+    expect((await applySmsCommand(app, tenantId, { kind: "status" }, NOW)).reply).toContain(
+      "Holiday mode is off.",
+    );
+  });
+
   it("STATUS counts today's calls still waiting for a reply: not called back, not spam", async () => {
     const { tenantId } = await makeTenant("live");
     const none = await applySmsCommand(app, tenantId, { kind: "status" }, NOW);

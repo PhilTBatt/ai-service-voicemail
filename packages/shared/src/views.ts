@@ -215,6 +215,11 @@ export interface HealthView {
 
 /** GET /api/tenants/:id/billing: the plan, this month so far, and the Direct Debit (Step 12). */
 export interface BillingView {
+  /**
+   * The UK date the business asked to leave, or null. The month it left in is charged; none
+   * after, so once one of those starts there's no current period to show.
+   */
+  leftOn: string | null;
   /** Whether payments are set up on this server at all; without, Direct Debit can't be started. */
   available: boolean;
   plan: {
@@ -270,6 +275,8 @@ export interface DirectDebitStartView {
 export interface AdminBillingView {
   /** Whether payments are set up on this server; without, nothing can be collected again. */
   available: boolean;
+  /** GoCardless's sandbox (no real money) or the live account; null when it isn't known. */
+  environment: "sandbox" | "live" | null;
   thisMonth: { collectedPence: number; collectingPence: number; problemPence: number };
   attention: {
     chargeId: string;
@@ -285,6 +292,13 @@ export interface AdminBillingView {
 }
 
 /** POST /api/admin/tenants/:id/suspend and /resume */
+/** POST /api/admin/tenants/:id/undo-cancellation */
+export interface UndoCancellationView {
+  outcome: "restored";
+  /** What it went back to: the status it left from. */
+  status: string;
+}
+
 export interface SuspensionView {
   outcome: "suspended" | "resumed" | "unchanged";
   status: string;

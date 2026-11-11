@@ -10,11 +10,11 @@ import {
   type Trade,
 } from "@callmate/shared";
 import type pg from "pg";
-import { endedPeriods } from "../core/billing.ts";
+import { endedPeriods, ukDateOf } from "../core/billing.ts";
 import type { CostPrices } from "../core/prices.ts";
 import { REVIEW_FLAGS } from "../core/review.ts";
 import { startOfUkDate, usagePeriodFor } from "../core/usage.ts";
-import { createPool } from "./pool.ts";
+import { ADMIN_POOL_MAX, createPool } from "./pool.ts";
 
 /**
  * Finds which tenant owns an active number, for webhooks that arrive before any tenant is
@@ -60,8 +60,11 @@ export async function findTenantIdByCall(appPool: pg.Pool, callId: string): Prom
 export type AdminPool = pg.Pool & { readonly __brand: "AdminPool" };
 
 /** Connects as callmate_admin, which sees every tenant. Only for admin work and seeding. */
-export function createAdminPool(adminDatabaseUrl: string): AdminPool {
-  return createPool(adminDatabaseUrl) as AdminPool;
+export function createAdminPool(
+  adminDatabaseUrl: string,
+  { max = ADMIN_POOL_MAX } = {},
+): AdminPool {
+  return createPool(adminDatabaseUrl, { max }) as AdminPool;
 }
 
 export interface NewTenant {
@@ -483,7 +486,10 @@ export async function listCurrentUsage(admin: AdminPool, today: Date): Promise<T
      LEFT JOIN usage_periods u
        ON u.tenant_id = t.id AND u.period_start <= $1::date AND u.period_end > $1::date
      ORDER BY t.business_name`,
-    [periodStart, startOfUkDate(periodStart), startOfUkDate(periodEnd)],
+    // The period that contains today: billing months run from each business's go-live date
+    // (decision 019), so the one holding the 1st of the calendar month was usually last
+    // month's, or none at all.
+    [ukDateOf(today), startOfUkDate(periodStart), startOfUkDate(periodEnd)],
   );
   return rows;
 }
@@ -891,7 +897,7 @@ export async function createUser(admin: AdminPool, user: NewUser): Promise<strin
 }
 
 export type InviteResult =
-  { outcome: "invited"; userId: string } | { outcome: "exists"; role: string };
+  { outcome: "invited"; userId: string } | { outcome: "exists"; role: string; userId: string };
 
 /** Creates an account for someone who hasn't logged in yet, unless the address has one. */
 export async function inviteUser(
@@ -899,11 +905,12 @@ export async function inviteUser(
   user: Omit<NewUser, "authSubject">,
 ): Promise<InviteResult> {
   const existing = (
-    await admin.query<{ role: string }>("SELECT role FROM users WHERE lower(email) = lower($1)", [
-      user.email,
-    ])
+    await admin.query<{ id: string; role: string }>(
+      "SELECT id, role FROM users WHERE lower(email) = lower($1)",
+      [user.email],
+    )
   ).rows[0];
-  if (existing) return { outcome: "exists", role: existing.role };
+  if (existing) return { outcome: "exists", role: existing.role, userId: existing.id };
   return { outcome: "invited", userId: await createUser(admin, user) };
 }
 

@@ -2,7 +2,7 @@
 // runs inside the tenant's transaction; status changes are written to audit_log.
 import type pg from "pg";
 import type { TenantStatus } from "@callmate/shared";
-import { startOfUkDay } from "../core/availability.ts";
+import { isOnHolidayAt, startOfUkDay } from "../core/availability.ts";
 import {
   HELP_REPLY,
   HOLIDAY_INVALID_REPLY,
@@ -72,8 +72,9 @@ async function setHoliday(
   );
 }
 
-function holidayLine(state: TenantState): string {
-  if (!state.holidayMode) return "Holiday mode is off.";
+/** Off once its last day has passed, as callers hear it: the stored flag stays set till then. */
+function holidayLine(state: TenantState, now: Date): string {
+  if (!isOnHolidayAt(state.holidayMode, state.holidayUntil, now)) return "Holiday mode is off.";
   return state.holidayUntil
     ? `Holiday mode is on until ${formatUkDate(state.holidayUntil)}.`
     : "Holiday mode is on until you reply ON.";
@@ -151,7 +152,7 @@ export async function applySmsCommand(
             ? ` (${today.open} still ${today.open === 1 ? "needs" : "need"} a reply)`
             : "";
         return {
-          reply: `AnswerMate is ${statusWord(state.status)}. ${holidayLine(state)} Calls today: ${today.n}${waiting}.`,
+          reply: `AnswerMate is ${statusWord(state.status)}. ${holidayLine(state, now)} Calls today: ${today.n}${waiting}.`,
         };
       }
 

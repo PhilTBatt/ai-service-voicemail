@@ -92,6 +92,11 @@ export class PaymentsWebhookError extends Error {
 }
 
 export interface PaymentsProvider {
+  /**
+   * The provider's test environment or the real one, when it has both. Shown on the Admin
+   * page: a production server left on the sandbox collects nothing, and says nothing.
+   */
+  readonly environment?: "sandbox" | "live";
   /** Starts a mandate set-up: creates the request and the hosted flow for it. */
   startMandateSetup(request: MandateSetupRequest): Promise<MandateSetup>;
   /** Where a set-up has got to: fulfilled with a mandate, still pending, or cancelled. */

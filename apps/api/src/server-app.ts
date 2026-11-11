@@ -56,8 +56,23 @@ export function buildServerApp(
   // Direct Debit (Step 12): the dashboard starts set-ups, and the webhook hears what happened.
   const payments = config.payments ? new GoCardlessPaymentsProvider(config.payments) : undefined;
   if (!payments) logger.warn("Billing disabled: GOCARDLESS_ACCESS_TOKEN isn't set");
-  else if (!config.payments?.webhookSecret) {
-    logger.warn("Payments webhooks refused: GOCARDLESS_WEBHOOK_SECRET isn't set");
+  else {
+    if (!config.payments?.webhookSecret) {
+      logger.warn("Payments webhooks refused: GOCARDLESS_WEBHOOK_SECRET isn't set");
+    }
+    if (config.nodeEnv === "production" && payments.environment === "sandbox") {
+      logger.warn(
+        "Payments are on GoCardless's sandbox: no real money moves (GOCARDLESS_ENVIRONMENT)",
+      );
+    }
+  }
+  // Retell signs webhooks with the one key marked "webhook" in its dashboard. Without
+  // RETELL_WEBHOOK_KEY the API key is used, which works only if that key carries the badge;
+  // if not, every call-ended webhook is refused, and calls arrive late through reconciliation.
+  if (config.nodeEnv === "production" && config.retellApiKey && !config.retellWebhookKey) {
+    logger.warn(
+      "RETELL_WEBHOOK_KEY isn't set: Retell's webhooks are checked with RETELL_API_KEY, which works only if that key has the webhook badge in Retell's dashboard",
+    );
   }
   // The dashboard API (/api) needs Clerk to say who is calling, and the admin pool for the
   // views that span tenants (the tenant list, the admin screens).
@@ -82,6 +97,8 @@ export function buildServerApp(
                   publicBaseUrl: config.publicBaseUrl,
                   fallbackVoicemailUrl: config.fallbackVoicemailUrl,
                   purchasesEnabled: config.twilio.purchasesEnabled,
+                  ukRegulatoryReady:
+                    config.twilio.bundleSid !== undefined && config.twilio.addressSid !== undefined,
                 }
               : undefined,
           billing: payments ? { payments, dashboardOrigin: config.dashboardOrigin } : undefined,

@@ -67,6 +67,21 @@ const messages = async (tenantId: string) =>
   ).rows;
 
 describe("the cancellation-notices action", () => {
+  it("sends nothing once the cancellation has been undone", async () => {
+    const tenantId = await leavingBusiness("vodafone");
+    await admin.query(
+      "UPDATE tenants SET status = 'live', cancellation_requested_at = NULL WHERE id = $1",
+      [tenantId],
+    );
+    const sms = new FakeSmsProvider();
+    const email = new FakeEmailProvider();
+    expect(
+      await runOffboardingJob(deps(sms, email), { tenantId, action: "cancellation-notices" }),
+    ).toEqual({ sms: "not-leaving", email: "not-leaving" });
+    expect(sms.sent).toHaveLength(0);
+    expect(email.sent).toHaveLength(0);
+  });
+
   it("texts and emails how to turn the diverts off and get voicemail back, once each", async () => {
     const tenantId = await leavingBusiness("vodafone");
     const sms = new FakeSmsProvider();

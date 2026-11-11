@@ -316,7 +316,9 @@ resource api 'Microsoft.App/containerApps@2024-03-01' = if (deployApps && image 
           ]
         }
       ]
-      scale: { minReplicas: 1, maxReplicas: 2 }
+      // One copy: the database connection budget (apps/api/src/db/pool.ts) and the per-copy
+      // counters (spike alerts, alert throttling) both assume it, and the load test passes on one.
+      scale: { minReplicas: 1, maxReplicas: 1 }
     }
   }
 }

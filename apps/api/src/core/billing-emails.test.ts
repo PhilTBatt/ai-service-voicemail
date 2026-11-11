@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  billingSituation,
   directDebitEndedEmail,
   formatDate,
   lastDayOf,
@@ -59,6 +60,21 @@ describe("the other billing emails", () => {
     expect(email.subject).toBe("We couldn't collect your AnswerMate payment");
     expect(email.text).toContain("We couldn't collect £99.40 by Direct Debit");
     expect(email.text).toContain("Your assistant is still answering your calls.");
+  });
+
+  it("only says the assistant is answering when it is, and doesn't ask a business that left to set up again", () => {
+    expect(paymentFailedEmail("Wren Plumbing", charge, "not-answering").text).not.toContain(
+      "still answering",
+    );
+    const left = directDebitEndedEmail("Wren Plumbing", "https://dash.example/x", "leaving");
+    expect(left.text).toContain(
+      "You've left AnswerMate, so nothing is due after the month you left in.",
+    );
+    expect(left.text).not.toContain("set it up again");
+    expect(left.text).not.toContain("still answering");
+    expect(billingSituation("live")).toBe("answering");
+    expect(billingSituation("suspended")).toBe("not-answering");
+    expect(billingSituation("cancelled")).toBe("leaving");
   });
 
   it("says a Direct Debit ended, with the link to set it up again", () => {

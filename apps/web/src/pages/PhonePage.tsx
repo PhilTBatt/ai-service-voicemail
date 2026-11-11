@@ -4,7 +4,9 @@
 import {
   MOBILE_NETWORKS,
   MOBILE_NETWORK_KEYS,
+  DIVERT_TURN_OFF_CODES,
   divertInstructions,
+  voicemailRestoreCode,
   type MeView,
   type MobileNetwork,
   type TenantView,
@@ -33,6 +35,36 @@ export function PhonePage({ me }: { me: MeView }) {
 
 function Instructions({ tenant }: { tenant: TenantView }) {
   const [network, setNetwork] = useState<MobileNetwork | "">(tenant.mobileNetwork ?? "");
+  // A business that has left needs the way back, number or not: once the number is released
+  // the page used to say it "isn't ready yet", while the Cancelled card sends people here.
+  if (tenant.status === "cancelling" || tenant.status === "cancelled") {
+    const restore = voicemailRestoreCode(tenant.mobileNetwork);
+    return (
+      <section className="card">
+        <h2>Turn off your diverts</h2>
+        <p>
+          On your own mobile, dial each of these and press call, as if ringing a number:{" "}
+          {DIVERT_TURN_OFF_CODES.map((code, index) => (
+            <span key={code}>
+              {index > 0 && ", "}
+              <code>{code}</code>
+            </span>
+          ))}
+          . They turn off the diverts for calls you don't answer, calls when you're busy, and calls
+          when your phone is off.
+        </p>
+        <p>
+          {restore ? (
+            <>
+              Then dial <code>{restore}</code> to get your network's voicemail back.
+            </>
+          ) : (
+            "Then ring your network if you'd like your voicemail back: they'll tell you the code."
+          )}
+        </p>
+      </section>
+    );
+  }
   if (!tenant.number) {
     return (
       <section className="card">

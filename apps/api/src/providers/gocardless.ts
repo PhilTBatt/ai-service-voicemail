@@ -147,6 +147,10 @@ export class GoCardlessPaymentsProvider implements PaymentsProvider {
     this.options = options;
   }
 
+  get environment(): "sandbox" | "live" {
+    return this.options.environment;
+  }
+
   async startMandateSetup(request: MandateSetupRequest): Promise<MandateSetup> {
     // Two calls: the request (what's being asked for: a Bacs mandate), then the hosted flow
     // for it, which is what the person is sent to. The request carries the idempotency key,

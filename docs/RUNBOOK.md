@@ -119,18 +119,20 @@ The worker must be running for steps 5 and 6: it sends the texts and takes the b
 As admin, open the business, then its Account tab. With no number yet, there's a search: type an
 area code such as 0113, pick a number, and confirm the monthly price. The API only buys when it
 was started with `TWILIO_PURCHASES_ENABLED=true`, the same switch the `live-*` scripts use;
-otherwise the page lets you look but not buy. Turn it back off afterwards. A business can't get a
+otherwise the page lets you look but not buy. Turn it back off afterwards. A UK number also needs the approved bundle and address: without `twilio-bundle-sid` and `twilio-address-sid` (section 16) the page refuses before asking Twilio, rather than letting Twilio refuse it. If Twilio does say no (the number went to someone else since the search, say), the page shows Twilio's reason. A business that has left can't be given one: it would pay for a number playing "service has ended" that could never be released. A business can't get a
 second number this way: the old one would carry on costing money at Twilio. If a number is bought
 but can't be recorded, the API raises a `number-bought-not-recorded` alert with its SID: record
 it by hand or release it in the Twilio console.
 
 ## 9. When a business leaves
 
-The tradesperson cancels on their Account tab (or you do, from theirs). From then on callers to
+The tradesperson cancels on their Account tab (or you do, from theirs), from any status but leaving already: one that never went live (a drop-out, a test business) and one you suspended can leave too, and go through the same release and deletion. From then on callers to
 their number hear that the service has ended, and they get a text and an email with the codes
 to turn their diverts off and get their voicemail back. The business appears under "Leaving
 businesses" on the Admin page. After 30 days the "Release number" button appears: it gives the
 number back to Twilio for good and marks the business cancelled.
+
+**Changed their mind?** Until the number is released, the business's Account tab (as admin) has **Undo cancellation**: it goes back to the status it left from (answering, paused, suspended or still onboarding), and the undo is in the account log. The cancellation text and email have already gone, so tell them it's back on. Once the number is released, it can't be undone: they'd sign up again.
 
 The business then stays on that list as "number released, data still held", with a **Delete
 data** button. It's charged for the month it left in (section 17), and deleting cancels its
@@ -171,7 +173,7 @@ An alert is an error line in the API's or the worker's log that starts `ALERT` a
 with IDs to look things up by. Logs never hold phone numbers, emails or call content. With
 `ALERT_EMAIL` set (Key Vault `alert-email`, in `OPTIONAL_SECRET_NAMES`), each one is also
 emailed there, with the same redacted details: at most one email per alert per 15 minutes,
-the next one saying how many it stood in for. Outside production the address must be in
+the next one saying how many it stood in for. Alerts about one business needing something done (billing, delivery, bounces, a deletion's confirmation) are counted per business, so two businesses in the same 15 minutes each get an email; outage-type alerts stay one email however many businesses they touch. Outside production the address must be in
 `OUTBOUND_ALLOWLIST`. The email is best effort: if Postmark is down, the log line still exists.
 What the service can't email about is itself being down: that's the uptime check's job.
 
@@ -197,6 +199,7 @@ What the service can't email about is itself being down: that's the uptime check
 | `webhook-signature-spike`                         | More than 10 webhooks in 15 minutes had a bad signature (`source` says Twilio or the voice platform). Someone is probing, or a key changed on one side only                                                                                                                                                                                                                                                                                                                                                                                            | 1. Whether the auth token or webhook key was rotated (section 14) without the other side. 2. The log lines' paths: real routes or random ones (a scanner)? 3. If it's one address hammering, Azure's ingress can block it; otherwise nothing to do, forgeries are refused                                                                                                                                                                                                                                                                     |
 | `server-error-spike`                              | More than 5 requests in 15 minutes ended in a 500. The alert names the last path                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | 1. The API log's "Unhandled request error" lines, for the error itself. 2. `/readyz` (the database) and the worker's check-in on the Admin page. 3. If it started with a release, release the previous commit                                                                                                                                                                                                                                                                                                                                 |
 | `scheduled-job-overdue`                           | A recurring job hasn't succeeded for longer than it should (`jobs` lists each one that just went overdue: the two every-15-minutes checks get an hour, retention and billing 26 hours). `runsHere: false` means the worker doesn't run it at all: a setting it needs is missing. The worker checks every 10 minutes and says it once per stoppage, and again after each restart (a deploy) while it's still overdue. A job turned off on purpose keeps its row and so keeps saying it at each restart: deleting the row needs the owner login (ask me) | 1. The Admin page's Scheduled jobs: last ran, and last failed. 2. `runsHere: false`: the worker's start-up log says what's missing ("Charging disabled: needs ..."): put the setting back (Key Vault, `OPTIONAL_SECRET_NAMES`) and **Deploy**, `apply`. 3. Failing: the worker log around the last failure, and `job-dead-lettered`. (A worker down alone over 03:30 or 06:00 loses nothing: the API queues the run and the worker takes it when it's back. If both, or the database, were down then, the run is sent once when they're back) |
+| `voice-webhook-unreadable`                        | Retell sent a correctly signed call-ended webhook (`source: webhook`), or reconciliation fetched calls (`source: reconciliation`, with a count), in a shape the API can't read: those calls aren't stored, so no texts went for them. Most likely Retell changed its format. `fields` names what didn't fit                                                                                                                                                                                                                                            | 1. Retell's changelog and API reference for the call object. 2. The fields named in the alert against `callSchema` in `providers/retell.ts`. 3. Once the code reads the new shape and is released, reconciliation stores the last day's calls by itself; older ones are in Retell's dashboard                                                                                                                                                                                                                                                 |
 
 ## 12. Pausing a business
 
@@ -311,6 +314,8 @@ Azure portal, **Key vaults**, `kv-callmate-dalbkqkh`, **Objects**, **Secrets**, 
 
 **`postmark-webhook-secret`** isn't in `.env` until Postmark's bounce webhook is set up: make one up (`node -e "console.log(require('node:crypto').randomBytes(24).toString('hex'))"`), and keep a copy to paste into Postmark's webhook URL later (section 14).
 
+**Two that matter more than "optional" suggests.** `retell-webhook-key`: Retell signs its webhooks with the one key marked "webhook" in its dashboard; without this, the API checks them with `retell-api-key`, which works only if that same key has the badge, and otherwise every call-ended webhook is refused (calls then arrive up to 15 minutes late, through reconciliation). The API's log says so at start-up when it isn't set. `twilio-bundle-sid` and `twilio-address-sid`: a UK number can't be bought without them (section 8), and buying from the dashboard also needs `twilio-purchases-enabled` = `true` (then back to `false`).
+
 **Optional ones** (only if you use them): `alert-email` (where alerts are emailed, section 11), `gocardless-access-token`, `gocardless-environment` (`live`, once there's a live GoCardless account; the sandbox otherwise) and `gocardless-webhook-secret` (billing, decision 019), `vat-registration-number` and `vat-registration-from` (once VAT registered, section 17), `retell-webhook-key`, `clerk-jwt-key`, `twilio-bundle-sid`, `twilio-address-sid`, `email-reply-to`. Add each one you use to the `production` environment variable `OPTIONAL_SECRET_NAMES` as a JSON list, for example `["retell-webhook-key"]`, so the apps read it.
 
 ### The first release, in order
@@ -384,7 +389,7 @@ Businesses pay by Direct Debit through GoCardless: £99 a month ex VAT with 200 
 
 ### Connecting GoCardless
 
-GoCardless has two separate places: the **sandbox** (`manage-sandbox.gocardless.com`: fake banks, no money) and the **live** account (`manage.gocardless.com`: needs Brockersby verified, a day or two). Each has its own access token and its own webhook. Start with the sandbox.
+GoCardless has two separate places: the **sandbox** (`manage-sandbox.gocardless.com`: fake banks, no money) and the **live** account (`manage.gocardless.com`: needs Brockersby verified, a day or two). Each has its own access token and its own webhook. Start with the sandbox. While the server is on the sandbox, the Admin page's Billing section says so in red, and the API's log says so at start-up: real customers on it would "pay" with no money moving.
 
 1. **Access token.** The GoCardless dashboard, **Developers**, **Create**, **Access token**, read-write. Locally: `GOCARDLESS_ACCESS_TOKEN` in `.env` (and `GOCARDLESS_ENVIRONMENT=live` only with a live token). On Azure: Key Vault `gocardless-access-token` (and `gocardless-environment` = `live` later), both in `OPTIONAL_SECRET_NAMES`, then **Deploy**, `apply`.
 2. **Webhook.** The GoCardless dashboard, **Developers**, **Webhooks**, **Create webhook endpoint**: URL `https://<the API's address>/webhooks/gocardless` (locally, the ngrok address). It shows a secret: `GOCARDLESS_WEBHOOK_SECRET` in `.env`, or Key Vault `gocardless-webhook-secret` in `OPTIONAL_SECRET_NAMES`. Without it, every webhook is refused (and the API log says so at startup).

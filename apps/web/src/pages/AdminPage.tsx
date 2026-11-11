@@ -52,7 +52,7 @@ function Billing() {
 
   if (billing.status === "loading") return <p className="muted">Loading billing…</p>;
   if (billing.status === "error") return <ErrorNote error={billing.error} retry={billing.reload} />;
-  const { thisMonth, attention, available } = billing.data;
+  const { thisMonth, attention, available, environment } = billing.data;
 
   const collectAgain = async (chargeId: string, businessName: string) => {
     if (!window.confirm(`Ask GoCardless to collect ${businessName}'s payment again?`)) return;
@@ -71,6 +71,14 @@ function Billing() {
   return (
     <section>
       <h2>Billing</h2>
+      {environment === "sandbox" && (
+        <div className="card error">
+          <p>
+            <strong>Payments are on GoCardless's sandbox: no real money moves.</strong> Before the
+            first paying customer, switch to the live account (RUNBOOK section 17).
+          </p>
+        </div>
+      )}
       <div className="stats">
         <Money label="Collected this month" pence={thisMonth.collectedPence} />
         <Money label="Being collected" pence={thisMonth.collectingPence} />
@@ -181,7 +189,9 @@ function Health() {
       <Worker worker={data.worker} />
       <ScheduledJobs jobs={data.scheduledJobs} />
       <div className="stats">
-        <Stat label="Calls sent to voicemail" value={data.fallbackCalls} />
+        {/* Voicemails left, not plays: a caller who hangs up at the greeting isn't counted (the
+          fallback-voicemail-spike alert counts every play). */}
+        <Stat label="Voicemails left" value={data.fallbackCalls} />
         <Stat label="Texts and emails that failed" value={data.failedNotifications} />
         <Stat label="Jobs that failed every retry" value={data.deadLetteredJobs24h} />
       </div>

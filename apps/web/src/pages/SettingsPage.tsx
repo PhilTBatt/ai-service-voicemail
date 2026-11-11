@@ -7,6 +7,7 @@ import {
   notificationSettingsSchema,
   type BillingView,
   type CancellationView,
+  type UndoCancellationView,
   type DirectDebitStartView,
   type DocumentsView,
   type MeView,
@@ -53,7 +54,7 @@ export function SettingsPage({ me }: { me: MeView }) {
         onAccepted={tenant.reload}
       />
       <DataDownload tenantId={tenant.data.id} />
-      <Cancel tenant={tenant.data} onCancelled={tenant.reload} />
+      <Cancel tenant={tenant.data} isAdmin={me.role === "admin"} onChanged={tenant.reload} />
     </>
   );
 }
@@ -344,6 +345,11 @@ function Billing({ tenant }: { tenant: TenantView }) {
           month's fee is {formatPence(period.feePence)}, charged by Direct Debit after the month
           ends.
         </p>
+      ) : view.leftOn ? (
+        <p className="muted">
+          This business left AnswerMate on {formatDate(view.leftOn)}. The month it left in is
+          charged as usual; nothing after that.
+        </p>
       ) : (
         <p className="muted">
           Nothing is charged until AnswerMate is answering this business's calls.
@@ -380,7 +386,10 @@ function Billing({ tenant }: { tenant: TenantView }) {
           The Direct Debit ended
           {directDebit.since ? ` on ${formatUkDateTime(directDebit.since)}` : ""}
           {directDebit.endReason ? ` (${humanise(directDebit.endReason)})` : ""}, so nothing can be
-          collected. Please set it up again.
+          collected.{" "}
+          {leaving
+            ? "If anything below is still owed, we'll be in touch about it."
+            : "Please set it up again."}
         </p>
       )}
       {directDebit.status === "none" && !view.isPilot && (
@@ -545,11 +554,41 @@ function DataDownload({ tenantId }: { tenantId: string }) {
 
 const CONFIRM_WORD = "CANCEL";
 
-function Cancel({ tenant, onCancelled }: { tenant: TenantView; onCancelled: () => void }) {
+/** The statuses a business can leave from (the API's CANCELLABLE says the same). */
+const CANCELLABLE = ["live", "paused", "suspended", "onboarding"];
+
+function Cancel({
+  tenant,
+  isAdmin,
+  onChanged,
+}: {
+  tenant: TenantView;
+  isAdmin: boolean;
+  onChanged: () => void;
+}) {
   const { api } = useApi();
   const [typed, setTyped] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<Error | null>(null);
+
+  // The admin can take a cancellation back while the number is still the business's.
+  const undo = async () => {
+    if (!window.confirm("Undo the cancellation? The business goes back to how it was before.")) {
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await api<UndoCancellationView>(`/admin/tenants/${tenant.id}/undo-cancellation`, {
+        method: "POST",
+        body: { confirm: true },
+      });
+      onChanged();
+    } catch (caught) {
+      setError(asError(caught));
+      setBusy(false);
+    }
+  };
 
   if (tenant.status === "cancelling" || tenant.status === "cancelled") {
     return (
@@ -571,17 +610,28 @@ function Cancel({ tenant, onCancelled }: { tenant: TenantView; onCancelled: () =
           We've texted and emailed how to turn off your diverts and get your voicemail back. The
           codes are on the Phone setup tab too.
         </p>
+        {isAdmin && tenant.status === "cancelling" && (
+          <>
+            <button type="button" disabled={busy} onClick={() => void undo()}>
+              Undo cancellation
+            </button>
+            {error && <ErrorNote error={error} />}
+          </>
+        )}
       </section>
     );
   }
-  if (tenant.status !== "live" && tenant.status !== "paused") return null;
+  if (!CANCELLABLE.includes(tenant.status)) return null;
 
   const cancel = async () => {
     setBusy(true);
     setError(null);
     try {
-      await api<CancellationView>(`/tenants/${tenant.id}/cancel`, { method: "POST", body: {} });
-      onCancelled();
+      await api<CancellationView>(`/tenants/${tenant.id}/cancel`, {
+        method: "POST",
+        body: { confirm: true },
+      });
+      onChanged();
     } catch (caught) {
       setError(asError(caught));
       setBusy(false);

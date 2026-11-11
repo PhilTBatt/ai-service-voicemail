@@ -3,7 +3,7 @@
 import { installAlertEmail } from "./alert-email.ts";
 import { ConfigError, loadConfig } from "./config.ts";
 import { createAdminPool } from "./db/cross-tenant.ts";
-import { createPool } from "./db/pool.ts";
+import { WORKER_ADMIN_POOL_MAX, createPool } from "./db/pool.ts";
 import {
   createScheduleCheck,
   registerScheduledRuns,
@@ -22,7 +22,9 @@ try {
     throw new ConfigError(["RETELL_API_KEY is missing (the worker syncs agents to Retell)"]);
 
   const pool = createPool(config.databaseUrl);
-  const admin = config.adminDatabaseUrl ? createAdminPool(config.adminDatabaseUrl) : null;
+  const admin = config.adminDatabaseUrl
+    ? createAdminPool(config.adminDatabaseUrl, { max: WORKER_ADMIN_POOL_MAX })
+    : null;
   const boss = await startQueue(config.databaseUrl);
   const queues = await registerJobs(
     { ...config, retellApiKey: config.retellApiKey },

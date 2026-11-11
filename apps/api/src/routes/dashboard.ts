@@ -115,6 +115,7 @@ const callListQuery = z.object({
 });
 
 const callHandledBody = z.object({ handled: z.boolean() });
+const cancelBody = z.object({ confirm: z.literal(true) });
 
 interface TenantRow {
   id: string;
@@ -393,7 +394,13 @@ export function dashboardRouter({
   });
 
   // Asking to leave: callers hear "service has ended" from now on, and the notices are queued.
-  tenant.post("/cancel", async (_req, res) => {
+  // Leaving can't be done by a stray request: the body must confirm it, as the page's typed
+  // CANCEL does (and as suspending does). Undoing it afterwards is an admin's job.
+  tenant.post("/cancel", async (req, res) => {
+    if (!cancelBody.safeParse(req.body).success) {
+      res.status(400).json({ error: "Cancelling needs { confirm: true }" });
+      return;
+    }
     const tenantId = tenantIdOf(res);
     const result = await requestCancellation(pool, tenantId, principalOf(res).userId, {
       now: now?.() ?? new Date(),

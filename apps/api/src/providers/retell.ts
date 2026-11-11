@@ -4,6 +4,7 @@
 // Nothing outside this file knows Retell's shapes.
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { e164OrNull } from "../core/phone.ts";
+import { raiseAlert } from "../alerts.ts";
 import { logger } from "../logger.ts";
 import { redactText } from "../redact.ts";
 import { z } from "zod";
@@ -127,14 +128,18 @@ export class RetellVoiceProvider implements VoiceProvider {
 
   verifyAndParseWebhook(rawBody: Buffer, headers: WebhookHeaders): ParsedWebhook {
     this.verifySignature(rawBody, headers["x-retell-signature"]);
-    const parsed = webhookSchema.safeParse(parseJson(rawBody, "Webhook"));
+    const body = parseJson(rawBody, "Webhook");
+    const parsed = webhookSchema.safeParse(body);
     // Signed by Retell but in a shape we don't read: not a forgery, so not a 401 (which counts
-    // towards the signature alert). Ignored and logged with the fields that didn't fit (their
-    // names only), and reconciliation picks the call up if it can be read later.
+    // towards the signature alert). Another event type is ignored quietly; a call_ended we
+    // can't read is a call we'd lose (reconciliation reads it the same way), so that alerts.
     if (!parsed.success) {
-      logger.warn("Retell webhook in an unexpected shape: ignored", {
-        fields: parsed.error.issues.map((issue) => issue.path.join(".")),
-      });
+      const fields = parsed.error.issues.map((issue) => issue.path.join("."));
+      if ((body as { event?: unknown } | null)?.event === "call_ended") {
+        raiseAlert("voice-webhook-unreadable", { source: "webhook", fields });
+      } else {
+        logger.warn("Retell webhook in an unexpected shape: ignored", { fields });
+      }
       return { type: "ignored", reason: "unexpected shape" };
     }
     const { event, call } = parsed.data;
@@ -213,7 +218,8 @@ export class RetellVoiceProvider implements VoiceProvider {
       }
       paginationKey = page.has_more ? page.pagination_key : undefined;
     } while (paginationKey);
-    if (unreadable > 0) logger.warn("Retell calls in an unexpected shape: skipped", { unreadable });
+    if (unreadable > 0)
+      raiseAlert("voice-webhook-unreadable", { source: "reconciliation", unreadable });
     return events;
   }
 

@@ -222,4 +222,24 @@ describe("listCurrentUsage", () => {
     const usage = await listCurrentUsage(admin, new Date("2026-08-01T00:15:00Z"));
     expect(usage.find((row) => row.tenantId === tenantId)).toMatchObject({ calls: 1 });
   });
+
+  // Billing months run from the go-live date: on 20 November, a business live since 15
+  // October is in its 15 Nov to 15 Dec month, not October's.
+  it("shows the billing month that contains today, for a business that went live mid-month", async () => {
+    const tenantId = await createTenant(admin, {
+      businessName: "Mid Month Roofing",
+      trade: "roofer",
+    });
+    await admin.query(
+      `INSERT INTO usage_periods (tenant_id, period_start, period_end, billable_seconds)
+       VALUES ($1, '2026-10-15', '2026-11-15', 11111), ($1, '2026-11-15', '2026-12-15', 222)`,
+      [tenantId],
+    );
+    const usage = await listCurrentUsage(admin, new Date("2026-11-20T12:00:00Z"));
+    expect(usage.find((row) => row.tenantId === tenantId)).toMatchObject({
+      periodStart: "2026-11-15",
+      periodEnd: "2026-12-15",
+      billableSeconds: 222,
+    });
+  });
 });

@@ -13,6 +13,7 @@ import {
   auditScriptAction,
   createAdminPool,
   inviteUser,
+  tenantExists,
 } from "../db/cross-tenant.ts";
 
 const { values } = parseArgs({
@@ -51,8 +52,30 @@ if (!config.adminDatabaseUrl) {
 const admin = createAdminPool(config.adminDatabaseUrl);
 try {
   const { email, role, tenant } = args.data;
+  // Checked first: a wrong ID used to create the person and then fail, leaving an owner with no
+  // business that running it again couldn't mend.
+  if (tenant !== undefined && !(await tenantExists(admin, tenant))) {
+    console.error(`There's no business with the ID ${tenant}.`);
+    process.exitCode = 1;
+  } else {
+    await invite(email, role, tenant);
+  }
+} finally {
+  await admin.end();
+}
+
+async function invite(email: string, role: (typeof ROLES)[number], tenant: string | undefined) {
   const result = await inviteUser(admin, { email, role });
-  if (result.outcome === "exists") {
+  if (result.outcome === "exists" && result.role === "owner" && role === "owner" && tenant) {
+    // An owner already: this business is added to theirs (a tradesperson with two businesses).
+    await addMembership(admin, tenant, result.userId);
+    await auditScriptAction(admin, {
+      tenantId: tenant,
+      action: "user.membership-added",
+      details: { userId: result.userId },
+    });
+    console.log(`That owner now has tenant ${tenant} too.`);
+  } else if (result.outcome === "exists") {
     console.error(`An account for that address already exists (role ${result.role}).`);
     process.exitCode = 1;
   } else {
@@ -66,6 +89,4 @@ try {
       `Invited as ${role}${tenant ? ` of tenant ${tenant}` : ""}. Their first login with that address becomes the account.`,
     );
   }
-} finally {
-  await admin.end();
 }

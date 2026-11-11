@@ -33,6 +33,15 @@ describe("parseSmsCommand", () => {
     ["Thanks mate", { kind: "unknown" }],
     ["", { kind: "unknown" }],
     ["OFFICE", { kind: "unknown" }],
+    // People write questions, and sentences.
+    ["Status?", { kind: "status" }],
+    ["help?", { kind: "help" }],
+    ["On holiday till 12/12", { kind: "holiday-invalid" }],
+    ["On holiday 12/12", { kind: "holiday", until: "2026-12-12" }],
+    ["on hols 3 Aug", { kind: "holiday", until: "2026-08-03" }],
+    // ON and OFF with more after them aren't guessed at: the reply lists the commands.
+    ["Off sick till Monday", { kind: "unknown" }],
+    ["On my way", { kind: "unknown" }],
   ])("parses %j", (body, expected) => {
     expect(parseSmsCommand(body, TODAY)).toEqual(expected);
   });

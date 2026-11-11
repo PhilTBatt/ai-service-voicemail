@@ -29,7 +29,10 @@ export function NumberSection({
     <section className="card">
       <h2>Your AnswerMate number</h2>
       <p>No number yet.</p>
-      {isAdmin && <BuyNumber tenantId={tenant.id} onBought={onBought} />}
+      {/* Not for a business that has left: the API refuses, as it would never be released. */}
+      {isAdmin && ["onboarding", "live", "paused", "demo"].includes(tenant.status) && (
+        <BuyNumber tenantId={tenant.id} onBought={onBought} />
+      )}
     </section>
   );
 }

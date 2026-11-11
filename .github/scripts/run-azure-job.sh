@@ -27,13 +27,23 @@ elif [ "$#" -eq 1 ]; then
   az containerapp job update --name "$job" --resource-group "$RESOURCE_GROUP" \
     --command "$1" --output none
 fi
-az containerapp job start --name "$job" --resource-group "$RESOURCE_GROUP" --output none
+before="$(date -u +%Y-%m-%dT%H:%M:%S)"
+started="$(az containerapp job start --name "$job" --resource-group "$RESOURCE_GROUP" --output json)"
 echo "Started $job"
-sleep 5
 
-# The execution just started is the newest one.
-execution="$(az containerapp job execution list --name "$job" --resource-group "$RESOURCE_GROUP" \
-  --query "sort_by(@, &properties.startTime)[-1].name" --output tsv)"
+# Follow this execution, never an earlier one: the newest in the list could still be the last
+# run's for a few seconds, and a release would then take the last migration's success for this
+# one's and move the apps on. The start's own answer names it, when it carries a name (the
+# reference doesn't say); otherwise only an execution that began after the start counts.
+execution="$(printf '%s' "$started" | jq -r '.name // empty' 2>/dev/null || true)"
+tries=0
+while [ -z "$execution" ] && [ "$tries" -lt 12 ]; do
+  sleep 5
+  tries=$((tries + 1))
+  execution="$(az containerapp job execution list --name "$job" --resource-group "$RESOURCE_GROUP" \
+    --query "sort_by([?properties.startTime >= '$before'], &properties.startTime)[-1].name" \
+    --output tsv)"
+done
 if [ -z "$execution" ]; then
   echo "::error::Couldn't find the execution of $job that was just started"
   exit 1

@@ -101,15 +101,31 @@ export function receiptEmail(businessName: string, charge: ReceiptCharge): Email
   };
 }
 
+/**
+ * Whether the business is answering calls (live), or not (paused, suspended), or leaving: the
+ * billing emails used to tell everyone "your assistant is still answering your calls", and a
+ * business that had left to set its Direct Debit up again.
+ */
+export type BillingEmailSituation = "answering" | "not-answering" | "leaving";
+
+export function billingSituation(status: string): BillingEmailSituation {
+  if (status === "live" || status === "demo") return "answering";
+  if (status === "cancelling" || status === "cancelled") return "leaving";
+  return "not-answering";
+}
+
 /** A month's payment couldn't be collected. The service carries on; this asks them to check. */
 export function paymentFailedEmail(
   businessName: string,
   charge: { periodStart: string; periodEnd: string; totalPence: number },
+  situation: BillingEmailSituation = "answering",
 ): EmailContent {
   const period = `${formatDate(charge.periodStart)} to ${formatDate(lastDayOf(charge.periodEnd))}`;
+  const check =
+    "Please check with your bank that the account has the funds and the Direct Debit is still in place, and we'll be in touch about collecting it.";
   const paragraphs = [
     `We couldn't collect ${formatPence(charge.totalPence)} by Direct Debit for ${businessName}'s AnswerMate, for ${period}.`,
-    "Your assistant is still answering your calls. Please check with your bank that the account has the funds and the Direct Debit is still in place, and we'll be in touch about collecting it.",
+    situation === "answering" ? `Your assistant is still answering your calls. ${check}` : check,
     SIGN_OFF,
   ];
   return {
@@ -119,14 +135,26 @@ export function paymentFailedEmail(
   };
 }
 
-/** The Direct Debit ended: the link to set it up again. */
-export function directDebitEndedEmail(businessName: string, accountUrl: string): EmailContent {
-  const paragraphs = [
-    `The Direct Debit for ${businessName}'s AnswerMate has ended, so we can't collect payments from it any more.`,
-    `Your assistant is still answering your calls. Please set it up again from your account page: ${accountUrl}`,
-    "If you meant to cancel AnswerMate, there's a button for that on the same page.",
-    SIGN_OFF,
-  ];
+/** The Direct Debit ended: the link to set it up again, or, for a business that has left, what's owed. */
+export function directDebitEndedEmail(
+  businessName: string,
+  accountUrl: string,
+  situation: BillingEmailSituation = "answering",
+): EmailContent {
+  const ended = `The Direct Debit for ${businessName}'s AnswerMate has ended, so we can't collect payments from it any more.`;
+  const paragraphs =
+    situation === "leaving"
+      ? [
+          ended,
+          "You've left AnswerMate, so nothing is due after the month you left in. If that month, or one before it, hasn't been collected yet, we'll be in touch about it.",
+          SIGN_OFF,
+        ]
+      : [
+          ended,
+          `${situation === "answering" ? "Your assistant is still answering your calls. " : ""}Please set it up again from your account page: ${accountUrl}`,
+          "If you meant to cancel AnswerMate, there's a button for that on the same page.",
+          SIGN_OFF,
+        ];
   return {
     subject: "Your AnswerMate Direct Debit has ended",
     text: paragraphs.join("\n\n"),

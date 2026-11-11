@@ -96,20 +96,32 @@ export function parseHolidayDate(text: string, today: Temporal.PlainDate): strin
   return date.toString();
 }
 
+const HOLIDAY_WORDS = ["HOLIDAY", "HOLS", "AWAY"];
+
 export function parseSmsCommand(body: string, today: Temporal.PlainDate): SmsCommand {
+  if (body.trim() === "?") return { kind: "help" };
+  // "Status?" and "Help?" as well as "Status." and "ON!".
   const text = body
     .trim()
-    .replace(/[.!]+$/, "")
+    .replace(/[.!?]+$/, "")
     .trim();
-  const [word = "", ...rest] = text.split(/\s+/);
+  const [first = "", ...afterFirst] = text.split(/\s+/);
+  // "On holiday till 20/12" is a holiday, not ON (which would end one).
+  const onHoliday =
+    first.toUpperCase() === "ON" && HOLIDAY_WORDS.includes((afterFirst[0] ?? "").toUpperCase());
+  const word = onHoliday ? (afterFirst[0] ?? "") : first;
+  const rest = onHoliday ? afterFirst.slice(1) : afterFirst;
   switch (word.toUpperCase()) {
     // Not STOP or START: carriers and Twilio treat those as opt-out and opt-in keywords.
+    // ON and OFF only on their own: "Off sick till Monday" switching the assistant off (callers
+    // then get plain voicemail, not told the tradesperson is away) is a guess too far, so
+    // anything more is answered with the list of commands.
     case "OFF":
     case "PAUSE":
-      return { kind: "off" };
+      return rest.length === 0 ? { kind: "off" } : { kind: "unknown" };
     case "ON":
     case "RESUME":
-      return { kind: "on" };
+      return rest.length === 0 ? { kind: "on" } : { kind: "unknown" };
     case "HOLIDAY":
     case "HOLS":
     case "AWAY": {
