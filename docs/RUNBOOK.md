@@ -348,6 +348,15 @@ The one thing the service can't email about is being down, so something outside 
 
 When one fires: the Azure portal, the app (`callmate-api` or `callmate-worker`), **Log stream** for the live output, and **Revisions and replicas** for whether Azure could start it at all. A release that broke it is undone by releasing the previous commit.
 
+### Postmark's bounce and spam-complaint webhook
+
+Postmark pauses an account whose bounces pass 10% of the emails it sends, or whose spam complaints pass 1 in 1,000, holding its emails until it's sorted ([Postmark](https://postmarkapp.com/support/article/does-postmark-have-a-daily-send-limit); it doesn't say over what period, or from what volume). At our volume one bounce among a few dozen emails is several percent, and one complaint is far over, so each needs seeing. This webhook is how: a hard bounce or a complaint marks that email undelivered on its call and raises `email-bounced` or `email-spam-complaint` (section 11).
+
+1. **The password.** Key Vault `kv-callmate-dalbkqkh`, **Secrets**, `postmark-webhook-secret`, its current version, **Show Secret Value**: the one made up at set-up (it isn't in `.env`).
+2. **The webhook.** Postmark, **Servers**, your server, its transactional message stream (Postmark calls it "Default Transactional Stream"), **Webhooks**, **Add webhook**. URL: `https://postmark:<the password>@callmate-api.greengrass-a4449d88.uksouth.azurecontainerapps.io/webhooks/postmark`. If the form has its own boxes for Basic auth, the URL without the `postmark:<the password>@` part, username `postmark`, password the secret. Tick **Bounce** and **Spam Complaint**, and save. It can stay on this address after the domain moves (step 4 below).
+3. **After a bounce.** Postmark stops sending to an address after a hard bounce or a complaint. A hard bounce is usually a mistyped address: correct it on the business's Account tab, then reactivate it in Postmark (the stream's **Suppressions**). Postmark's support has to reactivate an address that complained.
+4. **Never test with made-up addresses from production**: they bounce, and count. Postmark's black-hole addresses don't (`HardBounce@bounce-testing.postmarkapp.com`, [Postmark](https://postmarkapp.com/support/article/1239-how-to-test-bounces)).
+
 ### The domain: app.brockersby.co.uk, and Clerk's production instance
 
 The dashboard and the API move from Azure's generated address to `app.brockersby.co.uk`, with Azure's free certificate; then Clerk gets a production instance on the same domain. Three stages, each a Deploy `apply` (a few minutes, no rebuild), driven by two `production` environment variables: `CUSTOM_DOMAIN` (`app.brockersby.co.uk`) and `CUSTOM_DOMAIN_STAGE` (`add`, then `bind`, then `live`). Microsoft documents this for the portal and the CLI; the template does the same steps in the same order, so the first run through is the check.

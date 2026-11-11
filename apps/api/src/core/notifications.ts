@@ -181,8 +181,11 @@ export function escapeHtml(text: string): string {
     .replaceAll("'", "&#39;");
 }
 
+// Why it came and where to change that, first: someone who forgot signing up and marks it as
+// spam costs more than any one email. Postmark pauses an account whose complaints pass 1 in
+// 1,000 emails (postmarkapp.com/support/article/does-postmark-have-a-daily-send-limit).
 const FOOTER =
-  "This email contains a caller's personal details. Please handle it with care and delete it when you no longer need it.";
+  "You get these emails because AnswerMate answers your business's calls and sends each one here. To change where they go, open the Account tab in your AnswerMate dashboard. This email contains a caller's personal details: please handle it with care and delete it when you no longer need it.";
 
 function htmlDocument(title: string, body: string): string {
   return [

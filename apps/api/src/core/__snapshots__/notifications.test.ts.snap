@@ -16,7 +16,7 @@ Wants someone today if possible.</p>
 <h2 style="font-size: 16px; margin: 24px 0 8px;">Transcript</h2>
 <p style="margin: 0 0 8px;"><strong>Assistant:</strong> Hi, you&#39;re through to Extract Plumbing. How can I help?</p>
 <p style="margin: 0 0 8px;"><strong>Caller:</strong> It&#39;s Sam, my boiler&#39;s leaking &lt;badly&gt; &amp; I can smell gas.</p>
-<p style="color: #666; font-size: 13px; margin-top: 32px;">This email contains a caller&#39;s personal details. Please handle it with care and delete it when you no longer need it.</p>
+<p style="color: #666; font-size: 13px; margin-top: 32px;">You get these emails because AnswerMate answers your business&#39;s calls and sends each one here. To change where they go, open the Account tab in your AnswerMate dashboard. This email contains a caller&#39;s personal details: please handle it with care and delete it when you no longer need it.</p>
 </body></html>",
   "subject": "URGENT: Sam, 07700 900123 - Boiler leaking under the kitchen sink; no hot water.",
   "text": "URGENT call to Extract Plumbing
@@ -40,7 +40,7 @@ Assistant: Hi, you're through to Extract Plumbing. How can I help?
 Caller: It's Sam, my boiler's leaking <badly> & I can smell gas.
 
 --
-This email contains a caller's personal details. Please handle it with care and delete it when you no longer need it.",
+You get these emails because AnswerMate answers your business's calls and sends each one here. To change where they go, open the Account tab in your AnswerMate dashboard. This email contains a caller's personal details: please handle it with care and delete it when you no longer need it.",
 }
 `;
 
@@ -93,7 +93,7 @@ exports[`voicemailEmail > matches the agreed wording 1`] = `
 <p>The assistant wasn't available, so the caller left a 42-second message.</p>
 <table style="border-collapse: collapse; margin: 16px 0;"><tr><th style="text-align: left; padding: 4px 16px 4px 0; color: #555; font-weight: 600;">Number</th><td style="padding: 4px 0;"><a href="tel:+447700900123">07700 900123</a></td></tr></table>
 <p style="margin: 16px 0;"><a href="https://callmate.example.com/c/abc123.1799999999.sig/recording">Listen to the voicemail</a> &middot; <a href="https://callmate.example.com/c/abc123.1799999999.sig">Open the call page</a></p>
-<p style="color: #666; font-size: 13px; margin-top: 32px;">This email contains a caller&#39;s personal details. Please handle it with care and delete it when you no longer need it.</p>
+<p style="color: #666; font-size: 13px; margin-top: 32px;">You get these emails because AnswerMate answers your business&#39;s calls and sends each one here. To change where they go, open the Account tab in your AnswerMate dashboard. This email contains a caller&#39;s personal details: please handle it with care and delete it when you no longer need it.</p>
 </body></html>",
   "subject": "New voicemail from 07700 900123 (42 sec)",
   "text": "New voicemail for Extract Plumbing
@@ -106,7 +106,7 @@ Listen: https://callmate.example.com/c/abc123.1799999999.sig/recording
 Call page: https://callmate.example.com/c/abc123.1799999999.sig
 
 --
-This email contains a caller's personal details. Please handle it with care and delete it when you no longer need it.",
+You get these emails because AnswerMate answers your business's calls and sends each one here. To change where they go, open the Account tab in your AnswerMate dashboard. This email contains a caller's personal details: please handle it with care and delete it when you no longer need it.",
 }
 `;
 
