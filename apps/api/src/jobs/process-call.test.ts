@@ -92,7 +92,32 @@ describe("runProcessCall", () => {
       { tenantId, callId, providerCallId: "x" },
     );
     expect(await callRow(tenantId, callId)).toMatchObject({ urgency: "emergency" });
-    expect(queued).toEqual([expect.objectContaining({ urgency: "emergency" })]);
+    // The emergency texts first, before the LLM is asked; then everything with the summary.
+    expect(queued).toEqual([
+      { tenantId, callId, urgency: "emergency", emergencyOnly: true, emergencyKind: "danger" },
+      { tenantId, callId, urgency: "emergency" },
+    ]);
+  });
+
+  it("queues an emergency's texts even when the LLM is down, before retrying", async () => {
+    const { tenantId, callId } = await makeCall({ transcript: DANGER_CALL });
+    const queued: unknown[] = [];
+    await expect(
+      runProcessCall(
+        {
+          pool: app,
+          llm: new FakeLlmProvider().willThrow("overloaded", 529),
+          enqueueNotifications: (_client, call) => {
+            queued.push(call);
+            return Promise.resolve();
+          },
+        },
+        { tenantId, callId, providerCallId: "x" },
+      ),
+    ).rejects.toThrow("overloaded");
+    expect(queued).toEqual([
+      { tenantId, callId, urgency: "emergency", emergencyOnly: true, emergencyKind: "danger" },
+    ]);
   });
 
   it("and when the summary fails altogether", async () => {
@@ -226,6 +251,85 @@ describe("runProcessCall", () => {
     expect(await callRow(tenantId, callId)).toMatchObject({ summary: null, costs: [] });
   });
 
+  // An outage used to leave these calls with no text at all once the retries ran out.
+  it("sends the texts without a summary once the LLM has failed for three minutes after the call", async () => {
+    const { tenantId, callId } = await makeCall();
+    const enqueueNotifications = vi.fn(() => Promise.resolve());
+    const alert = vi.fn();
+    const later = () => new Date(Date.now() + 4 * 60_000);
+    expect(
+      await runProcessCall(
+        {
+          pool: app,
+          llm: new FakeLlmProvider().willThrow("overloaded", 529),
+          alert,
+          enqueueNotifications,
+          now: later,
+        },
+        { tenantId, callId, providerCallId: "x" },
+      ),
+    ).toBe("extraction-failed");
+    expect(await callRow(tenantId, callId)).toMatchObject({ summary: EXTRACTION_FAILED_SUMMARY });
+    expect(enqueueNotifications).toHaveBeenCalledWith(expect.anything(), {
+      tenantId,
+      callId,
+      urgency: null,
+    });
+    expect(alert).toHaveBeenCalledWith("call-extraction-failed", { tenantId, callId });
+  });
+
+  it("doesn't wait at all on an error retrying can't fix, such as a revoked key", async () => {
+    const { tenantId, callId } = await makeCall();
+    const enqueueNotifications = vi.fn(() => Promise.resolve());
+    expect(
+      await runProcessCall(
+        {
+          pool: app,
+          llm: new FakeLlmProvider().willThrow("invalid x-api-key", 401),
+          alert: vi.fn(),
+          enqueueNotifications,
+        },
+        { tenantId, callId, providerCallId: "x" },
+      ),
+    ).toBe("extraction-failed");
+    expect(enqueueNotifications).toHaveBeenCalledTimes(1);
+  });
+
+  it("stores the call-back number as a number, or none when it isn't one, so the caller ID is used", async () => {
+    for (const [given, stored] of [
+      ["+44 7700 900123", "+447700900123"],
+      ["", null],
+      ["oh seven seven double oh", null],
+    ] as const) {
+      const { tenantId, callId } = await makeCall();
+      await runProcessCall(
+        { pool: app, llm: new FakeLlmProvider().willReturn({ ...GOOD, callbackNumber: given }) },
+        { tenantId, callId, providerCallId: "x" },
+      );
+      expect(await callRow(tenantId, callId), given).toMatchObject({
+        extracted_fields: expect.objectContaining({ callbackNumber: stored }) as unknown,
+      });
+    }
+  });
+
+  it("marks a call where the water script was spoken at least urgent, as the caller was told", async () => {
+    const { tenantId, callId } = await makeCall({
+      transcript:
+        "agent: Hi, you're through to Extract Plumbing. How can I help?\n" +
+        "caller: There's water coming through the ceiling.\n" +
+        "agent: If it's safe to, turn off your water at the stopcock. I'm marking this as urgent for Ant now.\n" +
+        "caller: It's stopped now actually.",
+    });
+    await runProcessCall(
+      {
+        pool: app,
+        llm: new FakeLlmProvider().willReturn({ ...GOOD, urgency: "routine" }),
+      },
+      { tenantId, callId, providerCallId: "x" },
+    );
+    expect(await callRow(tenantId, callId)).toMatchObject({ urgency: "urgent" });
+  });
+
   it("queues the notifications through the same transaction, even when extraction failed", async () => {
     const { tenantId, callId } = await makeCall();
     const enqueueNotifications = vi.fn(async (client: pg.ClientBase) => {
@@ -341,6 +445,25 @@ describe("runProcessCall with the judge sampled in", () => {
       ],
     });
     expect(alert).toHaveBeenCalledWith("summary-judge-failed", { tenantId, callId });
+  });
+
+  it("skips the check when it can't run, and still sends the texts", async () => {
+    const { tenantId, callId } = await makeCall();
+    const enqueueNotifications = vi.fn(() => Promise.resolve());
+    expect(
+      await runProcessCall(
+        {
+          pool: app,
+          llm: new FakeLlmProvider().willReturn(GOOD).willThrow("overloaded", 529),
+          enqueueNotifications,
+          judgeSampleRate: 1,
+          random: () => 0,
+        },
+        { tenantId, callId, providerCallId: "x" },
+      ),
+    ).toBe("extracted");
+    expect(await callRow(tenantId, callId)).toMatchObject({ summary: GOOD.jobSummary });
+    expect(enqueueNotifications).toHaveBeenCalledTimes(1);
   });
 
   it("leaves the call alone when the sample misses, and never judges by default", async () => {

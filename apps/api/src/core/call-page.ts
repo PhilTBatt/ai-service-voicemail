@@ -104,7 +104,13 @@ export function callPageHtml(call: CallView, { handledUrl }: { handledUrl?: stri
       ? `<a class="button" href="tel:${escapeHtml(number)}">Call back ${escapeHtml(nationalNumber(number))}</a>`
       : `<p>Their number was withheld.</p>`,
     ...(handledUrl ? [handledForm(call.handledAt, handledUrl)] : []),
-    `<dl><dt>Postcode</dt><dd>${escapeHtml(call.fields.postcode ?? "Not given")}</dd></dl>`,
+    `<dl><dt>Postcode</dt><dd>${escapeHtml(call.fields.postcode ?? "Not given")}</dd>${
+      // The caller ID too, when the caller gave another number: a misheard digit in that one
+      // still leaves a number that works.
+      call.callerNumber && number !== call.callerNumber
+        ? `<dt>Rang from</dt><dd><a href="tel:${escapeHtml(call.callerNumber)}">${escapeHtml(nationalNumber(call.callerNumber))}</a></dd>`
+        : ""
+    }</dl>`,
     "<h2>Summary</h2>",
     `<p class="summary">${escapeHtml(
       call.summary ?? (call.viaFallback ? "A voicemail: listen to it below." : "No summary yet."),

@@ -20,6 +20,14 @@ export function dangerScriptSpoken(transcript: string | null): boolean {
   return agentLines(transcript).some((line) => line.toLowerCase().includes(DANGER_SCRIPT_KEY));
 }
 
+/** Words only the water script says (it promises the caller "I'm marking this as urgent"). */
+export const WATER_SCRIPT_KEY = "turn off your water at the stopcock";
+
+/** The agent spoke the water script: the call is at least urgent, as the caller was told. */
+export function waterScriptSpoken(transcript: string | null): boolean {
+  return agentLines(transcript).some((line) => line.toLowerCase().includes(WATER_SCRIPT_KEY));
+}
+
 export function emergencyScriptSpoken(transcript: string | null): boolean {
   return gasScriptSpoken(transcript) || dangerScriptSpoken(transcript);
 }

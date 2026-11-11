@@ -135,6 +135,15 @@ const EMAIL_INPUT: CallEmailInput = {
 };
 
 describe("callEmail", () => {
+  it("shows the number the call came from too, when the caller gave a different one", () => {
+    const { text, html } = callEmail({ ...EMAIL_INPUT, callerId: "+441134960999" });
+    expect(text).toContain("Rang from: 01134 960999 (tel:+441134960999)");
+    expect(html).toContain("Rang from");
+    // The same number twice says nothing new.
+    const same = callEmail({ ...EMAIL_INPUT, callerId: EMAIL_INPUT.callbackNumber });
+    expect(same.text).not.toContain("Rang from");
+  });
+
   it("matches the agreed wording", () => {
     expect(callEmail(EMAIL_INPUT)).toMatchSnapshot();
   });

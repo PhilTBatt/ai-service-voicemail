@@ -1,6 +1,9 @@
 import type { LlmProvider, LlmRequest, LlmResult } from "./llm.ts";
 
-type Scripted = { value: unknown } | { reason: "invalid-output" | "refused" } | { error: string };
+type Scripted =
+  | { value: unknown }
+  | { reason: "invalid-output" | "refused" }
+  | { error: string; status?: number };
 
 /**
  * An in-memory LlmProvider for tests. Answers are scripted in order; each one is still
@@ -22,9 +25,12 @@ export class FakeLlmProvider implements LlmProvider {
     return this;
   }
 
-  /** Simulates a transport or API error (rate limit, outage). */
-  willThrow(message: string) {
-    this.answers.push({ error: message });
+  /**
+   * Simulates a transport or API error (rate limit, outage). With a status, the error carries
+   * it as the SDK's do (401 for a revoked key, 529 when overloaded).
+   */
+  willThrow(message: string, status?: number) {
+    this.answers.push({ error: message, ...(status !== undefined && { status }) });
     return this;
   }
 
@@ -33,7 +39,9 @@ export class FakeLlmProvider implements LlmProvider {
     const next = this.answers.shift();
     const usage = { inputTokens: 100, outputTokens: 20 };
     if (!next) return Promise.reject(new Error("FakeLlmProvider: no scripted answer left"));
-    if ("error" in next) return Promise.reject(new Error(next.error));
+    if ("error" in next) {
+      return Promise.reject(Object.assign(new Error(next.error), { status: next.status }));
+    }
     if ("reason" in next) return Promise.resolve({ ok: false, reason: next.reason, usage });
     const parsed = request.schema.safeParse(next.value);
     return Promise.resolve(

@@ -34,8 +34,13 @@ export const personaSchema = z.object({
   }),
   /** The per-call variables our server would supply. */
   variables: z
-    .object({ open_now: z.enum(["yes", "no"]), holiday_mode: z.enum(["yes", "no"]) })
-    .default({ open_now: "yes", holiday_mode: "no" }),
+    .object({
+      open_now: z.enum(["yes", "no"]),
+      holiday_mode: z.enum(["yes", "no"]),
+      // What the server sends while away (core/availability.ts holidayUntilWords).
+      holiday_until: z.string().default("until further notice"),
+    })
+    .default({ open_now: "yes", holiday_mode: "no", holiday_until: "not away" }),
   expect: z.object({
     /** Fixed scripts that must be spoken, word for word, as a whole turn. */
     scripts: z.array(z.enum(SCRIPT_IDS)).default([]),

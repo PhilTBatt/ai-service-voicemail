@@ -81,13 +81,26 @@ describe("perCallVariables", () => {
         { openingHours: HOURS, holidayMode: true, holidayUntil: null },
         at("2026-07-15T10:00:00Z"),
       ),
-    ).toEqual({ open_now: "yes", holiday_mode: "yes" });
+    ).toEqual({ open_now: "yes", holiday_mode: "yes", holiday_until: "until further notice" });
     expect(
       perCallVariables(
         { openingHours: HOURS, holidayMode: false, holidayUntil: null },
         at("2026-07-15T20:00:00Z"),
       ),
-    ).toEqual({ open_now: "no", holiday_mode: "no" });
+    ).toEqual({ open_now: "no", holiday_mode: "no", holiday_until: "not away" });
+  });
+
+  // A HOLIDAY text changes the date without a new profile version, so the agent's instructions
+  // can't carry it: each call does, and callers hear the latest one.
+  it("sends the holiday's last day with each call, and nothing once it's over", () => {
+    const away = { openingHours: HOURS, holidayMode: true, holidayUntil: "2026-12-20" };
+    expect(perCallVariables(away, at("2026-12-20T12:00:00Z")).holiday_until).toBe(
+      "until 20 December 2026",
+    );
+    expect(perCallVariables(away, at("2026-12-21T12:00:00Z"))).toMatchObject({
+      holiday_mode: "no",
+      holiday_until: "not away",
+    });
   });
 });
 

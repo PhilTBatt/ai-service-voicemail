@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { e164OrNull, ukMobileFromInput } from "./phone.ts";
+import { e164OrNull, phoneFromInput, ukMobileFromInput } from "./phone.ts";
 
 describe("e164OrNull", () => {
   it("keeps a real number and drops Twilio's placeholders", () => {
@@ -29,4 +29,24 @@ describe("ukMobileFromInput", () => {
       expect(ukMobileFromInput(input)).toBeNull();
     },
   );
+});
+
+describe("phoneFromInput", () => {
+  it("reads a number however the extraction wrote it, mobile or landline", () => {
+    for (const [given, want] of [
+      ["+44 7700 900123", "+447700900123"],
+      ["07700 900123", "+447700900123"],
+      ["+44 (0)7700-900123", "+447700900123"],
+      ["0113 496 0000", "+441134960000"],
+      ["0044 7700 900123", "+447700900123"],
+    ]) {
+      expect(phoneFromInput(given), given).toBe(want);
+    }
+  });
+
+  it("gives null for anything that isn't a number, so the caller ID is used instead", () => {
+    for (const given of ["", "unknown", "0 7700", "07700 90012", "077009001234", null, undefined]) {
+      expect(phoneFromInput(given), String(given)).toBeNull();
+    }
+  });
 });

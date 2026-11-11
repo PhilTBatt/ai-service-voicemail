@@ -54,6 +54,8 @@ interface RecordingJson {
   uri: string;
   duration: string | null;
   date_created: string;
+  /** processing, absent (silent or empty), completed or deleted. */
+  status: string;
 }
 
 interface CallJson {
@@ -194,7 +196,14 @@ export class TwilioTelephonyProvider implements TelephonyProvider {
         durationSeconds: Number(r.duration) || 0,
         createdAt: new Date(r.date_created),
       }));
-      recordings.push(...page.filter((r) => r.createdAt >= since));
+      // Only finished recordings: one still processing has no length yet, and an absent one
+      // (silence) is skipped by the recording callback too. Either would otherwise be stored
+      // as a "0 sec" voicemail, and the real callback later taken for a duplicate.
+      recordings.push(
+        ...page.filter(
+          (r, i) => r.createdAt >= since && result.recordings[i]!.status === "completed",
+        ),
+      );
       const oldest = page.at(-1);
       path =
         result.next_page_uri && oldest && oldest.createdAt >= since

@@ -56,6 +56,14 @@ export function CallPage() {
           <dd>{number ? <a href={`tel:${number}`}>{formatPhone(number)}</a> : "Withheld"}</dd>
           <dt>Postcode</dt>
           <dd>{data.fields.postcode ?? "Not given"}</dd>
+          {data.callerNumber && number !== data.callerNumber && (
+            <>
+              <dt>Rang from</dt>
+              <dd>
+                <a href={`tel:${data.callerNumber}`}>{formatPhone(data.callerNumber)}</a>
+              </dd>
+            </>
+          )}
         </dl>
         <h2>Summary</h2>
         <p>{data.summary ?? "No summary yet."}</p>

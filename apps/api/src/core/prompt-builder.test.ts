@@ -161,14 +161,14 @@ describe("buildAgentDefinition", () => {
     expect(definition.perCallVariables.map((v) => v.name)).toEqual([
       "open_now",
       "holiday_mode",
+      "holiday_until",
       "caller_number",
     ]);
     expect(definition.instructions).toContain('If {{open_now}} is "no"');
     expect(definition.instructions).toContain('If {{holiday_mode}} is "yes"');
-    expect(definition.instructions).toContain("Ant is away until 24 December 2026");
-    expect(buildAgentDefinition(sampleProfile({ holidayUntil: null })).instructions).toContain(
-      "Ant is away until further notice",
-    );
+    // The date goes with each call (core/availability.ts), so a HOLIDAY text changes it at once.
+    expect(definition.instructions).toContain("Ant is away {{holiday_until}}");
+    expect(definition.instructions).not.toContain("24 December");
   });
 
   it("falls back to the template's services when the tenant lists none", () => {
@@ -223,6 +223,7 @@ describe("call-back number instructions", () => {
     expect(definition.perCallVariables.map((v) => v.name)).toEqual([
       "open_now",
       "holiday_mode",
+      "holiday_until",
       "caller_number",
     ]);
   });

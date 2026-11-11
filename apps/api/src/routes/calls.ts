@@ -148,10 +148,10 @@ export function callPageRouter({
 
   router.get("/:token/recording", async (req, res) => {
     const loaded = await loadCall(req.params.token);
+    // The emails' "Listen" link opens this address in a browser: a person gets a page saying
+    // what happened, as the call link does, never JSON. A player asks for audio, not a page.
     if (!loaded.ok) {
-      res
-        .status(loaded.status)
-        .json({ error: loaded.kind === "expired" ? "This link has expired" : "Not found" });
+      refuse(req, res, loaded);
       return;
     }
     await streamRecording(req, res, loaded.tenantId, loaded.call, sources);

@@ -47,10 +47,29 @@ export interface AvailabilityInput {
   holidayUntil: string | null;
 }
 
-/** The values for the agent's {{open_now}} and {{holiday_mode}} variables. */
+/**
+ * The values for the agent's {{open_now}}, {{holiday_mode}} and {{holiday_until}} variables.
+ * The holiday's end goes with each call rather than into the agent's instructions, because a
+ * HOLIDAY text changes it without making a new profile version, and the instructions only
+ * change when a new version is synced: the date callers heard used to be the old one.
+ */
 export function perCallVariables(input: AvailabilityInput, at: Date): Record<string, string> {
+  const away = isOnHolidayAt(input.holidayMode, input.holidayUntil, at);
   return {
     open_now: isOpenAt(input.openingHours, at) ? "yes" : "no",
-    holiday_mode: isOnHolidayAt(input.holidayMode, input.holidayUntil, at) ? "yes" : "no",
+    holiday_mode: away ? "yes" : "no",
+    holiday_until: away ? holidayUntilWords(input.holidayUntil) : "not away",
   };
+}
+
+/** "until 20 December 2026", or "until further notice" with no end date. */
+export function holidayUntilWords(holidayUntil: string | null): string {
+  if (holidayUntil === null) return "until further notice";
+  const date = new Intl.DateTimeFormat("en-GB", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(`${holidayUntil}T00:00:00Z`));
+  return `until ${date}`;
 }

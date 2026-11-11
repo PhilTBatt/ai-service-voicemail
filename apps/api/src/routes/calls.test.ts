@@ -192,6 +192,20 @@ describe("GET /c/:token from a browser: the page a person opens from a text", ()
     expect(html).not.toContain('href="tel:');
   });
 
+  it("shows the number the call came from too, when the caller gave another to ring back on", async () => {
+    const { callId } = await makeCall("agent");
+    await admin.query(
+      `UPDATE calls SET extracted_fields = extracted_fields || '{"callbackNumber":"+441134960999"}'
+       WHERE id = $1`,
+      [callId],
+    );
+    const html = await (await getPage(`/c/${token(callId)}`)).text();
+    expect(html).toContain('href="tel:+441134960999">Call back 01134 960999</a>');
+    expect(html).toContain(
+      '<dt>Rang from</dt><dd><a href="tel:+447700900123">07700 900123</a></dd>',
+    );
+  });
+
   it("shows a voicemail with its recording, and says there's no transcript", async () => {
     const { callId } = await makeCall("voicemail");
     const html = await (await getPage(`/c/${token(callId)}`)).text();
@@ -261,6 +275,14 @@ describe("GET /c/:token from a browser: the page a person opens from a text", ()
       [callId],
     );
     expect(rows[0]!.handled_at).toBeNull();
+  });
+
+  it("says so in a page when an email's Listen link has expired, not in JSON", async () => {
+    const { callId } = await makeCall("voicemail");
+    const response = await getPage(`/c/${token(callId, new Date(NOW.getTime() - 1000))}/recording`);
+    expect(response.status).toBe(410);
+    expect(response.headers.get("content-type")).toContain("text/html");
+    expect(await response.text()).toContain("<h1>This link has expired</h1>");
   });
 
   it("says so in a page when the link doesn't match a call", async () => {

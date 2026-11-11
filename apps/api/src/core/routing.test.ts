@@ -52,7 +52,12 @@ describe("routeInboundCall", () => {
     expect(routeInboundCall(context("live"), NOW)).toEqual({
       kind: "agent",
       providerAgentId: "agent_1",
-      variables: { open_now: "yes", holiday_mode: "no", caller_number: "07700 900123" },
+      variables: {
+        open_now: "yes",
+        holiday_mode: "no",
+        holiday_until: "not away",
+        caller_number: "07700 900123",
+      },
     });
   });
 

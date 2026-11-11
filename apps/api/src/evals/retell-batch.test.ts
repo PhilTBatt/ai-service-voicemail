@@ -43,6 +43,7 @@ describe("testCaseFor", () => {
       caller_number: "07700 900101",
       open_now: "yes",
       holiday_mode: "no",
+      holiday_until: "not away",
     });
     expect(body.llm_model).toBe("gpt-5.4-mini");
   });

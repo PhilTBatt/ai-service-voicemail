@@ -18,6 +18,10 @@ export const PER_CALL_VARIABLES = [
   { name: "open_now", description: '"yes" or "no": whether the business is open right now' },
   { name: "holiday_mode", description: '"yes" or "no": whether the tradesperson is away' },
   {
+    name: "holiday_until",
+    description: 'while away, "until 20 December 2026" or "until further notice"; else "not away"',
+  },
+  {
     name: "caller_number",
     description: 'the number the caller is ringing from, in UK format, or "unknown" if withheld',
   },
@@ -110,17 +114,6 @@ function formatHours(hours: OpeningHours): string {
   }).join("\n");
 }
 
-function formatHolidayUntil(isoDate: string | null): string {
-  if (isoDate === null) return " until further notice";
-  const date = new Intl.DateTimeFormat("en-GB", {
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-    timeZone: "UTC",
-  }).format(new Date(`${isoDate}T00:00:00Z`));
-  return ` until ${date}`;
-}
-
 function bullets(items: string[]): string {
   return items.map((item) => `- ${item}`).join("\n");
 }
@@ -160,7 +153,7 @@ ${areas}
 ## Opening hours (UK time)
 ${formatHours(profile.openingHours)}
 If {{open_now}} is "no", tell the caller ${name} isn't working right now and that you'll take a message for them. Still take the full message. You can tell the caller the opening hours if they ask, but never say when ${name} will call back: not "first thing", not "when they're next open".
-If {{holiday_mode}} is "yes", tell the caller ${name} is away${formatHolidayUntil(profile.holidayUntil)}, that you'll still take a message, and that it may take longer to get a call back.
+If {{holiday_mode}} is "yes", tell the caller ${name} is away {{holiday_until}}, that you'll still take a message, and that it may take longer to get a call back.
 
 ## Urgency and safety
 Treat these as urgent or an emergency: ${template.emergencyKeywords.join(", ")}.

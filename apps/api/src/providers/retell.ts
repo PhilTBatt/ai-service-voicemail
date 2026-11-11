@@ -3,6 +3,8 @@
 // message, uninterruptible global nodes for the fixed scripts, and a static end node.
 // Nothing outside this file knows Retell's shapes.
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { e164OrNull } from "../core/phone.ts";
+import { logger } from "../logger.ts";
 import { redactText } from "../redact.ts";
 import { z } from "zod";
 import type { AgentDefinition, FixedScript } from "../core/agent.ts";
@@ -126,11 +128,24 @@ export class RetellVoiceProvider implements VoiceProvider {
   verifyAndParseWebhook(rawBody: Buffer, headers: WebhookHeaders): ParsedWebhook {
     this.verifySignature(rawBody, headers["x-retell-signature"]);
     const parsed = webhookSchema.safeParse(parseJson(rawBody, "Webhook"));
-    if (!parsed.success) throw new WebhookVerificationError("Malformed Retell webhook body");
+    // Signed by Retell but in a shape we don't read: not a forgery, so not a 401 (which counts
+    // towards the signature alert). Ignored and logged with the fields that didn't fit (their
+    // names only), and reconciliation picks the call up if it can be read later.
+    if (!parsed.success) {
+      logger.warn("Retell webhook in an unexpected shape: ignored", {
+        fields: parsed.error.issues.map((issue) => issue.path.join(".")),
+      });
+      return { type: "ignored", reason: "unexpected shape" };
+    }
     const { event, call } = parsed.data;
     if (event !== "call_ended") return { type: "ignored", reason: `event ${event}` };
     if (!call.to_number) return { type: "ignored", reason: "no dialled number (not a phone call)" };
-    return toCallEndedEvent(call, call.to_number);
+    // Retell sends call_ended for calls that never connected (the dial timed out, or the
+    // caller got the voicemail first): nothing was said, so there's nothing to store.
+    if (call.start_timestamp === null || call.start_timestamp === undefined) {
+      return { type: "ignored", reason: "call never started" };
+    }
+    return toCallEndedEvent({ ...call, start_timestamp: call.start_timestamp }, call.to_number);
   }
 
   verifyAndParseFunctionCall(rawBody: Buffer, headers: WebhookHeaders): FunctionCallEvent {
@@ -145,7 +160,8 @@ export class RetellVoiceProvider implements VoiceProvider {
       providerCallId: call.call_id,
       providerAgentId: call.agent_id,
       dialledNumber: call.to_number ?? null,
-      callerNumber: call.from_number ?? null,
+      // Withheld callers come as "anonymous", "" or nothing: null, never a broken number.
+      callerNumber: e164OrNull(call.from_number),
     };
   }
 
@@ -156,6 +172,7 @@ export class RetellVoiceProvider implements VoiceProvider {
    */
   async listEndedCalls({ since }: { since: Date }): Promise<CallEndedEvent[]> {
     const events: CallEndedEvent[] = [];
+    let unreadable = 0;
     let paginationKey: string | undefined;
     do {
       const page = await this.request<{
@@ -173,15 +190,30 @@ export class RetellVoiceProvider implements VoiceProvider {
         ...(paginationKey !== undefined && { pagination_key: paginationKey }),
       });
       for (const item of page.items) {
-        const call = callSchema.safeParse(
-          await this.request("GET", `/v2/get-call/${encodeURIComponent(item.call_id)}`),
-        );
-        if (call.success && call.data.to_number) {
-          events.push(toCallEndedEvent(call.data, call.data.to_number));
+        // One call that can't be fetched or read is skipped (and counted), not the whole run:
+        // the next run, every 15 minutes over the last day, tries it again.
+        let body: unknown;
+        try {
+          body = await this.request("GET", `/v2/get-call/${encodeURIComponent(item.call_id)}`);
+        } catch (error) {
+          logger.warn("Couldn't fetch a call from Retell: skipped this run", { error });
+          continue;
+        }
+        const call = callSchema.safeParse(body);
+        if (!call.success) {
+          unreadable += 1;
+          continue;
+        }
+        const startedAt = call.data.start_timestamp;
+        if (call.data.to_number && startedAt !== null && startedAt !== undefined) {
+          events.push(
+            toCallEndedEvent({ ...call.data, start_timestamp: startedAt }, call.data.to_number),
+          );
         }
       }
       paginationKey = page.has_more ? page.pagination_key : undefined;
     } while (paginationKey);
+    if (unreadable > 0) logger.warn("Retell calls in an unexpected shape: skipped", { unreadable });
     return events;
   }
 
@@ -481,25 +513,28 @@ export function buildAgent(definition: AgentDefinition, webhookUrl?: string) {
 
 // ─── Retell webhook → CallEndedEvent ───────────────────────────────────────────────────
 
+// Retell's reference marks these fields optional without saying whether a missing one is left
+// out or sent as null, so either is accepted: a null mustn't lose a call. start_timestamp is
+// absent for a call that never connected.
 const callSchema = z.object({
   call_id: z.string(),
   agent_id: z.string(),
-  from_number: z.string().optional(),
-  to_number: z.string().optional(),
-  start_timestamp: z.number(),
-  end_timestamp: z.number().optional(),
-  duration_ms: z.number().optional(),
-  disconnection_reason: z.string().optional(),
+  from_number: z.string().nullish(),
+  to_number: z.string().nullish(),
+  start_timestamp: z.number().nullish(),
+  end_timestamp: z.number().nullish(),
+  duration_ms: z.number().nullish(),
+  disconnection_reason: z.string().nullish(),
   transcript_object: z
-    .array(z.object({ role: z.string(), content: z.string().optional() }))
-    .optional(),
-  recording_url: z.string().optional(),
+    .array(z.object({ role: z.string(), content: z.string().nullish() }))
+    .nullish(),
+  recording_url: z.string().nullish(),
   call_cost: z
     .object({
-      product_costs: z.array(z.object({ product: z.string(), cost: z.number() })).optional(),
-      total_duration_seconds: z.number().optional(),
+      product_costs: z.array(z.object({ product: z.string(), cost: z.number() })).nullish(),
+      total_duration_seconds: z.number().nullish(),
     })
-    .optional(),
+    .nullish(),
 });
 
 const webhookSchema = z.object({ event: z.string(), call: callSchema });
@@ -511,15 +546,18 @@ const functionCallSchema = z.object({
   call: z.object({
     call_id: z.string(),
     agent_id: z.string(),
-    from_number: z.string().optional(),
-    to_number: z.string().optional(),
+    from_number: z.string().nullish(),
+    to_number: z.string().nullish(),
   }),
   args: z.unknown().optional(),
 });
 
 type RetellCall = z.infer<typeof callSchema>;
 
-function toCallEndedEvent(call: RetellCall, dialledNumber: string): CallEndedEvent {
+function toCallEndedEvent(
+  call: RetellCall & { start_timestamp: number },
+  dialledNumber: string,
+): CallEndedEvent {
   const startedAt = new Date(call.start_timestamp);
   const endedAt = new Date(call.end_timestamp ?? call.start_timestamp);
   const durationMs = call.duration_ms ?? endedAt.getTime() - startedAt.getTime();
@@ -534,7 +572,10 @@ function toCallEndedEvent(call: RetellCall, dialledNumber: string): CallEndedEve
     units: item.cost,
     unitType: "usd_cents", // Retell reports actual cost per product, in US cents
   }));
-  if (call.call_cost?.total_duration_seconds !== undefined) {
+  if (
+    call.call_cost?.total_duration_seconds !== undefined &&
+    call.call_cost.total_duration_seconds !== null
+  ) {
     costs.push({
       component: "retell:duration",
       units: call.call_cost.total_duration_seconds,
@@ -546,7 +587,9 @@ function toCallEndedEvent(call: RetellCall, dialledNumber: string): CallEndedEve
     providerCallId: call.call_id,
     providerAgentId: call.agent_id,
     dialledNumber,
-    callerNumber: call.from_number ?? null,
+    // Withheld callers come as "anonymous", "" or nothing: null, never a broken number that
+    // the database would refuse (losing the whole call).
+    callerNumber: e164OrNull(call.from_number),
     startedAt,
     endedAt,
     // Floor, not round: a 4,900 ms call is 4 seconds and must not be billed as 5.

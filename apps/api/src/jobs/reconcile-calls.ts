@@ -25,6 +25,8 @@ export interface ReconcileCallsCounts {
   stored: number;
   duplicate: number;
   unknownNumber: number;
+  /** Calls that couldn't be stored this run (logged; the next run tries again). */
+  failed: number;
 }
 
 export async function reconcileCalls({
@@ -47,16 +49,27 @@ export async function reconcileCalls({
     stored: 0,
     duplicate: 0,
     unknownNumber: 0,
+    failed: 0,
   };
   for (const event of events) {
     if (complete.has(event.providerCallId)) {
       counts.alreadyStored += 1;
       continue;
     }
-    const { outcome } = await recordCallEnded(pool, boss, event);
-    if (outcome === "stored") counts.stored += 1;
-    else if (outcome === "duplicate") counts.duplicate += 1;
-    else counts.unknownNumber += 1;
+    // One call that can't be stored mustn't stop the others behind it in the list, run after
+    // run: it's logged, counted and tried again next time.
+    try {
+      const { outcome } = await recordCallEnded(pool, boss, event);
+      if (outcome === "stored") counts.stored += 1;
+      else if (outcome === "duplicate") counts.duplicate += 1;
+      else counts.unknownNumber += 1;
+    } catch (error) {
+      counts.failed += 1;
+      logger.warn("Couldn't store a reconciled call: tried again next run", {
+        providerCallId: event.providerCallId,
+        error,
+      });
+    }
   }
   // Counts only: never the numbers or transcripts.
   logger.info("Call reconciliation finished", { ...counts, lookbackHours });

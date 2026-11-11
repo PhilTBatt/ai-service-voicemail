@@ -108,6 +108,7 @@ export async function runNotifyEmail(
           urgency: call.urgency,
           callerName: fields.callerName ?? null,
           callbackNumber: fields.callbackNumber ?? call.caller_number,
+          callerId: call.caller_number,
           postcode: fields.postcode ?? null,
           summary: call.summary ?? "",
           flags: call.flags,

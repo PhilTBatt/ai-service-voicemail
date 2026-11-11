@@ -115,7 +115,7 @@ describe("TwilioTelephonyProvider", () => {
 });
 
 describe("TwilioTelephonyProvider recordings", () => {
-  it("lists recordings created since a point in time, trimmed to the exact instant", async () => {
+  it("lists finished recordings created since a point in time, trimmed to the exact instant", async () => {
     const { provider, stub } = makeHarness();
     stub.recordings.push(
       {
@@ -124,6 +124,7 @@ describe("TwilioTelephonyProvider recordings", () => {
         uri: "/2010-04-01/Accounts/AC0/Recordings/RE1.json",
         duration: "30",
         date_created: "Fri, 06 Nov 2026 19:30:00 +0000",
+        status: "completed",
       },
       {
         sid: "RE2",
@@ -131,6 +132,24 @@ describe("TwilioTelephonyProvider recordings", () => {
         uri: "/2010-04-01/Accounts/AC0/Recordings/RE2.json",
         duration: "12",
         date_created: "Fri, 06 Nov 2026 17:00:00 +0000",
+        status: "completed",
+      },
+      // Still being processed, and an empty one: neither is a voicemail yet.
+      {
+        sid: "RE3",
+        call_sid: "CA3",
+        uri: "/2010-04-01/Accounts/AC0/Recordings/RE3.json",
+        duration: null,
+        date_created: "Fri, 06 Nov 2026 19:40:00 +0000",
+        status: "processing",
+      },
+      {
+        sid: "RE4",
+        call_sid: "CA4",
+        uri: "/2010-04-01/Accounts/AC0/Recordings/RE4.json",
+        duration: "0",
+        date_created: "Fri, 06 Nov 2026 19:35:00 +0000",
+        status: "absent",
       },
     );
     const since = new Date("2026-11-06T18:00:00Z");
@@ -192,6 +211,7 @@ describe("TwilioTelephonyProvider recording pages", () => {
         uri: `/2010-04-01/Accounts/AC0/Recordings/RE${i}.json`,
         duration: "30",
         date_created: at(minutesAgo),
+        status: "completed",
       });
     }
     const since = new Date(Date.parse("2026-11-06T20:00:00Z") - 60 * 60_000);

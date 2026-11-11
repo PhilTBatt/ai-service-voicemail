@@ -47,7 +47,7 @@ describe("personas", () => {
       `id: min\nname: Minimal\ndescription: x\ncaller:\n  brief: x\nexpect: {}\n`,
       "min.yaml",
     );
-    expect(p.variables).toEqual({ open_now: "yes", holiday_mode: "no" });
+    expect(p.variables).toEqual({ open_now: "yes", holiday_mode: "no", holiday_until: "not away" });
     expect(p.expect).toMatchObject({ scripts: [], ending: "any", maxTurns: 20, fields: {} });
     expect(p.caller.silent).toBe(false);
     expect(p.trade).toBe("plumber"); // the demo tenant's business

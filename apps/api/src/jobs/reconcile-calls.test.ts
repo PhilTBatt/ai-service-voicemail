@@ -82,6 +82,7 @@ describe("reconcileCalls", () => {
       stored: 2,
       duplicate: 0,
       unknownNumber: 0,
+      failed: 0,
     });
     expect(await rowFor(tenantId, missed.providerCallId)).toEqual([
       { ended: true, transcript: expect.stringContaining("kitchen tap") as unknown, urgency: null },
@@ -113,6 +114,7 @@ describe("reconcileCalls", () => {
     expect(await reconcileCalls({ pool: app, admin, boss, voice, now: () => NOW })).toMatchObject({
       listed: 1,
       unknownNumber: 1,
+      failed: 0,
     });
   });
 });

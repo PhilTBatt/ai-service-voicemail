@@ -126,6 +126,18 @@ describe("runNotifyEmergency", () => {
     expect(d.sms.sent).toHaveLength(2);
   });
 
+  // process-call queues this before the LLM runs, so before the call's urgency is stored: the
+  // spoken script, carried as the kind, is what makes it an emergency.
+  it("sends when queued early by process-call, before the call's urgency is stored", async () => {
+    const { tenantId, callId } = await makeCall();
+    await admin.query("UPDATE calls SET urgency = NULL WHERE id = $1", [callId]);
+    const d = deps();
+    expect(await runNotifyEmergency(d, { tenantId, callId, kind: "gas" })).toEqual({
+      tradesperson: "sent",
+      caller: "sent",
+    });
+  });
+
   it("does nothing for a call that isn't an emergency", async () => {
     const { tenantId, callId } = await makeCall({ urgency: "urgent" });
     const d = deps();

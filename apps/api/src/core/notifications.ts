@@ -128,6 +128,11 @@ export interface EmailContent {
 
 export interface CallEmailInput extends CallNotificationInput {
   businessName: string;
+  /**
+   * The number the call came from, when it differs from the call-back number the caller gave:
+   * a misheard digit then still leaves the tradesperson a number that works.
+   */
+  callerId?: string | null;
   startedAt: Date;
   flags: string[];
   /** Null for calls whose transcript has been cleared by retention. */
@@ -235,6 +240,9 @@ export function callEmail(input: CallEmailInput): EmailContent {
     `Caller: ${input.callerName ?? "not given"}`,
     `Number: ${input.callbackNumber ? `${nationalNumber(input.callbackNumber)} (tel:${input.callbackNumber})` : "withheld"}`,
     `Postcode: ${input.postcode ?? "not given"}`,
+    ...(rangFrom(input)
+      ? [`Rang from: ${nationalNumber(rangFrom(input)!)} (tel:${rangFrom(input)!})`]
+      : []),
     "",
     "Summary",
     input.summary,
@@ -266,6 +274,12 @@ export function callEmail(input: CallEmailInput): EmailContent {
             : "withheld",
         ],
         ["Postcode", escapeHtml(input.postcode ?? "not given")],
+        ...(rangFrom(input)
+          ? ([["Rang from", link(`tel:${rangFrom(input)!}`, nationalNumber(rangFrom(input)!))]] as [
+              string,
+              string,
+            ][])
+          : []),
         ...(input.flags.length > 0
           ? ([["Flags", escapeHtml(input.flags.join(", "))]] as [string, string][])
           : []),
@@ -288,6 +302,11 @@ export function callEmail(input: CallEmailInput): EmailContent {
   );
 
   return { subject, text, html };
+}
+
+/** The caller ID, when the caller gave a different number to ring back on. */
+function rangFrom(input: CallEmailInput): string | null {
+  return input.callerId && input.callerId !== input.callbackNumber ? input.callerId : null;
 }
 
 /** The email for a fallback voicemail: who, how long, and where to listen. */

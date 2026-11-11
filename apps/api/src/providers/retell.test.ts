@@ -131,6 +131,51 @@ describe("RetellVoiceProvider webhooks", () => {
     });
   });
 
+  // A withheld caller's number can come as a placeholder, which the database's phone type
+  // would refuse, losing the call; and Retell may send null for any field it hasn't got.
+  it("reads a withheld caller's placeholder as no number, and takes nulls for missing fields", () => {
+    const event = retellShapedEvent();
+    for (const from_number of ["anonymous", "", null]) {
+      const { rawBody, headers } = signed(
+        retellPayload(event, {
+          from_number,
+          recording_url: null,
+          disconnection_reason: null,
+          duration_ms: null,
+          transcript_object: [{ role: "agent", content: null }],
+        }),
+      );
+      expect(provider().verifyAndParseWebhook(rawBody, headers), String(from_number)).toMatchObject(
+        {
+          type: "call_ended",
+          callerNumber: null,
+          recordingRef: null,
+          endReason: "unknown",
+          transcript: [{ role: "agent", text: "" }],
+        },
+      );
+    }
+  });
+
+  it("ignores a call that never connected, which has no start time", () => {
+    const { rawBody, headers } = signed(
+      retellPayload(retellShapedEvent(), { start_timestamp: undefined }),
+    );
+    expect(provider().verifyAndParseWebhook(rawBody, headers)).toEqual({
+      type: "ignored",
+      reason: "call never started",
+    });
+  });
+
+  // Signed by Retell, so not a forgery: a 401 would count towards the signature alert.
+  it("ignores a correctly signed body in a shape it doesn't read, rather than refusing it", () => {
+    const { rawBody, headers } = signed({ event: "call_ended", call: { call_id: 42 } });
+    expect(provider().verifyAndParseWebhook(rawBody, headers)).toEqual({
+      type: "ignored",
+      reason: "unexpected shape",
+    });
+  });
+
   it("keeps only speech from the transcript, not tool calls or node transitions", () => {
     const { rawBody, headers } = signed(
       retellPayload(retellShapedEvent(), {
