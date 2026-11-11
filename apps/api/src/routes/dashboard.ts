@@ -13,6 +13,7 @@ import {
   type BillingView,
   type DirectDebitStartView,
   type DocumentsView,
+  type CallHandledView,
   type CallListView,
   type AgentProfileInput,
   type CreatedSignupLinkView,
@@ -33,6 +34,7 @@ import type pg from "pg";
 import { z } from "zod";
 import { releaseDueAt } from "../core/offboarding.ts";
 import { agentProfileInputSchema, saveAgentProfile } from "../db/agent-profiles.ts";
+import { NEEDS_REPLY_SQL, setCallHandled } from "../db/call-handled.ts";
 import { enqueueOffboardingWith } from "../jobs/offboarding.ts";
 import { enqueueOnboardingWith } from "../jobs/onboarding.ts";
 import { adminRouter, type NumberProvisioning } from "./admin.ts";
@@ -105,7 +107,14 @@ const callListQuery = z.object({
   /** Keyset cursor: calls that started strictly before this instant (the last row's startedAt). */
   before: z.iso.datetime({ offset: true }).optional(),
   limit: z.coerce.number().int().min(1).max(CALL_LIST_MAX_LIMIT).default(CALL_LIST_DEFAULT_LIMIT),
+  /** Only the calls still waiting for a reply (db/call-handled.ts says which those are). */
+  needsReply: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((value) => value === "true"),
 });
+
+const callHandledBody = z.object({ handled: z.boolean() });
 
 interface TenantRow {
   id: string;
@@ -508,7 +517,7 @@ export function dashboardRouter({
         .json({ error: "Invalid query", issues: z.flattenError(query.error).fieldErrors });
       return;
     }
-    const { urgency, from, to, before, limit } = query.data;
+    const { urgency, from, to, before, limit, needsReply } = query.data;
     // One more than asked for tells us whether there's another page, without a COUNT.
     const rows = await withTenant(
       pool,
@@ -521,9 +530,10 @@ export function dashboardRouter({
                AND ($2::timestamptz IS NULL OR started_at >= $2)
                AND ($3::timestamptz IS NULL OR started_at < $3)
                AND ($4::timestamptz IS NULL OR started_at < $4)
+               AND (NOT $6::boolean OR (${NEEDS_REPLY_SQL}))
              ORDER BY started_at DESC, id DESC
              LIMIT $5`,
-            [urgency ?? null, from ?? null, to ?? null, before ?? null, limit + 1],
+            [urgency ?? null, from ?? null, to ?? null, before ?? null, limit + 1, needsReply],
           )
         ).rows,
     );
@@ -563,12 +573,41 @@ export function dashboardRouter({
     res.json(presentCall(call, `/api/tenants/${tenantId}/calls/${call.id}/recording`, sources));
   });
 
+  // "Called back", or open again. The owner and the admin (the reseller never reaches a
+  // business's routes); audited with who did it.
+  tenant.put("/calls/:callId/handled", async (req, res) => {
+    const tenantId = tenantIdOf(res);
+    const { callId } = req.params;
+    const body = callHandledBody.safeParse(req.body);
+    if (!body.success) {
+      res.status(400).json({ error: "Expected { handled: true } or { handled: false }" });
+      return;
+    }
+    const result = z.uuid().safeParse(callId).success
+      ? await setCallHandled(pool, {
+          tenantId,
+          callId,
+          handled: body.data.handled,
+          actorUserId: principalOf(res).userId,
+          via: "dashboard",
+        })
+      : null;
+    if (!result) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    res.json({
+      callId,
+      handledAt: result.handledAt?.toISOString() ?? null,
+    } satisfies CallHandledView);
+  });
+
   tenant.get("/calls/:callId/recording", async (req, res) => {
     const tenantId = tenantIdOf(res);
     const { callId } = req.params;
     const call = await loadCall(tenantId, callId, res);
     if (!call) return;
-    await streamRecording(res, tenantId, call, sources);
+    await streamRecording(req, res, tenantId, call, sources);
   });
 
   return router;

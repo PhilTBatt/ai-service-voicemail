@@ -1,5 +1,5 @@
 // One business: its status, the on/off switch, and its calls, newest first, filterable by
-// urgency and by UK date, fifty at a time.
+// urgency, by UK date and by whether they still need a reply, fifty at a time.
 import {
   URGENCIES,
   type CallListView,
@@ -9,9 +9,15 @@ import {
   type TenantView,
 } from "@callmate/shared";
 import { useEffect, useRef, useState } from "react";
-import { Link, useParams } from "react-router";
+import { Link, useParams, useSearchParams } from "react-router";
 import { asError, useApi, useLoad } from "../api.ts";
-import { callsQuery, NO_FILTERS, type CallFilters } from "../calls-query.ts";
+import {
+  callsQuery,
+  filtersFromSearch,
+  NO_FILTERS,
+  searchFromFilters,
+  type CallFilters,
+} from "../calls-query.ts";
 import { formatDuration, formatPhone, urgencyLabel } from "../format.ts";
 import { TenantHeader } from "../tenant-header.tsx";
 import { formatUkDateTime } from "../time.ts";
@@ -80,7 +86,11 @@ interface CallPages {
 
 function Calls({ tenantId }: { tenantId: string }) {
   const { api } = useApi();
-  const [filters, setFilters] = useState<CallFilters>(NO_FILTERS);
+  // The filters live in the page's address, so they're still set after opening a call and
+  // coming back to the list.
+  const [search, setSearch] = useSearchParams();
+  const filters = filtersFromSearch(search);
+  const setFilters = (next: CallFilters) => setSearch(searchFromFilters(next), { replace: true });
   const [pages, setPages] = useState<CallPages | null>(null);
   const [error, setError] = useState<Error | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -165,6 +175,14 @@ function Calls({ tenantId }: { tenantId: string }) {
             onChange={(event) => set({ to: event.target.value })}
           />
         </label>
+        <label className="checkbox">
+          <input
+            type="checkbox"
+            checked={filters.needsReply}
+            onChange={(event) => set({ needsReply: event.target.checked })}
+          />
+          Needs a reply
+        </label>
         {query !== "" && (
           <button type="button" className="link" onClick={() => setFilters(NO_FILTERS)}>
             Clear
@@ -178,7 +196,12 @@ function Calls({ tenantId }: { tenantId: string }) {
       {pages && (
         <ul className="list">
           {pages.calls.map((call) => (
-            <CallRow key={call.callId} tenantId={tenantId} call={call} />
+            <CallRow
+              key={call.callId}
+              tenantId={tenantId}
+              call={call}
+              listSearch={searchFromFilters(filters).toString()}
+            />
           ))}
         </ul>
       )}
@@ -191,15 +214,31 @@ function Calls({ tenantId }: { tenantId: string }) {
   );
 }
 
-function CallRow({ tenantId, call }: { tenantId: string; call: CallSummaryView }) {
+function CallRow({
+  tenantId,
+  call,
+  listSearch,
+}: {
+  tenantId: string;
+  call: CallSummaryView;
+  /** The list's filters, so the call page's "All calls" comes back to the same list. */
+  listSearch: string;
+}) {
   const caller = call.fields.callerName ?? "Unknown caller";
   const number = call.fields.callbackNumber ?? call.callerNumber;
   return (
     <li className="card">
-      <Link to={`/tenants/${tenantId}/calls/${call.callId}`} className="call-link">
+      <Link
+        to={`/tenants/${tenantId}/calls/${call.callId}`}
+        state={{ listSearch }}
+        className="call-link"
+      >
         <div className="row">
           <span>{formatUkDateTime(call.startedAt)}</span>
-          <UrgencyBadge urgency={call.urgency} />
+          <span>
+            {call.handledAt && <span className="badge handled">Called back</span>}
+            <UrgencyBadge urgency={call.urgency} />
+          </span>
         </div>
         <p className="row-title">
           {caller}

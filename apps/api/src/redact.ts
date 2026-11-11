@@ -51,14 +51,18 @@ function decodePercents(text: string): string {
 }
 
 export function redactText(text: string): string {
-  return decodePercents(text)
-    .replace(EMAIL, "[email]")
-    .replace(EMAIL_CUT, "[email]")
-    .replace(UK_PHONE, "[phone]")
-    .replace(UK_PHONE_BARE, "[phone]")
-    .replace(INTERNATIONAL_PHONE, "[phone]")
-    .replace(POSTCODE, "[postcode]")
-    .replace(CALL_TOKEN, "/c/[token]");
+  return (
+    decodePercents(text)
+      // The call link first: about one expiry in thirteen encodes to a postcode-shaped piece
+      // (".tp00aa."), and redacting that alone would leave the call ID and its MAC in the log.
+      .replace(CALL_TOKEN, "/c/[token]")
+      .replace(EMAIL, "[email]")
+      .replace(EMAIL_CUT, "[email]")
+      .replace(UK_PHONE, "[phone]")
+      .replace(UK_PHONE_BARE, "[phone]")
+      .replace(INTERNATIONAL_PHONE, "[phone]")
+      .replace(POSTCODE, "[postcode]")
+  );
 }
 
 /** Redacts one field: content fields (transcript, summary, body, message) are replaced whole. */

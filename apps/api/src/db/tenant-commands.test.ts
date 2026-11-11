@@ -142,8 +142,45 @@ describe("applySmsCommand", () => {
       );
     }
     const { reply } = await applySmsCommand(app, tenantId, { kind: "status" }, NOW);
-    expect(reply).toBe("AnswerMate is ON. Holiday mode is off. Calls today: 2.");
+    expect(reply).toBe(
+      "AnswerMate is ON. Holiday mode is off. Calls today: 2 (2 still need a reply).",
+    );
     expect(isGsm7(reply)).toBe(true);
+  });
+
+  it("STATUS counts today's calls still waiting for a reply: not called back, not spam", async () => {
+    const { tenantId } = await makeTenant("live");
+    const none = await applySmsCommand(app, tenantId, { kind: "status" }, NOW);
+    expect(none.reply).toBe("AnswerMate is ON. Holiday mode is off. Calls today: 0.");
+
+    // Today: one called back, one spam, two open. Yesterday's open call isn't counted.
+    for (const [startedAt, urgency, handled] of [
+      ["2026-07-15T08:00:00Z", "routine", true],
+      ["2026-07-15T08:10:00Z", "spam", false],
+      ["2026-07-15T08:20:00Z", "urgent", false],
+      ["2026-07-15T08:30:00Z", null, false],
+      ["2026-07-14T12:00:00Z", "routine", false],
+    ] as const) {
+      await admin.query(
+        `INSERT INTO calls (tenant_id, provider_call_id, started_at, ended_at, urgency, handled_at)
+         VALUES ($1, $2, $3, $3, $4, CASE WHEN $5 THEN now() END)`,
+        [tenantId, `call_${randomUUID()}`, startedAt, urgency, handled],
+      );
+    }
+    const { reply } = await applySmsCommand(app, tenantId, { kind: "status" }, NOW);
+    expect(reply).toBe(
+      "AnswerMate is ON. Holiday mode is off. Calls today: 4 (2 still need a reply).",
+    );
+    expect(isGsm7(reply)).toBe(true);
+
+    // One left: singular.
+    await admin.query(
+      "UPDATE calls SET handled_at = now() WHERE tenant_id = $1 AND urgency = 'urgent'",
+      [tenantId],
+    );
+    expect((await applySmsCommand(app, tenantId, { kind: "status" }, NOW)).reply).toBe(
+      "AnswerMate is ON. Holiday mode is off. Calls today: 4 (1 still needs a reply).",
+    );
   });
 
   it("HELP and unknown text get fixed replies", async () => {

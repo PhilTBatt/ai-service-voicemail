@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { callsQuery, NO_FILTERS } from "./calls-query.ts";
+import { callsQuery, filtersFromSearch, NO_FILTERS, searchFromFilters } from "./calls-query.ts";
 import {
   billingSummary,
   formatDuration,
@@ -61,13 +61,28 @@ describe("callsQuery", () => {
 
   it("turns UK dates into the instants the API wants, end date included", () => {
     const query = new URLSearchParams(
-      callsQuery({ urgency: "urgent", from: "2026-10-24", to: "2026-10-25" }),
+      callsQuery({ urgency: "urgent", from: "2026-10-24", to: "2026-10-25", needsReply: false }),
     );
     expect(query.get("urgency")).toBe("urgent");
     // 24 October is BST: UK midnight is 23:00 UTC the day before.
     expect(query.get("from")).toBe("2026-10-23T23:00:00.000Z");
     // The clocks go back on the 25th, so the day after starts at midnight UTC.
     expect(query.get("to")).toBe("2026-10-26T00:00:00.000Z");
+  });
+
+  it("keeps the filters in the page's address and reads them back, ignoring anything invalid", () => {
+    const filters = { urgency: "urgent", from: "2026-11-01", to: "2026-11-07", needsReply: true };
+    const search = searchFromFilters(filters);
+    expect(search.toString()).toBe("urgency=urgent&from=2026-11-01&to=2026-11-07&needsReply=1");
+    expect(filtersFromSearch(search)).toEqual(filters);
+    expect(searchFromFilters(NO_FILTERS).toString()).toBe("");
+    expect(
+      filtersFromSearch(new URLSearchParams("urgency=loud&from=yesterday&needsReply=yes&x=1")),
+    ).toEqual(NO_FILTERS);
+  });
+
+  it("asks for only the calls still needing a reply when that box is ticked", () => {
+    expect(callsQuery({ ...NO_FILTERS, needsReply: true })).toBe("needsReply=true");
   });
 
   it("adds the cursor for the next page", () => {

@@ -291,6 +291,12 @@ describe("authorisation matrix", () => {
       name: "GET /tenants/:id/calls/:callId/recording",
       path: `/tenants/${tenantA}/calls/${callA}/recording`,
     },
+    // An empty body: refused (400) even for the owner, so the matrix marks nothing called back.
+    {
+      name: "PUT /tenants/:id/calls/:callId/handled",
+      path: `/tenants/${tenantA}/calls/${callA}/handled`,
+      body: {},
+    },
     { name: "GET /tenants/:id/profile", path: `/tenants/${tenantA}/profile` },
     { name: "PUT /tenants/:id/profile", path: `/tenants/${tenantA}/profile`, body: {} },
     { name: "PUT /tenants/:id/switch", path: `/tenants/${tenantA}/switch`, body: { on: true } },
@@ -662,6 +668,7 @@ describe("calls", () => {
       flags: [],
       fields: { callerName: "Sam", callbackNumber: "+447700900123", postcode: "XQ12 3JL" },
       viaFallback: false,
+      handledAt: null,
     });
     expect(all.calls[0]).not.toHaveProperty("transcript");
 
@@ -681,6 +688,91 @@ describe("calls", () => {
     );
     expect(summaries(page2)).toEqual(["One"]);
     expect(page2.nextBefore).toBeNull();
+  });
+
+  it("marks a call called back and open again, audited once each, and lists what still needs a reply", async () => {
+    const tenant = await createTenant(admin, { businessName: "Reply Roofing", trade: "roofer" });
+    await insertCall(tenant, "Open", "routine", "2026-11-04T09:00:00Z");
+    const done = await insertCall(tenant, "Done", "urgent", "2026-11-05T09:00:00Z");
+    await insertCall(tenant, "Spam", "spam", "2026-11-06T09:00:00Z");
+    const mark = (callId: string, handled: unknown) =>
+      send("PUT", `/tenants/${tenant}/calls/${callId}/handled`, { handled }, tokens.admin);
+
+    const marked = await mark(done, true);
+    expect(marked.status).toBe(200);
+    const { handledAt } = (await marked.json()) as { callId: string; handledAt: string };
+    expect(handledAt).toMatch(/^\d{4}-\d\d-\d\dT/);
+    // Marking it again keeps the first time, and adds no second audit row.
+    expect(((await (await mark(done, true)).json()) as { handledAt: string }).handledAt).toBe(
+      handledAt,
+    );
+
+    const call = await json<{ handledAt: string | null }>(
+      get(`/tenants/${tenant}/calls/${done}`, tokens.admin),
+    );
+    expect(call.handledAt).toBe(handledAt);
+
+    // Needs a reply: not called back, not spam.
+    const waiting = await json<CallList>(
+      get(`/tenants/${tenant}/calls?needsReply=true`, tokens.admin),
+    );
+    expect(summaries(waiting)).toEqual(["Open"]);
+    expect(
+      summaries(
+        await json<CallList>(get(`/tenants/${tenant}/calls?needsReply=false`, tokens.admin)),
+      ),
+    ).toEqual(["Spam", "Done", "Open"]);
+
+    // Open again: it needs a reply once more.
+    const reopened = await mark(done, false);
+    expect(((await reopened.json()) as { handledAt: string | null }).handledAt).toBeNull();
+    expect(
+      summaries(
+        await json<CallList>(get(`/tenants/${tenant}/calls?needsReply=true`, tokens.admin)),
+      ),
+    ).toEqual(["Done", "Open"]);
+
+    const audit = await admin.query<{ action: string; details: { callId: string; via: string } }>(
+      "SELECT action, details FROM audit_log WHERE tenant_id = $1 ORDER BY created_at",
+      [tenant],
+    );
+    expect(audit.rows.filter((row) => row.action.startsWith("call."))).toEqual([
+      { action: "call.called-back", details: { callId: done, via: "dashboard" } },
+      { action: "call.reopened", details: { callId: done, via: "dashboard" } },
+    ]);
+  });
+
+  it("refuses a bad body, and another business's call, when marking one called back", async () => {
+    const bad = await send(
+      "PUT",
+      `/tenants/${tenantA}/calls/${callA}/handled`,
+      { handled: "yes" },
+      tokens.ownerA,
+    );
+    expect(bad.status).toBe(400);
+    // Business B's call, asked for under business A: not found, and unchanged.
+    const other = await send(
+      "PUT",
+      `/tenants/${tenantA}/calls/${callB}/handled`,
+      { handled: true },
+      tokens.ownerA,
+    );
+    expect(other.status).toBe(404);
+    const { rows } = await admin.query<{ handled_at: Date | null }>(
+      "SELECT handled_at FROM calls WHERE id = $1",
+      [callB],
+    );
+    expect(rows[0]!.handled_at).toBeNull();
+    expect(
+      (
+        await send(
+          "PUT",
+          `/tenants/${tenantA}/calls/not-a-uuid/handled`,
+          { handled: true },
+          tokens.ownerA,
+        )
+      ).status,
+    ).toBe(404);
   });
 
   it("rejects a bad filter instead of guessing", async () => {
@@ -1233,7 +1325,7 @@ describe("CSV export", () => {
     expect([...bytes.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
     const csv = new TextDecoder().decode(bytes);
     expect(csv.split("\r\n")[0]).toBe(
-      "started_at,ended_at,caller_number,caller_name,callback_number,postcode,urgency,summary,voicemail,flags,transcript",
+      "started_at,ended_at,caller_number,caller_name,callback_number,postcode,urgency,summary,voicemail,flags,transcript,called_back_at",
     );
     expect(csv).toContain("Boiler leaking.");
     expect(csv).not.toContain("Fuse box tripping.");

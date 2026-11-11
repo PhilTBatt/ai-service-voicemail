@@ -391,7 +391,7 @@ export async function listFlaggedCalls(
   >(
     `SELECT c.id, c.provider_call_id, c.started_at, c.ended_at, c.billable_seconds, c.caller_number,
             c.urgency, c.summary, c.flags, c.extracted_fields, c.transcript, c.recording_ref,
-            c.via_fallback, c.tenant_id, t.business_name,
+            c.via_fallback, c.handled_at, c.tenant_id, t.business_name,
             to_json(c.started_at) #>> '{}' AS cursor_at
      FROM calls c JOIN tenants t ON t.id = c.tenant_id
      WHERE c.flags && $1::text[] AND c.reviewed_at IS NULL

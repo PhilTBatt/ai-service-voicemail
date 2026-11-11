@@ -10,6 +10,7 @@ import {
   formatUkDate,
   type SmsCommand,
 } from "../core/sms-commands.ts";
+import { NEEDS_REPLY_SQL } from "./call-handled.ts";
 import { withTenant } from "./tenant.ts";
 
 export interface CommandResult {
@@ -136,14 +137,21 @@ export async function applySmsCommand(
         return { reply: HOLIDAY_INVALID_REPLY };
 
       case "status": {
-        const callsToday = (
-          await client.query<{ n: string }>(
-            "SELECT count(*) AS n FROM calls WHERE tenant_id = $1 AND started_at >= $2",
+        // Today's calls, and how many of them are still waiting for a reply: today's only, so
+        // the number means something even for someone who never marks calls as called back.
+        const today = (
+          await client.query<{ n: number; open: number }>(
+            `SELECT count(*)::int AS n, (count(*) FILTER (WHERE ${NEEDS_REPLY_SQL}))::int AS open
+             FROM calls WHERE tenant_id = $1 AND started_at >= $2`,
             [tenantId, startOfUkDay(now)],
           )
-        ).rows[0]!.n;
+        ).rows[0]!;
+        const waiting =
+          today.n > 0
+            ? ` (${today.open} still ${today.open === 1 ? "needs" : "need"} a reply)`
+            : "";
         return {
-          reply: `AnswerMate is ${statusWord(state.status)}. ${holidayLine(state)} Calls today: ${callsToday}.`,
+          reply: `AnswerMate is ${statusWord(state.status)}. ${holidayLine(state)} Calls today: ${today.n}${waiting}.`,
         };
       }
 

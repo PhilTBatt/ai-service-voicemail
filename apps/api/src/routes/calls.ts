@@ -3,10 +3,11 @@
 // view). A browser gets the page itself (core/call-page.ts); anything asking for JSON gets the
 // call as data, as it always has. The recording is streamed through the API, so the provider's
 // URL is never exposed.
-import { Router, type Request, type Response } from "express";
+import { Router, urlencoded, type Request, type Response } from "express";
 import type pg from "pg";
 import { CALL_PAGE_CSP, callPageHtml, callPageMessageHtml } from "../core/call-page.ts";
 import { verifyCallLink } from "../core/signed-links.ts";
+import { setCallHandled } from "../db/call-handled.ts";
 import { findTenantIdByCall } from "../db/cross-tenant.ts";
 import { withTenant } from "../db/tenant.ts";
 import type { TelephonyProvider } from "../providers/telephony.ts";
@@ -106,11 +107,44 @@ export function callPageRouter({
     const view = presentCall(loaded.call, `/c/${req.params.token}/recording`, sources);
     if (wantsPage(req)) {
       res.setHeader("Content-Security-Policy", CALL_PAGE_CSP);
-      res.type("html").send(callPageHtml(view));
+      res.type("html").send(callPageHtml(view, { handledUrl: `/c/${req.params.token}/handled` }));
       return;
     }
     res.json(view);
   });
+
+  // "Called back", from the page itself: the signed link is the credential here, as it is for
+  // reading the call. A plain form post, then back to the page with a 303, so refreshing the
+  // page doesn't post again.
+  router.post(
+    "/:token/handled",
+    urlencoded({ extended: false, limit: "1kb" }),
+    async (req, res) => {
+      const loaded = await loadCall(req.params.token);
+      if (!loaded.ok) {
+        refuse(req, res, loaded);
+        return;
+      }
+      const handled = (req.body as { handled?: unknown } | undefined)?.handled;
+      if (handled !== "true" && handled !== "false") {
+        if (wantsPage(req)) {
+          res.setHeader("Content-Security-Policy", CALL_PAGE_CSP);
+          res.status(400).type("html").send(callPageMessageHtml("error", dashboardOrigin));
+          return;
+        }
+        res.status(400).json({ error: "Expected handled=true or handled=false" });
+        return;
+      }
+      await setCallHandled(pool, {
+        tenantId: loaded.tenantId,
+        callId: loaded.call.id,
+        handled: handled === "true",
+        actorUserId: null,
+        via: "link",
+      });
+      res.redirect(303, `/c/${req.params.token}`);
+    },
+  );
 
   router.get("/:token/recording", async (req, res) => {
     const loaded = await loadCall(req.params.token);
@@ -120,7 +154,7 @@ export function callPageRouter({
         .json({ error: loaded.kind === "expired" ? "This link has expired" : "Not found" });
       return;
     }
-    await streamRecording(res, loaded.tenantId, loaded.call, sources);
+    await streamRecording(req, res, loaded.tenantId, loaded.call, sources);
   });
 
   return router;

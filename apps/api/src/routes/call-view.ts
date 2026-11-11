@@ -3,7 +3,7 @@
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { CallSummaryView, CallView } from "@callmate/shared";
-import type { Response } from "express";
+import type { Request, Response } from "express";
 import { parseTranscript } from "../jobs/process-call.ts";
 import { logger } from "../logger.ts";
 import type { TelephonyProvider } from "../providers/telephony.ts";
@@ -12,7 +12,7 @@ import type { VoiceProvider } from "../providers/voice.ts";
 /** The columns a call view needs; `SELECT ${CALL_VIEW_COLUMNS} FROM calls ...`. */
 export const CALL_VIEW_COLUMNS =
   "id, provider_call_id, started_at, ended_at, billable_seconds, caller_number, urgency, summary, " +
-  "flags, extracted_fields, transcript, recording_ref, via_fallback";
+  "flags, extracted_fields, transcript, recording_ref, via_fallback, handled_at";
 
 export interface CallRow {
   id: string;
@@ -28,6 +28,8 @@ export interface CallRow {
   transcript: string | null;
   recording_ref: string | null;
   via_fallback: boolean;
+  /** When it was marked called back, or null while it is open (db/call-handled.ts). */
+  handled_at: Date | null;
 }
 
 /** Where recordings are fetched from. Either may be absent until that provider is configured. */
@@ -62,6 +64,7 @@ export function presentCallSummary(call: CallRow): CallSummaryView {
       postcode: str("postcode"),
     },
     viaFallback: call.via_fallback,
+    handledAt: call.handled_at?.toISOString() ?? null,
   };
 }
 
@@ -84,8 +87,15 @@ export function presentCall(
   };
 }
 
-/** Streams the call's recording into the response, or answers 404 when there isn't one. */
+/**
+ * Streams the call's recording into the response, or answers 404 when there isn't one. A
+ * request for a byte range gets that range (206): Safari, which every browser on an iPhone is,
+ * asks for audio in ranges and won't play it otherwise (Apple: "HTTP servers hosting media
+ * files for iOS must support byte-range requests"). The providers send the whole file, so for a
+ * range it's read into memory and sliced: a few MB at most, for calls capped at 8 minutes.
+ */
 export async function streamRecording(
+  req: Request,
   res: Response,
   tenantId: string,
   call: CallRow,
@@ -109,6 +119,36 @@ export async function streamRecording(
   // Only ever an audio type: the provider says what it's sending, and if that were somehow a
   // page, a browser would otherwise run it as this site. The bytes are passed on unchanged.
   res.type(audio.contentType.startsWith("audio/") ? audio.contentType : "application/octet-stream");
+  res.setHeader("Accept-Ranges", "bytes");
+  if (req.headers.range !== undefined) {
+    let bytes: Buffer;
+    try {
+      bytes = Buffer.from(await new globalThis.Response(audio.body).arrayBuffer());
+    } catch (error) {
+      logger.warn("Recording read ended early", { tenantId, callId: call.id, error });
+      res.status(502).json({ error: "Recording not available" });
+      return;
+    }
+    const ranges = req.range(bytes.length, { combine: true });
+    if (ranges === -1) {
+      res.status(416).setHeader("Content-Range", `bytes */${bytes.length}`).end();
+      return;
+    }
+    // One range, as players ask for: that slice. Anything else (malformed, several at once)
+    // gets the whole file, which the standard allows a server to send instead.
+    const range =
+      ranges !== -2 && ranges?.type === "bytes" && ranges.length === 1 ? ranges[0] : null;
+    if (!range) {
+      res.setHeader("Content-Length", bytes.length).end(bytes);
+      return;
+    }
+    res
+      .status(206)
+      .setHeader("Content-Range", `bytes ${range.start}-${range.end}/${bytes.length}`)
+      .setHeader("Content-Length", range.end - range.start + 1)
+      .end(bytes.subarray(range.start, range.end + 1));
+    return;
+  }
   try {
     // pipeline() forwards a provider-side error here; pipe() would leave it unhandled and
     // take the whole process down.

@@ -1,9 +1,9 @@
 // One call: who rang, what they wanted, the transcript and the recording. The recording needs
 // the login token, which an <audio> tag can't send, so it's fetched as a file first and played
 // from memory; nothing is stored in the browser.
-import type { CallView } from "@callmate/shared";
+import type { CallHandledView, CallView } from "@callmate/shared";
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router";
+import { Link, useLocation, useParams } from "react-router";
 import { asError, useApi, useLoad } from "../api.ts";
 import { formatDuration, formatPhone } from "../format.ts";
 import { formatUkDateTime } from "../time.ts";
@@ -12,6 +12,8 @@ import { ErrorNote, UrgencyBadge } from "../ui.tsx";
 export function CallPage() {
   const { tenantId = "", callId = "" } = useParams();
   const { api } = useApi();
+  // The list this call was opened from, filters and all, so "All calls" goes back to it.
+  const listSearch = (useLocation().state as { listSearch?: string } | null)?.listSearch ?? "";
   const call = useLoad(
     () => api<CallView>(`/tenants/${tenantId}/calls/${callId}`),
     `${tenantId}/${callId}`,
@@ -25,7 +27,7 @@ export function CallPage() {
   return (
     <>
       <p>
-        <Link to={`/tenants/${tenantId}`}>← All calls</Link>
+        <Link to={`/tenants/${tenantId}${listSearch ? `?${listSearch}` : ""}`}>← All calls</Link>
       </p>
       <h1>{data.fields.callerName ?? "Unknown caller"}</h1>
       <p className="muted">
@@ -40,6 +42,13 @@ export function CallPage() {
           </span>
         ))}
       </p>
+
+      <CalledBack
+        key={callId}
+        tenantId={tenantId}
+        callId={callId}
+        initialHandledAt={data.handledAt}
+      />
 
       <section className="card">
         <dl className="details">
@@ -70,6 +79,65 @@ export function CallPage() {
         )}
       </section>
     </>
+  );
+}
+
+/**
+ * "Called back": ticks the call off the list of ones needing a reply, or puts it back. Keeps
+ * its own state from the answer rather than reloading the call, so the page stays put and a
+ * recording that's playing carries on.
+ */
+function CalledBack({
+  tenantId,
+  callId,
+  initialHandledAt,
+}: {
+  tenantId: string;
+  callId: string;
+  initialHandledAt: string | null;
+}) {
+  const { api } = useApi();
+  const [handledAt, setHandledAt] = useState(initialHandledAt);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+
+  const mark = async (handled: boolean) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await api<CallHandledView>(`/tenants/${tenantId}/calls/${callId}/handled`, {
+        method: "PUT",
+        body: { handled },
+      });
+      setHandledAt(result.handledAt);
+    } catch (caught) {
+      setError(asError(caught));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="card switch">
+      {handledAt ? (
+        <>
+          <p>
+            <span className="badge handled">Called back</span> {formatUkDateTime(handledAt)}
+          </p>
+          <button type="button" className="link" disabled={busy} onClick={() => void mark(false)}>
+            Not done yet
+          </button>
+        </>
+      ) : (
+        <>
+          <p>Needs a reply.</p>
+          <button type="button" disabled={busy} onClick={() => void mark(true)}>
+            Mark as called back
+          </button>
+        </>
+      )}
+      {error && <ErrorNote error={error} />}
+    </section>
   );
 }
 

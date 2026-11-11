@@ -20,7 +20,11 @@ const NOW = new Date("2026-11-07T10:00:00Z");
 let get: (path: string) => Promise<Response>;
 /** As a phone's browser asks: HTML first. */
 let getPage: (path: string) => Promise<Response>;
+/** A form post, as the page's button sends one. */
+let post: (path: string, form: string) => Promise<Response>;
 let stop: () => Promise<void>;
+/** Where the test server listens. */
+let base: string;
 
 // What browsers send for a page they navigate to.
 const BROWSER_ACCEPT =
@@ -39,11 +43,19 @@ beforeAll(async () => {
   }).listen(0);
   await once(server, "listening");
   const { port } = server.address() as AddressInfo;
+  base = `http://127.0.0.1:${port}`;
   get = (path) => fetch(`http://127.0.0.1:${port}${path}`, { redirect: "manual" });
   getPage = (path) =>
     fetch(`http://127.0.0.1:${port}${path}`, {
       redirect: "manual",
       headers: { accept: BROWSER_ACCEPT },
+    });
+  post = (path, form) =>
+    fetch(`http://127.0.0.1:${port}${path}`, {
+      method: "POST",
+      redirect: "manual",
+      headers: { accept: BROWSER_ACCEPT, "content-type": "application/x-www-form-urlencoded" },
+      body: form,
     });
   stop = () => new Promise((resolve) => server.close(() => resolve()));
 });
@@ -105,6 +117,7 @@ describe("GET /c/:token", () => {
         { role: "caller", text: "My boiler is leaking." },
       ],
       viaFallback: false,
+      handledAt: null,
       recording: { available: true, url: `/c/${token(callId)}/recording` },
     });
     expect(JSON.stringify(body)).not.toContain("twilio");
@@ -200,6 +213,56 @@ describe("GET /c/:token from a browser: the page a person opens from a text", ()
     expect(html).not.toContain("Sam");
   });
 
+  it("marks the call called back from the page, and back to needing a reply, with no login", async () => {
+    const { callId } = await makeCall("agent");
+    const page = `/c/${token(callId)}`;
+    const before = await (await getPage(page)).text();
+    expect(before).toContain(`<form method="post" action="${page}/handled">`);
+    expect(before).toContain('<input type="hidden" name="handled" value="true">');
+    expect(before).toContain("Mark as called back");
+
+    const marked = await post(`${page}/handled`, "handled=true");
+    // Back to the page, as a GET, so refreshing it doesn't post again.
+    expect(marked.status).toBe(303);
+    expect(marked.headers.get("location")).toBe(page);
+    const after = await (await getPage(page)).text();
+    expect(after).toMatch(/✓ Called back \w+day \d+ \w+ \d{4}, \d\d:\d\d/);
+    expect(after).toContain('<input type="hidden" name="handled" value="false">');
+
+    // Recorded as coming from the link: no person to name.
+    const { rows } = await admin.query<{ handled_by: string | null; action: string; via: string }>(
+      `SELECT c.handled_by, a.action, a.details->>'via' AS via
+       FROM calls c JOIN audit_log a ON a.tenant_id = c.tenant_id
+       WHERE c.id = $1 AND a.action LIKE 'call.%'`,
+      [callId],
+    );
+    expect(rows).toEqual([{ handled_by: null, action: "call.called-back", via: "link" }]);
+
+    expect((await post(`${page}/handled`, "handled=false")).status).toBe(303);
+    expect(await (await getPage(page)).text()).toContain("Mark as called back");
+  });
+
+  it("refuses to mark a call from an expired, forged or garbled request", async () => {
+    const { callId } = await makeCall("agent");
+    const expired = token(callId, new Date(NOW.getTime() - 1000));
+    expect((await post(`/c/${expired}/handled`, "handled=true")).status).toBe(410);
+    expect((await post(`/c/not-a-token/handled`, "handled=true")).status).toBe(404);
+    // A person's browser gets a page for these too, never JSON.
+    const garbled = await post(`/c/${token(callId)}/handled`, "handled=maybe");
+    expect(garbled.status).toBe(400);
+    expect(garbled.headers.get("content-type")).toContain("text/html");
+    expect(await garbled.text()).toContain("<h1>Something went wrong</h1>");
+    const tooBig = await post(`/c/${token(callId)}/handled`, `handled=true&x=${"a".repeat(2000)}`);
+    expect(tooBig.status).toBe(413);
+    expect(tooBig.headers.get("content-type")).toContain("text/html");
+    expect(tooBig.headers.get("content-security-policy")).toContain("default-src 'none'");
+    const { rows } = await admin.query<{ handled_at: Date | null }>(
+      "SELECT handled_at FROM calls WHERE id = $1",
+      [callId],
+    );
+    expect(rows[0]!.handled_at).toBeNull();
+  });
+
   it("says so in a page when the link doesn't match a call", async () => {
     for (const path of [`/c/not-a-token`, `/c/${token(randomUUID())}`]) {
       const response = await getPage(path);
@@ -230,6 +293,37 @@ describe("GET /c/:token/recording", () => {
   it("answers 404 when the provider no longer has the recording", async () => {
     const { callId } = await makeCall("voicemail");
     expect((await get(`/c/${token(callId)}/recording`)).status).toBe(404);
+  });
+
+  // Safari, every browser on an iPhone, asks for audio in byte ranges and won't play it otherwise.
+  it("answers a byte range with just that range, as an iPhone's player asks", async () => {
+    const { callId, recordingUrl } = await makeCall("voicemail");
+    const audio = new Uint8Array([0x49, 0x44, 0x33, 0x04, 0x00, 0x01]);
+    const ranged = (range: string) =>
+      fetch(`${base}/c/${token(callId)}/recording`, { headers: { range } });
+
+    telephony.recordingAudio.set(recordingUrl, audio);
+    const first = await ranged("bytes=0-1");
+    expect(first.status).toBe(206);
+    expect(first.headers.get("content-range")).toBe("bytes 0-1/6");
+    expect(first.headers.get("content-length")).toBe("2");
+    expect(first.headers.get("accept-ranges")).toBe("bytes");
+    expect(new Uint8Array(await first.arrayBuffer())).toEqual(new Uint8Array([0x49, 0x44]));
+
+    const rest = await ranged("bytes=2-");
+    expect(rest.status).toBe(206);
+    expect(rest.headers.get("content-range")).toBe("bytes 2-5/6");
+    expect(new Uint8Array(await rest.arrayBuffer())).toEqual(audio.subarray(2));
+
+    const beyond = await ranged("bytes=10-20");
+    expect(beyond.status).toBe(416);
+    expect(beyond.headers.get("content-range")).toBe("bytes */6");
+
+    // No range: the whole file, as before, saying ranges are available.
+    const whole = await get(`/c/${token(callId)}/recording`);
+    expect(whole.status).toBe(200);
+    expect(whole.headers.get("accept-ranges")).toBe("bytes");
+    expect(new Uint8Array(await whole.arrayBuffer())).toEqual(audio);
   });
 
   it("streams an agent call's recording from the voice platform, by provider call ID", async () => {

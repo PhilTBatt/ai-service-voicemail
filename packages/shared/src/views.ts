@@ -101,6 +101,8 @@ export interface CallSummaryView {
   flags: string[];
   fields: { callerName: string | null; callbackNumber: string | null; postcode: string | null };
   viaFallback: boolean;
+  /** When the tradesperson marked it called back; null while it still needs a reply. */
+  handledAt: string | null;
 }
 
 /** GET /api/tenants/:id/calls. `nextBefore` is the cursor for the next page, or null at the end. */
@@ -118,6 +120,12 @@ export interface TranscriptTurnView {
 export interface CallView extends CallSummaryView {
   transcript: TranscriptTurnView[] | null;
   recording: { available: boolean; url: string };
+}
+
+/** PUT /api/tenants/:id/calls/:callId/handled */
+export interface CallHandledView {
+  callId: string;
+  handledAt: string | null;
 }
 
 /** PUT /api/tenants/:id/switch */

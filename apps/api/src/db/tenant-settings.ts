@@ -104,7 +104,7 @@ export async function exportTenant(pool: pg.Pool, tenantId: string) {
     );
     const calls = await client.query(
       `SELECT id, caller_number, started_at, ended_at, billable_seconds, outcome, urgency, summary,
-              extracted_fields, transcript, via_fallback, flags, created_at
+              extracted_fields, transcript, via_fallback, flags, handled_at, created_at
        FROM calls WHERE tenant_id = $1 ORDER BY started_at`,
       [tenantId],
     );
@@ -211,10 +211,11 @@ const CSV_QUERIES: Record<CsvExport, { header: string[]; sql: string }> = {
       "voicemail",
       "flags",
       "transcript",
+      "called_back_at",
     ],
     sql: `SELECT started_at, ended_at, caller_number, extracted_fields->>'callerName',
                  extracted_fields->>'callbackNumber', extracted_fields->>'postcode', urgency,
-                 summary, via_fallback, array_to_string(flags, '; '), transcript
+                 summary, via_fallback, array_to_string(flags, '; '), transcript, handled_at
           FROM calls WHERE tenant_id = $1 ORDER BY started_at`,
   },
   messages: {

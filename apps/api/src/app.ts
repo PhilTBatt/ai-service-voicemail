@@ -3,6 +3,7 @@ import path from "node:path";
 import express, { type ErrorRequestHandler, type RequestHandler } from "express";
 import type pg from "pg";
 import { raiseAlert, type AlertFn } from "./alerts.ts";
+import { CALL_PAGE_CSP, callPageMessageHtml } from "./core/call-page.ts";
 import type { OutboundPolicy } from "./core/outbound-allowlist.ts";
 import { SERVER_ERRORS_PER_WINDOW, Spike } from "./core/spike.ts";
 import { lastHeartbeat, workerState } from "./db/worker-heartbeat.ts";
@@ -185,19 +186,28 @@ export function createApp({
       next(error);
       return;
     }
+    // A person on the page behind a text's link gets a page saying so, not JSON.
+    const reply = (code: number, body: { error: string }) => {
+      if (callPages && req.path.startsWith("/c/") && req.accepts(["json", "html"]) === "html") {
+        res.setHeader("Content-Security-Policy", CALL_PAGE_CSP);
+        res.status(code).type("html").send(callPageMessageHtml("error", callPages.dashboardOrigin));
+        return;
+      }
+      res.status(code).json(body);
+    };
     // Express's body parser marks what it refuses (malformed JSON, too large) with a 4xx
     // status and a type: that's a bad request, not a fault here.
     const { status, type } = (error ?? {}) as { status?: unknown; type?: unknown };
     if (typeof status === "number" && status >= 400 && status < 500 && typeof type === "string") {
       logger.warn("Refused a request body", { method: req.method, path: req.path, type });
-      res.status(status).json({ error: "Bad request" });
+      reply(status, { error: "Bad request" });
       return;
     }
     logger.error("Unhandled request error", { error, method: req.method, path: req.path });
     if (serverErrors.record(now())) {
       alert("server-error-spike", { inWindow: serverErrors.count, lastPath: req.path });
     }
-    res.status(500).json({ error: "Internal server error" });
+    reply(500, { error: "Internal server error" });
   };
   app.use(onError);
 

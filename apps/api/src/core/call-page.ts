@@ -37,11 +37,20 @@ const STYLE = `
   audio { width: 100%; }
   .turn { margin: 0 0 8px; }
   .footer { color: #666; font-size: 13px; margin-top: 32px; }
+  form { margin: 0 0 16px; }
+  button { font: inherit; cursor: pointer; }
+  .secondary { display: block; width: 100%; background: #fff; color: #0b57d0; font-weight: 700;
+               font-size: 16px; padding: 12px; border: 2px solid #0b57d0; border-radius: 8px; }
+  .done { font-weight: 700; color: #1b5e20; margin: 0 0 4px; }
+  .link { background: none; border: none; padding: 0; color: #0b57d0; text-decoration: underline; }
   @media (prefers-color-scheme: dark) {
     body { background: #121212; color: #eee; }
     .muted, dt { color: #aaa; }
     .badge { background: #333; }
     .footer { color: #999; }
+    .secondary { background: #121212; color: #8ab4f8; border-color: #8ab4f8; }
+    .done { color: #81c995; }
+    .link { color: #8ab4f8; }
   }`;
 
 function page(title: string, body: string): string {
@@ -66,8 +75,11 @@ export function spokenDuration(seconds: number): string {
   return rest === 0 ? `${minutes} min` : `${minutes} min ${rest} sec`;
 }
 
-/** The call: who, how urgent, the number to ring back, the summary, recording and transcript. */
-export function callPageHtml(call: CallView): string {
+/**
+ * The call: who, how urgent, the number to ring back, whether it has been, the summary,
+ * recording and transcript. With `handledUrl`, a button marks it called back (or open again).
+ */
+export function callPageHtml(call: CallView, { handledUrl }: { handledUrl?: string } = {}): string {
   const label =
     call.urgency !== null && Object.hasOwn(URGENCY_LABEL, call.urgency)
       ? URGENCY_LABEL[call.urgency as keyof typeof URGENCY_LABEL]
@@ -91,6 +103,7 @@ export function callPageHtml(call: CallView): string {
     number
       ? `<a class="button" href="tel:${escapeHtml(number)}">Call back ${escapeHtml(nationalNumber(number))}</a>`
       : `<p>Their number was withheld.</p>`,
+    ...(handledUrl ? [handledForm(call.handledAt, handledUrl)] : []),
     `<dl><dt>Postcode</dt><dd>${escapeHtml(call.fields.postcode ?? "Not given")}</dd></dl>`,
     "<h2>Summary</h2>",
     `<p class="summary">${escapeHtml(
@@ -116,21 +129,39 @@ export function callPageHtml(call: CallView): string {
   return page(`${label}: ${caller}`, body);
 }
 
+/** Called back, with a way to undo it; or the button that says so. A plain form: no script. */
+function handledForm(handledAt: string | null, action: string): string {
+  const form = (value: "true" | "false", button: string) =>
+    `<form method="post" action="${escapeHtml(action)}"><input type="hidden" name="handled" value="${value}">${button}</form>`;
+  return handledAt
+    ? `<p class="done">✓ Called back ${escapeHtml(formatUkDateTime(new Date(handledAt)))}</p>` +
+        form(
+          "false",
+          '<button class="link" type="submit">Not done yet? Mark it as needing a reply</button>',
+        )
+    : form("true", '<button class="secondary" type="submit">Mark as called back</button>');
+}
+
 /** For a link that has expired, or doesn't match a call: what happened, and where to go. */
 export function callPageMessageHtml(
-  kind: "expired" | "not-found",
+  kind: "expired" | "not-found" | "error",
   dashboardOrigin?: string,
 ): string {
-  const [title, text] =
-    kind === "expired"
-      ? [
-          "This link has expired",
-          `Links in texts and emails work for ${LINK_DAYS} days. The call is still in your AnswerMate dashboard.`,
-        ]
-      : [
-          "Call not found",
-          "This link doesn't match a call. Check it's the whole link from the text or email.",
-        ];
+  const messages: Record<typeof kind, [title: string, text: string]> = {
+    expired: [
+      "This link has expired",
+      `Links in texts and emails work for ${LINK_DAYS} days. The call is still in your AnswerMate dashboard.`,
+    ],
+    "not-found": [
+      "Call not found",
+      "This link doesn't match a call. Check it's the whole link from the text or email.",
+    ],
+    error: [
+      "Something went wrong",
+      "That didn't work. Go back and try again; if it keeps happening, the call is in your AnswerMate dashboard.",
+    ],
+  };
+  const [title, text] = messages[kind];
   return page(
     title,
     [

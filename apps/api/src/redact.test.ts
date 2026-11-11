@@ -215,6 +215,20 @@ describe("call-page tokens", () => {
     );
     expect(redactValue({ path: `/c/${token}` })).toEqual({ path: "/c/[token]" });
   });
+
+  it("masks the whole link even when its expiry looks like a postcode", () => {
+    // Expiry seconds in base 36: "tp00aa" (late November 2026) has a postcode's shape. Masked
+    // as a postcode alone, the call ID and the MAC either side of it would stay in the log.
+    const token = signCallLink(
+      {
+        callId: "0b6f2b3c-9d1e-4a7f-8c2d-1e3f4a5b6c7d",
+        expiresAt: new Date(parseInt("tp00aa", 36) * 1000),
+      },
+      "test-signing-secret-at-least-32-characters-long",
+    );
+    expect(token).toContain(".tp00aa.");
+    expect(redactText(`POST /c/${token}/handled 413`)).toBe("POST /c/[token]/handled 413");
+  });
 });
 
 describe("provider errors", () => {

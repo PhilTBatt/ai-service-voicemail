@@ -179,6 +179,11 @@ button.link {
   color: var(--routine);
 }
 
+.handled {
+  background: #dcfae6;
+  color: #067647;
+}
+
 .status-live {
   background: #dcfae6;
   color: #067647;
@@ -216,6 +221,18 @@ button.link {
   border: 1px solid var(--line);
   border-radius: 6px;
   background: var(--surface);
+}
+
+/* A tick box sits beside its words, level with the other filters' boxes. */
+.filters label.checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.4rem;
+  padding-bottom: 0.4rem;
+}
+
+.filters label.checkbox input {
+  padding: 0;
 }
 
 .switch {
