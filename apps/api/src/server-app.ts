@@ -39,6 +39,7 @@ export function buildServerApp(
           provider: new TwilioTelephonyProvider(config.twilio),
           voice: retell,
           publicBaseUrl: config.publicBaseUrl,
+          alternateBaseUrl: config.alternateBaseUrl,
           outbound: config.outbound,
           enqueueSync: (job: SyncAgentJobData) => enqueueSyncAgent(boss, job),
           enqueueNotifications: enqueueNotificationsWith(boss),
@@ -92,6 +93,9 @@ export function buildServerApp(
   return createApp({
     pool,
     dashboardDist: config.dashboardDist,
+    moveDashboard: config.alternateBaseUrl
+      ? { fromHost: new URL(config.alternateBaseUrl).host, toOrigin: config.dashboardOrigin }
+      : undefined,
     voiceProviders,
     telephony,
     dashboard,

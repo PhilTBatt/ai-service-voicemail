@@ -24,6 +24,12 @@ const envSchema = z
       .optional(),
     TWILIO_AUTH_TOKEN: z.string().min(1).optional(),
     PUBLIC_BASE_URL: z.url({ protocol: /^https?$/ }).optional(),
+    // Another address the API also answers at, once it has its own domain (RUNBOOK section 16):
+    // Twilio's signatures made for it are accepted too, so calls keep working until the number
+    // is pointed at the new address (and the fallback TwiML Bin, which names the old one, keeps
+    // working after), and a dashboard page opened there is sent on to DASHBOARD_ORIGIN, the only
+    // address its logins work at. Set by infra/main.bicep.
+    ALTERNATE_BASE_URL: z.url({ protocol: /^https?$/ }).optional(),
     // Buying numbers costs money: off unless an environment says otherwise.
     TWILIO_PURCHASES_ENABLED: z.enum(["true", "false"]).default("false"),
     // UK numbers need an approved regulatory bundle and address (decision 009).
@@ -106,6 +112,21 @@ const envSchema = z
     JUDGE_SAMPLE_RATE: z.coerce.number().min(0).max(1).default(0),
   })
   .superRefine((env, ctx) => {
+    // The same address twice would send the dashboard round a loop of redirects. Only when both
+    // parse: zod runs this even after a field failed, and a malformed one is reported as such.
+    if (
+      env.ALTERNATE_BASE_URL !== undefined &&
+      env.PUBLIC_BASE_URL !== undefined &&
+      URL.canParse(env.ALTERNATE_BASE_URL) &&
+      URL.canParse(env.PUBLIC_BASE_URL) &&
+      new URL(env.ALTERNATE_BASE_URL).host === new URL(env.PUBLIC_BASE_URL).host
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["ALTERNATE_BASE_URL"],
+        message: "must be a different address from PUBLIC_BASE_URL",
+      });
+    }
     // The two go together: name whichever one is missing.
     if ((env.VAT_REGISTRATION_NUMBER === undefined) !== (env.VAT_REGISTRATION_FROM === undefined)) {
       ctx.addIssue({
@@ -155,6 +176,7 @@ const envSchema = z
           }
         : undefined,
     publicBaseUrl: env.PUBLIC_BASE_URL?.replace(/\/$/, ""),
+    alternateBaseUrl: env.ALTERNATE_BASE_URL?.replace(/\/$/, ""),
     fallbackVoicemailUrl: env.FALLBACK_VOICEMAIL_URL,
     adminDatabaseUrl: env.ADMIN_DATABASE_URL,
     signingSecret: env.SIGNING_SECRET,

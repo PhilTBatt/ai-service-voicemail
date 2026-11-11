@@ -39,6 +39,11 @@ export interface TwilioRouteOptions {
   voice: VoiceProvider;
   /** Twilio signs the exact public URL it called; this is that URL's origin. */
   publicBaseUrl: string;
+  /**
+   * The API's other address while it moves to a new one (ALTERNATE_BASE_URL): a number still
+   * pointed at it keeps working until it's re-pointed. Every reply names publicBaseUrl.
+   */
+  alternateBaseUrl?: string | undefined;
   /** Replies to SMS commands go through the outbound allowlist like every other message. */
   outbound: OutboundPolicy;
   /** Re-syncs a profile whose holiday dates changed, so the agent's prompt names the new date. */
@@ -123,6 +128,7 @@ export function twilioRouter({
   telephony,
   voice,
   publicBaseUrl,
+  alternateBaseUrl,
   outbound,
   enqueueSync,
   enqueueNotifications,
@@ -141,18 +147,21 @@ export function twilioRouter({
   const fallbacks = new Spike({ limit: FALLBACK_VOICEMAILS_PER_WINDOW });
   const refusals = new Spike({ limit: SIGNATURE_FAILURES_PER_WINDOW });
 
+  // While the API moves address, Twilio may have signed for either one: both are ours, and
+  // each check is the same HMAC with the same auth token.
+  const baseUrls = alternateBaseUrl ? [publicBaseUrl, alternateBaseUrl] : [publicBaseUrl];
+
   const verified: RequestHandler = (req, res, next) => {
     // The URL is rebuilt from the configured public origin, never from the request: behind a
     // proxy, req.host would be the internal address, and Twilio signed the public one.
-    const url = `${publicBaseUrl}${req.originalUrl}`;
-    const signature = req.headers["x-twilio-signature"];
-    const ok = telephony.verifyWebhook({
-      url,
-      // Express leaves req.body undefined for anything but a form body; a probe with JSON
-      // must get a 403, not a crash.
-      params: (req.body ?? {}) as Record<string, string>,
-      signature: typeof signature === "string" ? signature : undefined,
-    });
+    const header = req.headers["x-twilio-signature"];
+    const signature = typeof header === "string" ? header : undefined;
+    // Express leaves req.body undefined for anything but a form body; a probe with JSON must
+    // get a 403, not a crash.
+    const params = (req.body ?? {}) as Record<string, string>;
+    const ok = baseUrls.some((base) =>
+      telephony.verifyWebhook({ url: `${base}${req.originalUrl}`, params, signature }),
+    );
     if (!ok) {
       logger.warn("Rejected Twilio webhook", { path: req.path });
       if (refusals.record(now())) {

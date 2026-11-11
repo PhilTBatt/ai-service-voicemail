@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import express, { type ErrorRequestHandler, type RequestHandler } from "express";
 import type pg from "pg";
@@ -40,6 +41,11 @@ export interface AppOptions {
    * share one address (BUILD_PLAN Step 8). Absent in development, where Vite serves it.
    */
   dashboardDist?: string | undefined;
+  /**
+   * While the API moves address (ALTERNATE_BASE_URL): a dashboard page asked for at the old
+   * host is sent on to the dashboard's own address, the only one its logins work at.
+   */
+  moveDashboard?: { fromHost: string; toOrigin: string } | undefined;
   voiceProviders?: Record<string, VoiceProvider>;
   onCallEnded?: (event: CallEndedEvent) => Promise<void>;
   /** A mid-call emergency function fired (Step 6). */
@@ -53,6 +59,8 @@ export interface AppOptions {
         provider: TelephonyProvider;
         voice: VoiceProvider;
         publicBaseUrl: string;
+        /** The other address Twilio's signatures are accepted for, while the API moves. */
+        alternateBaseUrl?: string | undefined;
         outbound: OutboundPolicy;
         enqueueSync: (job: { tenantId: string; profileVersion: number }) => Promise<unknown>;
         enqueueNotifications: EnqueueNotifications;
@@ -69,6 +77,7 @@ export interface AppOptions {
 export function createApp({
   pool,
   dashboardDist,
+  moveDashboard,
   voiceProviders = {},
   onCallEnded = () => Promise.resolve(),
   onFunctionCall,
@@ -154,7 +163,7 @@ export function createApp({
     app.use("/api", dashboardRouter({ pool, ...dashboard }));
   }
 
-  if (dashboardDist) serveDashboard(app, dashboardDist);
+  if (dashboardDist) serveDashboard(app, dashboardDist, moveDashboard);
 
   // Last: Express's own handler prints the stack with console.error, unredacted, and shows
   // it to the client outside production. Log through the redacting logger instead, and
@@ -219,9 +228,25 @@ const API_PATHS = /^\/(?:api|webhooks|c|healthz|readyz)(?:\/|$)/;
  * /tenants/:id, are handled in the browser). The page itself is never cached, so a deploy
  * shows at once; Vite gives every other file a name that changes with its contents, so those
  * can be cached for a year.
+ *
+ * With `move`, the page carries a line of script that sends a browser on the old host to the
+ * same path at the new address. In the browser rather than a redirect here, because the browser
+ * knows which address it's really on: Microsoft's docs don't say whether Azure's ingress passes
+ * the Host header through unchanged, and a server-side check that misread it could loop.
+ * Health checks, webhooks and the call pages in texts already sent aren't pages, so they keep
+ * answering at both addresses.
  */
-function serveDashboard(app: express.Express, dist: string): void {
+function serveDashboard(
+  app: express.Express,
+  dist: string,
+  move?: { fromHost: string; toOrigin: string },
+): void {
   const page = path.join(dist, "index.html");
+  // Never from an address to itself, which would reload forever.
+  const movedPage =
+    move && move.fromHost.toLowerCase() !== new URL(move.toOrigin).host.toLowerCase()
+      ? pageThatMoves(page, move)
+      : undefined;
   app.use(
     express.static(dist, {
       index: false,
@@ -239,6 +264,41 @@ function serveDashboard(app: express.Express, dist: string): void {
       return;
     }
     res.setHeader("Cache-Control", "no-cache");
-    res.sendFile(page);
+    const moved = movedPage?.();
+    if (moved) res.type("html").send(moved);
+    else res.sendFile(page);
   });
+}
+
+/**
+ * The dashboard's page with the move in its head, read once on first use. Unreadable (the page
+ * missing), it answers undefined and the plain file is sent, which fails as it always has. The
+ * script sits inline, which the security headers allow (they only forbid framing); a policy
+ * limiting scripts later would have to allow it.
+ */
+function pageThatMoves(
+  page: string,
+  { fromHost, toOrigin }: { fromHost: string; toOrigin: string },
+): () => string | undefined {
+  let html: string | undefined;
+  return () => {
+    if (html === undefined) {
+      try {
+        html = readFileSync(page, "utf8");
+      } catch {
+        return undefined;
+      }
+      // Host names and origins can't hold "<", so JSON is safe inside the script tag.
+      const script =
+        `<script>if (location.host.toLowerCase() === ${JSON.stringify(fromHost.toLowerCase())}) ` +
+        `location.replace(${JSON.stringify(toOrigin)} + location.pathname + location.search + location.hash)</script>`;
+      // In the head; failing that, after the doctype, since anything before it puts the
+      // browser in quirks mode.
+      const doctype = /^\s*<!doctype[^>]*>/i.exec(html)?.[0] ?? "";
+      html = html.includes("</head>")
+        ? html.replace("</head>", () => `${script}</head>`)
+        : `${doctype}${script}${html.slice(doctype.length)}`;
+    }
+    return html;
+  };
 }

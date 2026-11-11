@@ -78,17 +78,22 @@ describe("GET /readyz", () => {
 
 describe("serving the built dashboard (production)", () => {
   /** A stand-in for apps/web/dist: the page and one hashed asset. */
-  function fakeDist() {
+  function fakeDist(
+    page = "<!doctype html><html><head><title>AnswerMate</title></head><body></body></html>",
+  ) {
     const dir = mkdtempSync(path.join(tmpdir(), "callmate-dist-"));
-    writeFileSync(path.join(dir, "index.html"), "<!doctype html><title>AnswerMate</title>");
+    writeFileSync(path.join(dir, "index.html"), page);
     mkdirSync(path.join(dir, "assets"));
     writeFileSync(path.join(dir, "assets", "index-abc123.js"), "console.log('dashboard')");
     return dir;
   }
 
-  async function startWithDashboard() {
+  async function startWithDashboard(
+    moveDashboard?: { fromHost: string; toOrigin: string },
+    page?: string,
+  ) {
     const pool = createPool(TEST_DATABASE_URL);
-    const server = createApp({ pool, dashboardDist: fakeDist() }).listen(0);
+    const server = createApp({ pool, dashboardDist: fakeDist(page), moveDashboard }).listen(0);
     await once(server, "listening");
     running.push(async () => {
       await new Promise((resolve) => server.close(resolve));
@@ -123,5 +128,48 @@ describe("serving the built dashboard (production)", () => {
     }
     expect(await (await request("/healthz")).json()).toEqual({ status: "ok" });
     expect((await request("/", "POST")).status).toBe(404);
+  });
+
+  describe("while the API moves address", () => {
+    const move = { fromHost: "callmate-api.example.net", toOrigin: "https://app.example.com" };
+    const script =
+      '<script>if (location.host.toLowerCase() === "callmate-api.example.net") ' +
+      'location.replace("https://app.example.com" + location.pathname + location.search + location.hash)</script></head>';
+
+    it("gives the page a line that sends a browser on the old address to the same path at the new one", async () => {
+      const request = await startWithDashboard(move);
+      for (const route of ["/", "/tenants/abc"]) {
+        const response = await request(route);
+        expect(response.status, route).toBe(200);
+        expect(response.headers.get("cache-control"), route).toBe("no-cache");
+        const html = await response.text();
+        expect(html, route).toContain("<title>AnswerMate</title>");
+        expect(html, route).toContain(script);
+      }
+      // Not a page: health checks and the hashed files are as they were.
+      expect(await (await request("/healthz")).json()).toEqual({ status: "ok" });
+      expect(await (await request("/assets/index-abc123.js")).text()).toBe(
+        "console.log('dashboard')",
+      );
+    });
+
+    it("puts the line after the doctype in a page with no head, never before it", async () => {
+      const request = await startWithDashboard(move, "<!DOCTYPE html><title>AnswerMate</title>");
+      expect(await (await request("/")).text()).toBe(
+        `<!DOCTYPE html>${script.replace("</head>", "")}<title>AnswerMate</title>`,
+      );
+    });
+
+    it("leaves the page alone with no move, or a move from an address to itself", async () => {
+      for (const app of [
+        await startWithDashboard(),
+        await startWithDashboard({
+          fromHost: "APP.example.com",
+          toOrigin: "https://app.example.com",
+        }),
+      ]) {
+        expect(await (await app("/")).text()).not.toContain("<script>");
+      }
+    });
   });
 });

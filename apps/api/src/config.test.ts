@@ -170,10 +170,41 @@ describe("loadConfig: Twilio and PUBLIC_BASE_URL", () => {
     ["TWILIO_ACCOUNT_SID", "not-a-sid"],
     ["TWILIO_PURCHASES_ENABLED", "yes"],
     ["PUBLIC_BASE_URL", "ftp://example.com"],
+    ["ALTERNATE_BASE_URL", "ftp://example.com"],
   ])("rejects an invalid %s", (name, value) => {
     expect(configErrorFor({ ...valid, [name]: value }).problems[0]).toMatch(
       new RegExp(`^${name} is invalid`),
     );
+  });
+
+  it("takes the other address while the API moves, without a trailing slash", () => {
+    const config = loadConfig({
+      ...valid,
+      PUBLIC_BASE_URL: "https://app.example.com",
+      ALTERNATE_BASE_URL: "https://callmate-api.example.net/",
+    });
+    expect(config.alternateBaseUrl).toBe("https://callmate-api.example.net");
+    expect(loadConfig(valid).alternateBaseUrl).toBeUndefined();
+  });
+
+  it("refuses the same address twice, which would send the dashboard round in a loop", () => {
+    expect(
+      configErrorFor({
+        ...valid,
+        PUBLIC_BASE_URL: "https://app.example.com",
+        ALTERNATE_BASE_URL: "https://APP.example.com/",
+      }).problems,
+    ).toEqual(["ALTERNATE_BASE_URL is invalid: must be a different address from PUBLIC_BASE_URL"]);
+  });
+
+  it("names a malformed address alongside the other, rather than crashing", () => {
+    const problems = configErrorFor({
+      ...valid,
+      PUBLIC_BASE_URL: "https://app.example.com",
+      ALTERNATE_BASE_URL: "callmate-api.example.net",
+    }).problems;
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toMatch(/^ALTERNATE_BASE_URL is invalid/);
   });
 });
 

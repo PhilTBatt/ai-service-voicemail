@@ -1,6 +1,10 @@
 import { once } from "node:events";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import type { PgBoss } from "pg-boss";
+import twilio from "twilio";
 import { afterAll, describe, expect, it } from "vitest";
 import { loadConfig } from "./config.ts";
 import { createAdminPool } from "./db/cross-tenant.ts";
@@ -72,5 +76,54 @@ describe("buildServerApp", () => {
     }
     // The voice webhook's router is always there; with no Retell it knows no provider.
     expect(routes.voice).toEqual({ status: 404, mounted: true });
+  });
+
+  // RUNBOOK section 16, step 4: without this wiring, the switch to the new address sends every
+  // call to the fallback voicemail until the number is re-pointed.
+  it("passes ALTERNATE_BASE_URL to Twilio's signature check and to the dashboard's page", async () => {
+    const dist = mkdtempSync(path.join(tmpdir(), "callmate-dist-"));
+    writeFileSync(
+      path.join(dist, "index.html"),
+      "<!doctype html><html><head><title>AnswerMate</title></head><body></body></html>",
+    );
+    const app = buildServerApp(
+      loadConfig({
+        ...STAND_IN_ENV,
+        PUBLIC_BASE_URL: "https://app.example.com",
+        DASHBOARD_ORIGIN: "https://app.example.com",
+        ALTERNATE_BASE_URL: "https://callmate-api.example.net",
+        DASHBOARD_DIST: dist,
+      }),
+      { pool, boss, admin },
+    );
+    const server = app.listen(0);
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+    try {
+      // A call to a number nobody has, signed by Twilio for the old address: past the
+      // signature check (a 403 would mean refused) to routing, which answers with TwiML.
+      const params = { CallSid: `CA${"1".repeat(32)}`, To: "+442079460998", From: "+447700900123" };
+      const response = await fetch(`http://127.0.0.1:${port}/webhooks/twilio/voice`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          "x-twilio-signature": twilio.getExpectedTwilioSignature(
+            STAND_IN_ENV.TWILIO_AUTH_TOKEN,
+            "https://callmate-api.example.net/webhooks/twilio/voice",
+            params,
+          ),
+        },
+        body: new URLSearchParams(params).toString(),
+      });
+      expect(response.status).not.toBe(403);
+      expect(response.headers.get("content-type")).toContain("text/xml");
+
+      const page = await (await fetch(`http://127.0.0.1:${port}/`)).text();
+      expect(page).toContain('location.host.toLowerCase() === "callmate-api.example.net"');
+      expect(page).toContain('location.replace("https://app.example.com"');
+    } finally {
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+    }
   });
 });

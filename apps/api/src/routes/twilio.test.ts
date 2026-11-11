@@ -225,6 +225,62 @@ describe("spike alerts (BUILD_PLAN Step 8)", () => {
   });
 });
 
+describe("while the API moves address (ALTERNATE_BASE_URL)", () => {
+  const OLD_BASE_URL = "https://callmate-api.example.net";
+
+  it("accepts Twilio's signature for either address, answers with the new one, and still refuses others", async () => {
+    const server = createApp({
+      pool: app,
+      telephony: {
+        provider: telephony,
+        voice,
+        publicBaseUrl: PUBLIC_BASE_URL,
+        alternateBaseUrl: OLD_BASE_URL,
+        outbound,
+        enqueueSync,
+        enqueueNotifications,
+        alert: vi.fn(),
+        now: NOW,
+      },
+    }).listen(0);
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+    const postSignedFor = (base: string, params: Record<string, string>) =>
+      fetch(`http://127.0.0.1:${port}/webhooks/twilio/voice`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          "x-twilio-signature": telephony.sign(`${base}/webhooks/twilio/voice`, params),
+        },
+        body: new URLSearchParams(params).toString(),
+      });
+    try {
+      const { number } = await makeTenant("live");
+      // The number still points at the old address: the call is answered as usual, and what
+      // Twilio is told to call next is the new address.
+      const fromOld = await postSignedFor(OLD_BASE_URL, call(number));
+      expect(fromOld.status).toBe(200);
+      expect(await fromOld.text()).toContain(
+        `action="${PUBLIC_BASE_URL}/webhooks/twilio/dial-status"`,
+      );
+      expect((await postSignedFor(PUBLIC_BASE_URL, call(number))).status).toBe(200);
+      expect((await postSignedFor("https://forged.example.com", call(number))).status).toBe(403);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("refuses a signature for another address when there's no move under way", async () => {
+    const { number } = await makeTenant("live");
+    const response = await post(
+      "/webhooks/twilio/voice",
+      call(number),
+      `${OLD_BASE_URL}/webhooks/twilio/voice`,
+    );
+    expect(response.status).toBe(403);
+  });
+});
+
 describe("POST /webhooks/twilio/voice", () => {
   it("connects a live tenant's caller to the agent, passing the per-call variables", async () => {
     const { number } = await makeTenant("live");

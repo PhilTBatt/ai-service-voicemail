@@ -230,18 +230,30 @@ var setupEnv = map(setupSecretNames, secretName => {
 // keeps working (the uptime check uses it).
 var apiName = '${name}-api'
 var customDomainOn = deployApps && image != '' && customDomain != ''
-var publicBaseUrl = customDomainOn && customDomainStage == 'live'
-  ? 'https://${customDomain}'
-  : 'https://${apiName}.${environment.properties.defaultDomain}'
+var generatedBaseUrl = 'https://${apiName}.${environment.properties.defaultDomain}'
+var customBaseUrl = 'https://${customDomain}'
+var publicBaseUrl = customDomainOn && customDomainStage == 'live' ? customBaseUrl : generatedBaseUrl
+// The API's other address, once both work (from "bind", when the custom domain has its
+// certificate): Twilio's signatures made for it are accepted too, so calls carry on while the
+// number is re-pointed, and the dashboard opened there moves to PUBLIC_BASE_URL. That's the
+// generated address once the domain is live, and the domain itself before (or after an undo).
+// It stays set while the domain is live: the fallback TwiML Bin, made before the move, still
+// reports its voicemail recordings to the generated address.
+var alternateBaseUrl = customDomainOn && customDomainStage != 'add'
+  ? (customDomainStage == 'live' ? generatedBaseUrl : customBaseUrl)
+  : ''
 
-var plainEnv = [
-  { name: 'NODE_ENV', value: 'production' }
-  { name: 'PORT', value: '3000' }
-  // Twilio's signatures are checked against this, and texts link to call pages under it.
-  { name: 'PUBLIC_BASE_URL', value: publicBaseUrl }
-  // The API serves the dashboard itself, at the same address.
-  { name: 'DASHBOARD_ORIGIN', value: publicBaseUrl }
-]
+var plainEnv = concat(
+  [
+    { name: 'NODE_ENV', value: 'production' }
+    { name: 'PORT', value: '3000' }
+    // Twilio's signatures are checked against this, and texts link to call pages under it.
+    { name: 'PUBLIC_BASE_URL', value: publicBaseUrl }
+    // The API serves the dashboard itself, at the same address.
+    { name: 'DASHBOARD_ORIGIN', value: publicBaseUrl }
+  ],
+  alternateBaseUrl == '' ? [] : [{ name: 'ALTERNATE_BASE_URL', value: alternateBaseUrl }]
+)
 
 var identity = {
   type: 'UserAssigned'
