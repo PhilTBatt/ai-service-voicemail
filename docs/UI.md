@@ -40,27 +40,27 @@ frame) and `apps/web/src/pages/` (the screens).
 
 ### Now
 
-| Address                      | Screen      | Who                                     | What it shows                                                                                                                                                                                      |
-| ---------------------------- | ----------- | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/`                          | Businesses  | admin, reseller, owner with two or more | Totals (businesses, answering, setting up, calls in 30 days); signup links; every business with status, trade, onboarding step, billing summary, calls. A tradesperson with one business skips it. |
-| `/tenants/:id`               | Calls       | admin, owner                            | Answering on or off (and the switch); the calls by UK day, filtered by urgency, "needs a reply" and dates.                                                                                         |
-| `/tenants/:id/calls/:callId` | A call      | admin, owner                            | Who, when, how long, urgency, flags; Call back; Called back; summary, transcript, details, recording.                                                                                              |
-| `/tenants/:id/profile`       | Assistant   | admin, owner                            | Trade and services, areas, opening hours, holiday, urgent call-outs, FAQs; whether the assistant is using them yet.                                                                                |
-| `/tenants/:id/phone`         | Phone setup | admin, owner                            | The number; the divert codes for their network, with copy buttons; checking and testing; turning off.                                                                                              |
-| `/tenants/:id/settings`      | Account     | admin, owner                            | The number (and buying one, admin); where messages go; plan, this month's minutes, Direct Debit, past months; suspension (admin); documents; data download; leaving.                               |
-| `/tenants/:id/onboarding`    | Onboarding  | admin                                   | The steps, what the system can see, the divert text, the pilot switch.                                                                                                                             |
-| `/admin`                     | Admin       | admin                                   | Health (kill switch, worker, scheduled jobs, failures); billing; leaving businesses; calls to review; usage; costs.                                                                                |
-| `/signup?code=`              | Signup      | anyone with a link                      | Sign in, then the business, phone and documents.                                                                                                                                                   |
+| Address                      | Screen                 | Who                                     | What it shows                                                                                                                                                                                      |
+| ---------------------------- | ---------------------- | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/`                          | Businesses             | admin, reseller, owner with two or more | Totals (businesses, answering, setting up, calls in 30 days); signup links; every business with status, trade, onboarding step, billing summary, calls. A tradesperson with one business skips it. |
+| `/tenants/:id`               | Calls                  | admin, owner                            | Answering on or off (and the switch); the calls by UK day, filtered by urgency, "needs a reply" and dates.                                                                                         |
+| `/tenants/:id/calls/:callId` | A call                 | admin, owner                            | Who, when, how long, urgency, flags; Call back; Called back; summary, transcript, details, recording.                                                                                              |
+| `/tenants/:id/profile`       | Assistant              | admin, owner                            | Trade and services, areas, opening hours, holiday, urgent call-outs, FAQs; whether the assistant is using them yet.                                                                                |
+| `/tenants/:id/phone`         | Phone setup            | admin, owner                            | The number; the divert codes for their network, with copy buttons; checking and testing; turning off.                                                                                              |
+| `/tenants/:id/settings`      | Account                | admin, owner                            | The number (and buying one, admin); where messages go; plan, this month's minutes, Direct Debit, past months; suspension (admin); documents; data download; leaving.                               |
+| `/tenants/:id/onboarding`    | Onboarding             | admin                                   | The steps, what the system can see, the divert text, the pilot switch.                                                                                                                             |
+| `/admin`                     | Admin: Overview        | admin                                   | Health (kill switch, worker, the last day's failures, scheduled jobs); calls to review.                                                                                                            |
+| `/admin/billing`             | Admin: Billing         | admin                                   | This month's money (collected, being collected, not collected); payments that need Phil, with Collect again.                                                                                       |
+| `/admin/leaving`             | Admin: Leaving         | admin                                   | Businesses that cancelled: when their number can be released, and deleting their data.                                                                                                             |
+| `/admin/usage`               | Admin: Usage and costs | admin                                   | Billable time per business this period; what each business's calls cost us this month.                                                                                                             |
+| `/admin/design`              | Admin: Components      | admin                                   | The component gallery: every component in its states. Check a change to the system here, light and dark, before it reaches a screen.                                                               |
+| `/signup?code=`              | Signup                 | anyone with a link                      | Sign in, then the business, phone and documents, each problem shown by its field.                                                                                                                  |
 
-### The plan for the second commit
+Outside the dashboard, the page behind a text's link (`apps/api/src/core/call-page.ts`: no script,
+no login) uses the same colours, copied as values; `design/tokens.test.ts` checks they match.
 
-- `/admin` becomes a section with its own pages: **Overview** (health and anything needing Phil,
-  calls to review), **Billing**, **Leaving**, **Usage and costs**. Each is the size of one job.
-- Onboarding as a stepper; Signup as a three-part form on the new components.
-- `/admin/design`: the **component gallery**, every component in every state, light and dark.
-  The place to check a change to the system before it reaches a screen.
-- The page behind a text's link (`apps/api/src/core/call-page.ts`) on the same colours.
-- `legacy.css` deleted.
+The Admin pages, Onboarding and Signup are downloaded only when opened (`lazy` in `App.tsx`), so
+a tradesperson's phone never fetches them.
 
 ### Later (not built; the information each will need)
 
@@ -153,6 +153,7 @@ One idea used everywhere: a thing's **tone** says what it means, and the CSS pic
 | Dialog (`useConfirm`, `useConfirmTyped`)    | Asking before anything that stops calls, costs money or can't be undone.                                                                                                                                                    | Asking "Are you sure?" about something small. |
 | `TextField`, `TextAreaField`, `SelectField` | Every input: label, optional hint, errors, all wired for screen readers.                                                                                                                                                    | A bare `<input>`.                             |
 | `Checkbox`, `Switch`, `RadioGroup`          | A yes/no to agree to (Checkbox); a setting that's on or off (Switch); one of a few, with words (RadioGroup).                                                                                                                |                                               |
+| `Tabs`                                      | Links across the top of a section's pages (Admin). Marks the current one.                                                                                                                                                   | The main navigation (that's the sidebar).     |
 | `Segmented`, `ToggleChip`                   | Filters above a list.                                                                                                                                                                                                       | Settings that are saved.                      |
 | `Stat`, `Meter`                             | A number that matters; how much of something is used.                                                                                                                                                                       |                                               |
 | `DescriptionList`                           | Label and value pairs.                                                                                                                                                                                                      |                                               |
@@ -200,7 +201,7 @@ its header and the documents reminder, and hands the business to the page (`useT
    `components.css` with tokens only.
 2. Optional props typed `?: X | undefined` (the project's strict TypeScript needs it).
 3. Accessible by default: a label, the right role, the keyboard working.
-4. A row in the table above, and (from the second commit) a place in the gallery.
+4. A row in the table above, and a place in the gallery (`pages/admin/DesignGallery.tsx`).
 
 **A new colour or size**: a token in `tokens.css` with a dark value; the tokens test checks it.
 
@@ -216,9 +217,13 @@ its header and the documents reminder, and hands the business to the page (`useT
 - **Later**: screenshot comparisons (Playwright's `toHaveScreenshot`) of the gallery, so a change
   to a token shows everywhere it lands; and automated accessibility checks (axe) on each page.
 
-## 7. Migrating a page
+## 7. Changing the look later
 
-The pages not yet rebuilt sit in a `.legacy` wrapper, and `design/legacy.css` draws their old
-class names with the new tokens. Nothing in it can reach a rebuilt page. Rebuilding one means
-using the components, removing its `.legacy` wrapper, and, with the last one, deleting
-`legacy.css` and its import in `main.tsx`.
+- **A rebrand** (new colours, a new font): edit `tokens.css` (and the copied values in
+  `call-page.ts`, which the tokens test checks), then look at the gallery in light and dark.
+- **A bigger redesign of one part**: the way this one was done (2026-11-11). Pages not yet moved
+  sat in a `.legacy` wrapper, with a stylesheet drawing their old class names in the new tokens,
+  scoped so it couldn't reach a rebuilt page; it was deleted with the last of them. Do the same:
+  never two half-finished looks without a wall between them.
+- **Something the components can't do** (a date-range picker, a searchable list): decision 020
+  says the next step is a headless library (Radix) for that one thing, styled with these tokens.

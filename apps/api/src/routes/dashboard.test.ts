@@ -1177,6 +1177,57 @@ describe("cancellation", () => {
     expect((await undo({ confirm: true })).status).toBe(409);
   });
 
+  it("keeps a suspension open when undoing back to suspended, and ends it otherwise", async () => {
+    const openSuspensions = async (tenant: string) =>
+      (
+        await admin.query(
+          "SELECT 1 FROM tenant_suspensions WHERE tenant_id = $1 AND ended_at IS NULL",
+          [tenant],
+        )
+      ).rowCount;
+    const suspendedBusiness = async (name: string) => {
+      const tenant = await createTenant(admin, { businessName: name, trade: "plumber" });
+      await admin.query("UPDATE tenants SET status = 'live' WHERE id = $1", [tenant]);
+      const suspended = await send(
+        "POST",
+        `/admin/tenants/${tenant}/suspend`,
+        { confirm: true },
+        tokens.admin,
+      );
+      expect(suspended.status).toBe(200);
+      expect(await openSuspensions(tenant)).toBe(1);
+      return tenant;
+    };
+
+    // Left while suspended, then undone: suspended again, so still not billed.
+    const back = await suspendedBusiness("Suspended Then Back");
+    const owner = await personFor(back);
+    expect((await send("POST", `/tenants/${back}/cancel`, { confirm: true }, owner)).status).toBe(
+      200,
+    );
+    const undoBack = await send(
+      "POST",
+      `/admin/tenants/${back}/undo-cancellation`,
+      { confirm: true },
+      tokens.admin,
+    );
+    expect(await undoBack.json()).toEqual({ outcome: "restored", status: "suspended" });
+    expect(await openSuspensions(back)).toBe(1);
+
+    // No cancellation on record to go back to (set by hand): paused, and the suspension ends,
+    // or every month after would be billed as suspended with nothing able to end it.
+    const lost = await suspendedBusiness("Suspended Record Lost");
+    await admin.query("UPDATE tenants SET status = 'cancelling' WHERE id = $1", [lost]);
+    const undoLost = await send(
+      "POST",
+      `/admin/tenants/${lost}/undo-cancellation`,
+      { confirm: true },
+      tokens.admin,
+    );
+    expect(await undoLost.json()).toEqual({ outcome: "restored", status: "paused" });
+    expect(await openSuspensions(lost)).toBe(0);
+  });
+
   it("releases a leaving business's number only once its 30 days are up, then it's cancelled", async () => {
     const tenant = await createTenant(admin, {
       businessName: "Gone Building",

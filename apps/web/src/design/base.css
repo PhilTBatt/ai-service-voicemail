@@ -199,9 +199,23 @@ hr {
   }
 }
 
+/* An icon inside a line of text (most sit in a flex row and don't need this). */
+.inline-icon {
+  display: inline-block;
+  vertical-align: -0.1em;
+}
+
 /* Text helpers. */
 .muted {
   color: var(--color-text-muted);
+}
+
+.text-success {
+  color: var(--color-success-text);
+}
+
+.text-danger {
+  color: var(--color-danger-text);
 }
 
 .text-sm {

@@ -106,6 +106,8 @@ test("someone nobody invited is told so, and sees nothing", async ({ page }) => 
     page.getByRole("heading", { name: "This address hasn't been invited" }),
   ).toBeVisible();
   await expect(page.getByText("Fern Lane Plumbing")).toHaveCount(0);
+  // The page tells them to sign out, so they can.
+  await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
 });
 
 test("the admin opens a business's onboarding checklist and sees what's missing", async ({
@@ -147,6 +149,81 @@ test("a new tradesperson signs up through a link and lands on their business", a
   await page.getByRole("button", { name: "Set up my business" }).click();
 
   await expect(page.getByRole("heading", { name: "Kestrel Roofing" })).toBeVisible();
+});
+
+test("a tradesperson switches AnswerMate off and on, asked first each time", async ({ page }) => {
+  await signIn(page, "owner@example.com");
+  const card = page.getByRole("region", { name: "Answering" });
+  await expect(card.getByText("AnswerMate is on", { exact: true })).toBeVisible();
+
+  // Cancel changes nothing.
+  await card.getByRole("button", { name: "Switch off" }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByRole("heading", { name: "Switch AnswerMate off?" })).toBeVisible();
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  await expect(dialog).toHaveCount(0);
+  // The keyboard carries on from the button that asked.
+  await expect(card.getByRole("button", { name: "Switch off" })).toBeFocused();
+  await expect(card.getByText("AnswerMate is on", { exact: true })).toBeVisible();
+
+  await card.getByRole("button", { name: "Switch off" }).click();
+  await dialog.getByRole("button", { name: "Switch off" }).click();
+  await expect(card.getByText("AnswerMate is off", { exact: true })).toBeVisible();
+  // The business's header says so too.
+  await expect(page.locator(".business-header").getByText("Switched off")).toBeVisible();
+
+  await card.getByRole("button", { name: "Switch on" }).click();
+  await dialog.getByRole("button", { name: "Switch on" }).click();
+  await expect(card.getByText("AnswerMate is on", { exact: true })).toBeVisible();
+});
+
+test("the admin moves between the Admin pages", async ({ page }) => {
+  await signIn(page, "admin@example.com");
+  await page.getByRole("link", { name: "Admin" }).click();
+  const tabs = page.getByRole("navigation", { name: "Admin pages" });
+  await expect(tabs.getByRole("link", { name: "Overview" })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+
+  await tabs.getByRole("link", { name: "Billing" }).click();
+  await expect(page.getByRole("heading", { name: "Payments that need you" })).toBeVisible();
+  await tabs.getByRole("link", { name: "Leaving" }).click();
+  await expect(page.getByText("Nobody is leaving")).toBeVisible();
+  await tabs.getByRole("link", { name: "Usage and costs" }).click();
+  await expect(page.getByRole("heading", { name: "Usage this period" })).toBeVisible();
+  await tabs.getByRole("link", { name: "Components" }).click();
+  await expect(page.getByRole("heading", { name: "Buttons" })).toBeVisible();
+});
+
+test("on a phone, the menu opens, goes to a page and closes", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await signIn(page, "owner@example.com");
+  // Closed, the sidebar's links are out of reach.
+  await expect(page.getByRole("link", { name: "Phone setup" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Open the menu" }).click();
+  await page.getByRole("link", { name: "Phone setup" }).click();
+  await expect(page.getByRole("heading", { name: "Phone setup" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Phone setup" })).toHaveCount(0);
+
+  // Escape closes it too, and the keyboard goes back to the menu button.
+  const menu = page.getByRole("button", { name: "Open the menu" });
+  await menu.click();
+  await expect(page.getByRole("link", { name: "Calls", exact: true })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(menu).toBeFocused();
+  await expect(page.getByRole("link", { name: "Phone setup" })).toHaveCount(0);
+});
+
+test("the colours chosen stay chosen after a reload", async ({ page }) => {
+  await signIn(page, "owner@example.com");
+  await page.getByRole("radio", { name: "Dark" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await page.reload();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await expect(page.getByRole("radio", { name: "Dark" })).toHaveAttribute("aria-checked", "true");
+  await page.getByRole("radio", { name: "Match this device" }).click();
+  await expect(page.locator("html")).not.toHaveAttribute("data-theme", /.+/);
 });
 
 test("a tradesperson sees the divert codes for their network and number", async ({ page }) => {

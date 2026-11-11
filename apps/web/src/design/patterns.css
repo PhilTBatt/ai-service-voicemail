@@ -317,6 +317,28 @@
   background: var(--color-surface-2);
 }
 
+/* ---------- A list of yes/no checks, each with its icon ---------- */
+
+.check-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  list-style: none;
+  padding: 0;
+  font-size: var(--text-sm);
+}
+
+.check-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.check-list svg {
+  flex: none;
+  margin-top: 0.15rem;
+}
+
 /* ---------- The number, big ---------- */
 
 .big-number {

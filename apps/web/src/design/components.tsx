@@ -15,7 +15,7 @@ import {
   type SelectHTMLAttributes,
   type TextareaHTMLAttributes,
 } from "react";
-import { Link, type LinkProps } from "react-router";
+import { Link, useLocation, type LinkProps } from "react-router";
 import { initialsOf } from "../format.ts";
 import {
   Check,
@@ -733,6 +733,40 @@ export function Segmented<T extends string>({
         </button>
       ))}
     </div>
+  );
+}
+
+/**
+ * Links across the top of a section's pages (the Admin pages). The page on screen is marked
+ * for screen readers (aria-current) as well as underlined. On a phone the row scrolls sideways.
+ */
+export function Tabs({
+  label,
+  items,
+}: {
+  label: string;
+  items: readonly { to: string; label: string; exact?: boolean | undefined }[];
+}) {
+  const { pathname } = useLocation();
+  const path = pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
+  return (
+    <nav className="tabs" aria-label={label}>
+      {items.map((item) => {
+        const current = item.exact
+          ? path === item.to
+          : path === item.to || path.startsWith(`${item.to}/`);
+        return (
+          <Link
+            key={item.to}
+            to={item.to}
+            className="tab"
+            aria-current={current ? "page" : undefined}
+          >
+            {item.label}
+          </Link>
+        );
+      })}
+    </nav>
   );
 }
 

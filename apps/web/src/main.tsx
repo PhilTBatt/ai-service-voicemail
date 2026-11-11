@@ -11,7 +11,6 @@ import "./design/base.css";
 import "./design/components.css";
 import "./design/shell.css";
 import "./design/patterns.css";
-import "./design/legacy.css";
 
 // Public by design: it only identifies our Clerk application. vite.config.ts lets this one
 // variable through from the root .env; the secret key never reaches the browser.

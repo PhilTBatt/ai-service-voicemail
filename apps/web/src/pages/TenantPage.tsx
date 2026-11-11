@@ -82,7 +82,9 @@ function AnsweringSwitch({ tenant, onChanged }: { tenant: TenantView; onChanged:
     setError(null);
     try {
       await api<SwitchView>(`/tenants/${tenant.id}/switch`, { method: "PUT", body: { on: !on } });
-      toast({ title: on ? "AnswerMate is off" : "AnswerMate is on" });
+      toast({
+        title: on ? "Done: callers go to voicemail" : "Done: AnswerMate is answering again",
+      });
       onChanged();
     } catch (caught) {
       setError(asError(caught));

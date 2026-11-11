@@ -200,6 +200,17 @@ describe("charging one month", () => {
     expect(await chargePeriod(d, resumedEarly.tenant, JULY)).toBe("collected");
   });
 
+  it("measures a winter month from UK midnight too, which is midnight UTC (GMT)", async () => {
+    const DECEMBER = { periodStart: "2026-12-14", periodEnd: "2027-01-14", index: 6 };
+    const whole = await business();
+    await suspend(whole.tenantId, "2026-12-14T00:00:00Z", null);
+    const late = await business();
+    await suspend(late.tenantId, "2026-12-14T00:01:00Z", null);
+    const { deps: d } = deps({ now: () => new Date("2027-01-14T06:00:00Z") });
+    expect(await chargePeriod(d, whole.tenant, DECEMBER)).toBe("nothing-due");
+    expect(await chargePeriod(d, late.tenant, DECEMBER)).toBe("collected");
+  });
+
   it("holds a month with no Direct Debit, alerts once, and collects it once there is one", async () => {
     const { tenantId, tenant } = await business({ mandate: false });
     const { deps: d, payments, alert } = deps();

@@ -27,14 +27,17 @@ export interface ConfirmOptions {
   cancelLabel?: string;
   /** danger for anything final or that stops calls being answered; brand for the rest. */
   tone?: Extract<Tone, "danger" | "warning" | "brand">;
-  /** Typed exactly (spaces at the ends aside) before the button works: a business's name, say. */
+  /** Typed (in any case, spaces at the ends aside) before the button works: a business's name. */
   requireText?: string;
   requireLabel?: string;
 }
 
 interface Request {
+  id: number;
   options: ConfirmOptions;
   resolve: (typed: string | null) => void;
+  /** What had focus when it opened (the button pressed), given focus back when it closes. */
+  opener: HTMLElement | null;
 }
 
 const ConfirmContext = createContext<(options: ConfirmOptions) => Promise<string | null>>(() =>
@@ -43,19 +46,33 @@ const ConfirmContext = createContext<(options: ConfirmOptions) => Promise<string
 
 export function ConfirmProvider({ children }: { children: ReactNode }) {
   const [request, setRequest] = useState<Request | null>(null);
+  const nextId = useRef(1);
   const open = useCallback(
     (options: ConfirmOptions) =>
-      new Promise<string | null>((resolve) => setRequest({ options, resolve })),
+      new Promise<string | null>((resolve) =>
+        setRequest({
+          id: nextId.current++,
+          options,
+          resolve,
+          opener: document.activeElement instanceof HTMLElement ? document.activeElement : null,
+        }),
+      ),
     [],
   );
   const settle = (typed: string | null) => {
-    request?.resolve(typed);
+    if (!request) return;
+    request.resolve(typed);
     setRequest(null);
+    // Removing an open <dialog> doesn't hand focus back the way closing one does: do it here,
+    // so the keyboard carries on from the button that asked.
+    window.setTimeout(() => {
+      if (request.opener?.isConnected) request.opener.focus();
+    }, 0);
   };
   return (
     <ConfirmContext value={open}>
       {children}
-      {request && <ConfirmDialog options={request.options} onSettle={settle} />}
+      {request && <ConfirmDialog key={request.id} options={request.options} onSettle={settle} />}
     </ConfirmContext>
   );
 }
@@ -93,7 +110,9 @@ function ConfirmDialog({
   const [typed, setTyped] = useState("");
   const titleId = useId();
   const inputId = useId();
-  const ready = requireText === undefined || typed.trim() === requireText.trim();
+  // In any case, as the API compares a typed business name.
+  const ready =
+    requireText === undefined || typed.trim().toLowerCase() === requireText.trim().toLowerCase();
   const Icon = tone === "danger" ? CircleAlert : tone === "warning" ? TriangleAlert : Info;
 
   useEffect(() => {

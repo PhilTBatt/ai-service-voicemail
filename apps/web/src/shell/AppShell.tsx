@@ -3,7 +3,7 @@
 // button opens it, and choosing a page, tapping outside it or pressing Escape closes it.
 import type { MeView } from "@callmate/shared";
 import { UserButton } from "@clerk/react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, matchPath, useLocation } from "react-router";
 import {
   Bot,
@@ -50,23 +50,41 @@ export function AppShell({ me, children }: { me: MeView | null; children: ReactN
   const openTenantId = matchPath("/tenants/:tenantId/*", pathname)?.params.tenantId ?? null;
   const sections = me ? navSections(me, openTenantId) : [];
 
+  const sidebar = useRef<HTMLElement>(null);
+  const menuButton = useRef<HTMLButtonElement>(null);
+
   // A new page closes the drawer.
   useEffect(() => setOpen(false), [pathname]);
   useEffect(() => {
     if (!open) return;
+    // Into the drawer when it opens, so the keyboard and screen readers are where the eyes are.
+    // The first page link (not the logo above it); on the next frame, as the drawer's open
+    // styles apply.
+    const frame = window.requestAnimationFrame(() => {
+      const drawer = sidebar.current;
+      (drawer?.querySelector<HTMLElement>(".nav-link") ?? drawer?.querySelector("a"))?.focus();
+    });
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
+      if (event.key === "Escape") close();
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("keydown", onKey);
+    };
   }, [open]);
+  /** Closed by Escape, the scrim or the button: back to the button that opened it. */
+  const close = () => {
+    setOpen(false);
+    menuButton.current?.focus();
+  };
 
   return (
     <div className="app" data-nav-open={open}>
       <a href="#main" className="skip-link">
         Skip to the page
       </a>
-      <aside id="sidebar" className="sidebar">
+      <aside id="sidebar" className="sidebar" ref={sidebar}>
         <div className="sidebar-brand">
           <Brand />
         </div>
@@ -93,28 +111,29 @@ export function AppShell({ me, children }: { me: MeView | null; children: ReactN
         </nav>
         <div className="sidebar-footer">
           <ThemeSwitcher />
-          {me && (
-            <div className="sidebar-user">
-              <span className="truncate text-sm muted" title={me.email}>
-                {me.email}
-              </span>
-              <UserButton />
-            </div>
-          )}
+          {/* Always, even when /me failed: someone signed in with an address nobody invited
+              must be able to sign out (and is told to). */}
+          <div className="sidebar-user">
+            <span className="truncate text-sm muted" title={me?.email}>
+              {me?.email}
+            </span>
+            <UserButton />
+          </div>
           <p className="sidebar-note">Times are UK time.</p>
         </div>
       </aside>
-      <div className="scrim" onClick={() => setOpen(false)} />
+      <div className="scrim" onClick={close} />
       <div>
         <header className="topbar">
           <Brand />
           <button
+            ref={menuButton}
             type="button"
             className="btn btn-ghost btn-icon"
             aria-label={open ? "Close the menu" : "Open the menu"}
             aria-controls="sidebar"
             aria-expanded={open}
-            onClick={() => setOpen(!open)}
+            onClick={() => (open ? close() : setOpen(true))}
           >
             {open ? <X size={20} /> : <Menu size={20} />}
           </button>

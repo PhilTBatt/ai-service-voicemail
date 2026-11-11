@@ -15,8 +15,24 @@ import { Show, SignIn } from "@clerk/react";
 import { useState } from "react";
 import { useSearchParams } from "react-router";
 import { asError, useApi, useLoad } from "../api.ts";
+import {
+  Alert,
+  Button,
+  Card,
+  Checkbox,
+  EmptyState,
+  ErrorNote,
+  FieldErrors,
+  Loading,
+  PageHeader,
+  RadioGroup,
+  SelectField,
+  TextField,
+} from "../design/components.tsx";
+import { Building, ExternalLink, FileText, Link2, Smartphone } from "../design/icons.ts";
 import { humanise, toUkMobileE164 } from "../format.ts";
-import { ErrorNote } from "../ui.tsx";
+import { Brand } from "../shell/AppShell.tsx";
+import { signupProblems, type SignupProblems } from "../signup-form.ts";
 
 export function SignupPage() {
   const [params] = useSearchParams();
@@ -25,42 +41,54 @@ export function SignupPage() {
   const link = useLoad(() => api<SignupLinkView>(`/signup/${encodeURIComponent(code)}`), code);
 
   return (
-    <main className="content legacy">
-      <h1 className="brand">AnswerMate</h1>
-      {link.status === "loading" && <p className="muted">Checking your link…</p>}
-      {link.status === "error" && (
-        <section className="card error">
-          <h2>This link can't be used</h2>
-          <p>{link.error.message}. Ask whoever sent it for a new one.</p>
-          {/* Someone tapping the old link after signing up wants their dashboard. */}
-          <p>
-            Already signed up? <a href="/">Open your dashboard</a>.
-          </p>
-        </section>
-      )}
-      {link.status === "ready" && (
-        <>
-          <Show when="signed-out">
-            <section className="card">
-              <h2>Set up AnswerMate for your business</h2>
-              <p>
-                First, sign in or create your login with the email address you'll use for
-                AnswerMate. Then you'll tell us about your business.
-              </p>
-            </section>
-            <div className="sign-in">
-              <SignIn
-                forceRedirectUrl={window.location.href}
-                signUpForceRedirectUrl={window.location.href}
+    <div className="standalone">
+      <header className="standalone-header">
+        <Brand />
+      </header>
+      <main className="content stack stack-lg">
+        {link.status === "loading" && <Loading label="Checking your link…" />}
+        {link.status === "error" && (
+          <div className="card">
+            <EmptyState
+              icon={Link2}
+              headingLevel={1}
+              title="This link can't be used"
+              action={
+                // Someone tapping the old link after signing up wants their dashboard.
+                <a className="btn btn-secondary" href="/">
+                  Already signed up? Open your dashboard
+                </a>
+              }
+            >
+              {link.error.message}. Ask whoever sent it for a new one.
+            </EmptyState>
+          </div>
+        )}
+        {link.status === "ready" && (
+          <>
+            <Show when="signed-out">
+              <PageHeader
+                title="Set up AnswerMate for your business"
+                description="First, sign in or create your login with the email address you'll use for AnswerMate. Then you'll tell us about your business."
               />
-            </div>
-          </Show>
-          <Show when="signed-in">
-            <SignupForm code={code} link={link.data} />
-          </Show>
-        </>
-      )}
-    </main>
+              <div className="auth-intro">
+                <SignIn
+                  forceRedirectUrl={window.location.href}
+                  signUpForceRedirectUrl={window.location.href}
+                />
+              </div>
+            </Show>
+            <Show when="signed-in">
+              <PageHeader
+                title="Tell us about your business"
+                description="A few details for the assistant and your texts. You can change them later."
+              />
+              <SignupForm code={code} link={link.data} />
+            </Show>
+          </>
+        )}
+      </main>
+    </div>
   );
 }
 
@@ -86,21 +114,10 @@ const EMPTY: FormState = {
   accepted: { terms: false, dpa: false, privacy_notice: false },
 };
 
-const FIELD_LABELS: Record<string, string> = {
-  businessName: "Business name",
-  trade: "Trade",
-  contactName: "Your name",
-  mobile: "Mobile",
-  email: "Email",
-  mobileNetwork: "Mobile network",
-  usesNetworkVoicemail: "Voicemail",
-  accepted: "Documents",
-};
-
 function SignupForm({ code, link }: { code: string; link: SignupLinkView }) {
   const { api } = useApi();
   const [form, setForm] = useState<FormState>(EMPTY);
-  const [problems, setProblems] = useState<string[]>([]);
+  const [problems, setProblems] = useState<SignupProblems>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   const update = (change: Partial<FormState>) => setForm((current) => ({ ...current, ...change }));
@@ -127,19 +144,10 @@ function SignupForm({ code, link }: { code: string; link: SignupLinkView }) {
     const checked = signupInputSchema.safeParse(candidate);
     const missingVoicemail = form.usesNetworkVoicemail === "";
     if (!checked.success || missingVoicemail) {
-      const messages = checked.success
-        ? []
-        : checked.error.issues.map((issue) => {
-            const field = String(issue.path[0]);
-            return field === "accepted"
-              ? "Documents: tick all three to continue"
-              : `${FIELD_LABELS[field] ?? field}: ${issue.message}`;
-          });
-      if (missingVoicemail) messages.push("Voicemail: choose yes or no");
-      setProblems([...new Set(messages)]);
+      setProblems(signupProblems(checked.success ? [] : checked.error.issues, missingVoicemail));
       return;
     }
-    setProblems([]);
+    setProblems({});
     setBusy(true);
     setError(null);
     try {
@@ -154,151 +162,148 @@ function SignupForm({ code, link }: { code: string; link: SignupLinkView }) {
 
   return (
     <form
-      className="profile"
+      className="form-sections"
       onSubmit={(event) => {
         event.preventDefault();
         void submit();
       }}
     >
-      <section className="card">
-        <h2>Your business</h2>
-        <label className="stacked">
-          Business name
-          <input
-            value={form.businessName}
-            onChange={(event) => update({ businessName: event.target.value })}
-          />
-        </label>
-        <label className="stacked">
-          Trade
-          <select value={form.trade} onChange={(event) => update({ trade: event.target.value })}>
-            {TRADES.map((trade) => (
-              <option key={trade} value={trade}>
-                {humanise(trade)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="stacked">
-          Your name, as callers will hear it ("Sam will call you back")
-          <input
-            value={form.contactName}
-            onChange={(event) => update({ contactName: event.target.value })}
-          />
-        </label>
-      </section>
-
-      <section className="card">
-        <h2>Your phone</h2>
-        <label className="stacked">
-          Mobile, for texts about each call
-          <input
-            type="tel"
-            autoComplete="tel"
-            placeholder="07700 900123"
-            value={form.mobile}
-            onChange={(event) => update({ mobile: event.target.value })}
-          />
-        </label>
-        <label className="stacked">
-          Email for call details (leave empty to use the one you signed in with)
-          <input
-            type="email"
-            value={form.email}
-            onChange={(event) => update({ email: event.target.value })}
-          />
-        </label>
-        <label className="stacked">
-          Mobile network (for the instructions to send missed calls to AnswerMate)
-          <select
-            value={form.mobileNetwork}
-            onChange={(event) => update({ mobileNetwork: event.target.value })}
-          >
-            <option value="">Choose your network</option>
-            {MOBILE_NETWORK_KEYS.map((network) => (
-              <option key={network} value={network}>
-                {MOBILE_NETWORKS[network]}
-              </option>
-            ))}
-          </select>
-        </label>
-        <fieldset className="stacked">
-          <legend>Do you use your network's voicemail now?</legend>
-          {(["yes", "no"] as const).map((answer) => (
-            <label key={answer} className="check">
-              <input
-                type="radio"
-                name="voicemail"
-                checked={form.usesNetworkVoicemail === answer}
-                onChange={() => update({ usesNetworkVoicemail: answer })}
-              />
-              {answer === "yes" ? "Yes" : "No"}
-            </label>
+      <Card icon={Building} title="Your business">
+        <TextField
+          label="Business name"
+          autoComplete="organization"
+          value={form.businessName}
+          error={problems.businessName}
+          onChange={(event) => update({ businessName: event.target.value })}
+        />
+        <SelectField
+          label="Trade"
+          value={form.trade}
+          error={problems.trade}
+          onChange={(event) => update({ trade: event.target.value })}
+        >
+          {TRADES.map((trade) => (
+            <option key={trade} value={trade}>
+              {humanise(trade)}
+            </option>
           ))}
-        </fieldset>
-      </section>
+        </SelectField>
+        <TextField
+          label="Your name"
+          hint={`As callers will hear it: "Sam will call you back".`}
+          autoComplete="given-name"
+          value={form.contactName}
+          error={problems.contactName}
+          onChange={(event) => update({ contactName: event.target.value })}
+        />
+      </Card>
 
-      <section className="card">
-        <h2>The small print</h2>
+      <Card icon={Smartphone} title="Your phone">
+        <TextField
+          label="Mobile, for texts about each call"
+          type="tel"
+          autoComplete="tel"
+          placeholder="07700 900123"
+          value={form.mobile}
+          error={problems.mobile}
+          onChange={(event) => update({ mobile: event.target.value })}
+        />
+        <TextField
+          label="Email for call details"
+          hint="Leave empty to use the one you signed in with."
+          type="email"
+          autoComplete="email"
+          value={form.email}
+          error={problems.email}
+          onChange={(event) => update({ email: event.target.value })}
+        />
+        <SelectField
+          label="Mobile network"
+          hint="For the instructions to send the calls you miss to AnswerMate."
+          value={form.mobileNetwork}
+          error={problems.mobileNetwork}
+          onChange={(event) => update({ mobileNetwork: event.target.value })}
+        >
+          <option value="">Choose your network</option>
+          {MOBILE_NETWORK_KEYS.map((network) => (
+            <option key={network} value={network}>
+              {MOBILE_NETWORKS[network]}
+            </option>
+          ))}
+        </SelectField>
+        <RadioGroup
+          legend="Do you use your network's voicemail now?"
+          name="voicemail"
+          inline
+          options={[
+            { value: "yes", label: "Yes" },
+            { value: "no", label: "No" },
+          ]}
+          value={form.usesNetworkVoicemail}
+          onChange={(answer) => update({ usesNetworkVoicemail: answer })}
+        />
+        <FieldErrors messages={problems.usesNetworkVoicemail} />
+      </Card>
+
+      <Card icon={FileText} title="The small print">
         {placeholders && (
-          <p className="notice card">
-            These documents are placeholders while a solicitor writes the real ones.
-            {link.forTest
-              ? " This is a test signup."
-              : " Until they're in place, your service can't go live."}
-          </p>
+          <Alert tone="info">
+            <p>
+              These documents are placeholders while a solicitor writes the real ones.
+              {link.forTest
+                ? " This is a test signup."
+                : " Until they're in place, your service can't go live."}
+            </p>
+          </Alert>
         )}
         {LEGAL_DOCUMENT_TYPES.map((type) => {
           const document = link.documents[type];
           return (
-            <div key={type} className="document">
-              <label className="check">
-                <input
-                  type="checkbox"
-                  checked={form.accepted[type]}
-                  onChange={(event) =>
-                    update({ accepted: { ...form.accepted, [type]: event.target.checked } })
-                  }
-                />
-                I accept the {document.title}
-              </label>
-              <p className="hint">
-                Version {document.version}. {document.summary}
+            <div key={type} className="stack stack-xs">
+              <Checkbox
+                label={`I accept the ${document.title}`}
+                checked={form.accepted[type]}
+                onChange={(event) =>
+                  update({ accepted: { ...form.accepted, [type]: event.target.checked } })
+                }
+              />
+              <p className="field-hint">
+                Version {document.version}. {document.summary}{" "}
                 {document.url && (
-                  <>
-                    {" "}
-                    <a href={document.url} target="_blank" rel="noreferrer">
-                      Read the {document.title}
-                    </a>
-                  </>
+                  <a href={document.url} target="_blank" rel="noreferrer">
+                    Read the {document.title} <ExternalLink size={12} className="inline-icon" />
+                  </a>
                 )}
               </p>
             </div>
           );
         })}
-      </section>
+        <FieldErrors messages={problems.accepted} />
+      </Card>
 
       <div className="save-bar">
-        {problems.length > 0 && (
-          <ul className="field-errors">
-            {problems.map((problem) => (
-              <li key={problem}>{problem}</li>
-            ))}
-          </ul>
-        )}
-        {error && (
-          <>
-            <ErrorNote error={error} />
-            {/already have an AnswerMate account/i.test(error.message) && (
-              <p>
-                <a href="/">Open your dashboard</a>
-              </p>
-            )}
-          </>
-        )}
-        <button type="submit" disabled={busy}>
-          {busy ? "Setting up…" : "Set up my business"}
-        </button>
+        <div className="stack stack-xs">
+          {Object.keys(problems).length > 0 ? (
+            <FieldErrors messages={["Some details need changing. They're marked above."]} />
+          ) : (
+            <span className="muted text-sm">
+              Your business is set up as soon as you press this.
+            </span>
+          )}
+          {error && (
+            <>
+              <ErrorNote error={error} />
+              {/already have an AnswerMate account/i.test(error.message) && (
+                <p>
+                  <a href="/">Open your dashboard</a>
+                </p>
+              )}
+            </>
+          )}
+        </div>
+        <Button type="submit" loading={busy}>
+          Set up my business
+        </Button>
       </div>
     </form>
   );

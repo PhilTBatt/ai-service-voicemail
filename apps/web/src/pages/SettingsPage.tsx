@@ -75,7 +75,14 @@ export function SettingsPage() {
         onAccepted={reload}
       />
       <DataDownload tenantId={tenant.id} />
-      <Cancel tenant={tenant} isAdmin={me.role === "admin"} onChanged={reload} />
+      {/* Keyed by status: once a cancel or an undo shows, the card starts afresh (its button
+          stays busy until then, as the page reloads the business in place). */}
+      <Cancel
+        key={`c-${tenant.status}`}
+        tenant={tenant}
+        isAdmin={me.role === "admin"}
+        onChanged={reload}
+      />
     </div>
   );
 }
@@ -835,7 +842,10 @@ function Cancel({
             detail: "Hear that the service has ended, from the moment you cancel.",
           },
           { term: "Your number", detail: "Is kept for 30 days, then released." },
-          { term: "Billing", detail: "The month you leave in is charged as usual; nothing after." },
+          {
+            term: "Billing",
+            detail: "Nothing is charged for any month after the one you leave in.",
+          },
         ]}
       />
       <p className="muted text-sm">

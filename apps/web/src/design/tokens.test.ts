@@ -61,6 +61,24 @@ describe("design tokens", () => {
     expect(Object.fromEntries(followed)).toEqual(Object.fromEntries(chosen));
   });
 
+  it("matches the page behind a text's link, which copies the main colours as values", () => {
+    const callPage = readFileSync(
+      join(src, "..", "..", "api", "src", "core", "call-page.ts"),
+      "utf8",
+    ).toLowerCase();
+    const light = block(":root {");
+    const dark = block(':root[data-theme="dark"]');
+    for (const name of [
+      "--color-bg",
+      "--color-text",
+      "--color-brand-solid",
+      "--color-danger-text",
+    ]) {
+      expect(callPage, `${name} light`).toContain(light.get(name)!.toLowerCase());
+      expect(callPage, `${name} dark`).toContain(dark.get(name)!.toLowerCase());
+    }
+  });
+
   it("gives every colour and shadow a dark value", () => {
     const light = block(":root {");
     const dark = block(':root[data-theme="dark"]');

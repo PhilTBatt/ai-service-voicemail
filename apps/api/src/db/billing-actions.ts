@@ -154,6 +154,16 @@ export async function undoCancellation(
       "UPDATE tenants SET status = $2, cancellation_requested_at = NULL WHERE id = $1",
       [tenantId, restore],
     );
+    // A business that left while suspended has a suspension still open. Back to suspended, it
+    // stays open; back to anything else (paused, when the audit row can't be read), it ends
+    // here, or every month after would be billed as suspended throughout, and resume (which
+    // only acts on a suspended business) could never close it.
+    if (restore !== "suspended") {
+      await client.query(
+        "UPDATE tenant_suspensions SET ended_at = now() WHERE tenant_id = $1 AND ended_at IS NULL",
+        [tenantId],
+      );
+    }
     await client.query(
       "INSERT INTO audit_log (tenant_id, actor_user_id, action, details) VALUES ($1, $2, 'tenant.cancel-undone', $3)",
       [tenantId, actorUserId, { via: "dashboard", to: restore }],

@@ -16,42 +16,59 @@ export const CALL_PAGE_CSP =
 
 const LINK_DAYS = Math.round(CALL_LINK_TTL_MS / (24 * 60 * 60 * 1000));
 
+// The dashboard's colours and type (apps/web/src/design/tokens.css, decision 020), copied as
+// values: this page has no script and loads nothing, so it can't share the dashboard's files.
+// Change a colour there, change it here.
 const STYLE = `
-  body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #111;
-         background: #fff; line-height: 1.5; margin: 0; }
-  main { max-width: 640px; margin: 0 auto; padding: 16px; }
-  h1 { font-size: 24px; margin: 8px 0 0; }
-  h2 { font-size: 17px; margin: 24px 0 8px; }
-  .muted { color: #555; margin: 0; }
-  .badge { display: inline-block; font-size: 13px; font-weight: 700; padding: 2px 8px;
-           border-radius: 4px; background: #eee; margin: 0 4px 0 0; }
-  .badge.emergency { background: #b00020; color: #fff; }
-  .badge.urgent { background: #e65100; color: #fff; }
-  .button { display: block; text-align: center; background: #0b57d0; color: #fff;
-            text-decoration: none; font-weight: 700; font-size: 18px; padding: 14px;
-            border-radius: 8px; margin: 16px 0; }
-  dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 16px 0; }
-  dt { color: #555; font-weight: 600; }
+  :root { color-scheme: light dark;
+    --bg: #f5f7fb; --surface: #ffffff; --border: #e2e6ee; --text: #131a2a; --muted: #556078;
+    --brand: #2952cc; --brand-hover: #2045b3; --link: #2952cc;
+    --danger-soft: #fef1ef; --danger-text: #b42318; --danger-border: #f6c7c0;
+    --warning-soft: #fff6e6; --warning-text: #93370d; --warning-border: #f9d79e;
+    --neutral-soft: #f1f3f7; --neutral-text: #475467; --neutral-border: #e1e5ec;
+    --success-text: #05603a; }
+  @media (prefers-color-scheme: dark) { :root {
+    --bg: #0a0e17; --surface: #121826; --border: #222b3d; --text: #e7eaf2; --muted: #9ba5bb;
+    --brand: #3a62e0; --brand-hover: #4c72ec; --link: #8ea7ff;
+    --danger-soft: rgb(240 68 56 / 0.13); --danger-text: #ff8b7c; --danger-border: rgb(240 68 56 / 0.38);
+    --warning-soft: rgb(247 144 9 / 0.13); --warning-text: #fdb43c; --warning-border: rgb(247 144 9 / 0.38);
+    --neutral-soft: rgb(255 255 255 / 0.06); --neutral-text: #b4bdd0; --neutral-border: rgb(255 255 255 / 0.1);
+    --success-text: #4fd193; } }
+  * { box-sizing: border-box; }
+  body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+         color: var(--text); background: var(--bg); line-height: 1.5; margin: 0;
+         -webkit-font-smoothing: antialiased; }
+  main { max-width: 640px; margin: 0 auto; padding: 20px 16px 40px; }
+  @media (min-width: 680px) { main { margin: 32px auto; padding: 28px 32px; background: var(--surface);
+         border: 1px solid var(--border); border-radius: 14px; } }
+  h1 { font-size: 26px; letter-spacing: -0.02em; line-height: 1.25; margin: 10px 0 2px; }
+  h2 { font-size: 13px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
+       color: var(--muted); margin: 28px 0 8px; }
+  a { color: var(--link); }
+  .muted { color: var(--muted); margin: 0; font-size: 15px; }
+  .badge { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 9px;
+           border-radius: 999px; margin: 0 4px 0 0; background: var(--neutral-soft);
+           color: var(--neutral-text); border: 1px solid var(--neutral-border); }
+  .badge.emergency { background: var(--danger-soft); color: var(--danger-text); border-color: var(--danger-border); }
+  .badge.urgent { background: var(--warning-soft); color: var(--warning-text); border-color: var(--warning-border); }
+  .button { display: block; text-align: center; background: var(--brand); color: #fff;
+            text-decoration: none; font-weight: 600; font-size: 18px; padding: 14px;
+            border-radius: 10px; margin: 20px 0 12px; }
+  .button:hover { background: var(--brand-hover); }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 20px; margin: 20px 0; }
+  dt { color: var(--muted); font-size: 15px; }
   dd { margin: 0; }
   .summary { white-space: pre-line; margin: 0; }
   audio { width: 100%; }
-  .turn { margin: 0 0 8px; }
-  .footer { color: #666; font-size: 13px; margin-top: 32px; }
+  .turn { margin: 0 0 8px; padding: 8px 12px; border-radius: 12px; background: var(--neutral-soft); }
+  .footer { color: var(--muted); font-size: 13px; margin-top: 32px; padding-top: 16px;
+            border-top: 1px solid var(--border); }
   form { margin: 0 0 16px; }
   button { font: inherit; cursor: pointer; }
-  .secondary { display: block; width: 100%; background: #fff; color: #0b57d0; font-weight: 700;
-               font-size: 16px; padding: 12px; border: 2px solid #0b57d0; border-radius: 8px; }
-  .done { font-weight: 700; color: #1b5e20; margin: 0 0 4px; }
-  .link { background: none; border: none; padding: 0; color: #0b57d0; text-decoration: underline; }
-  @media (prefers-color-scheme: dark) {
-    body { background: #121212; color: #eee; }
-    .muted, dt { color: #aaa; }
-    .badge { background: #333; }
-    .footer { color: #999; }
-    .secondary { background: #121212; color: #8ab4f8; border-color: #8ab4f8; }
-    .done { color: #81c995; }
-    .link { color: #8ab4f8; }
-  }`;
+  .secondary { display: block; width: 100%; background: var(--surface); color: var(--text); font-weight: 600;
+               font-size: 16px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; }
+  .done { font-weight: 600; color: var(--success-text); margin: 0 0 4px; }
+  .link { background: none; border: none; padding: 0; color: var(--link); text-decoration: underline; }`;
 
 function page(title: string, body: string): string {
   return [
