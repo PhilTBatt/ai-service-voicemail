@@ -1,6 +1,13 @@
 import { AI_ANSWERING_PLAN, PILOT, monthlyFeePence } from "@callmate/shared";
 import { describe, expect, it } from "vitest";
-import { billingPeriodEndingOn, billingPeriodFor, chargeFor, formatPence } from "./billing.ts";
+import {
+  billingPeriodEndingOn,
+  billingPeriodFor,
+  chargeFor,
+  endedPeriods,
+  formatPence,
+  ukDateOf,
+} from "./billing.ts";
 
 const plan = AI_ANSWERING_PLAN;
 const at = (iso: string) => new Date(iso);
@@ -114,7 +121,7 @@ describe("chargeFor", () => {
     });
     expect(charge).toMatchObject({ overageMinutes: 1, overagePence: 20, totalPence: 9920 });
     expect(charge.lines[1]).toEqual({
-      description: "1 minutes over the 200 included, at 20p a minute",
+      description: "1 minute over the 200 included, at 20p a minute",
       pence: 20,
     });
   });
@@ -178,6 +185,50 @@ describe("chargeFor", () => {
     ]) {
       expect(Number.isInteger(value)).toBe(true);
     }
+  });
+});
+
+describe("endedPeriods: what the morning run charges", () => {
+  it("lists every month that has ended, oldest first, and none still running", () => {
+    expect(endedPeriods("2026-06-14", "2026-08-14", null)).toEqual([
+      { periodStart: "2026-06-14", periodEnd: "2026-07-14", index: 0 },
+      { periodStart: "2026-07-14", periodEnd: "2026-08-14", index: 1 },
+    ]);
+    expect(endedPeriods("2026-06-14", "2026-08-13", null)).toHaveLength(1);
+    expect(endedPeriods("2026-06-14", "2026-06-20", null)).toEqual([]);
+  });
+
+  it("charges a business that left for each month it began before leaving, and none after", () => {
+    // Left on 20 July: June's month and July's (which it left in) are charged; August's isn't.
+    expect(
+      endedPeriods("2026-06-14", "2026-10-01", "2026-07-20").map((p) => p.periodStart),
+    ).toEqual(["2026-06-14", "2026-07-14"]);
+    // Left on the first day of a month: that month isn't charged.
+    expect(
+      endedPeriods("2026-06-14", "2026-10-01", "2026-07-14").map((p) => p.periodStart),
+    ).toEqual(["2026-06-14"]);
+  });
+
+  it("agrees with billingPeriodFor around a 31st anchor", () => {
+    const periods = endedPeriods("2026-01-31", "2026-05-31", null);
+    expect(periods.map((p) => [p.periodStart, p.periodEnd])).toEqual([
+      ["2026-01-31", "2026-02-28"],
+      ["2026-02-28", "2026-03-31"],
+      ["2026-03-31", "2026-04-30"],
+      ["2026-04-30", "2026-05-31"],
+    ]);
+    for (const period of periods) {
+      expect(billingPeriodFor("2026-01-31", new Date(`${period.periodStart}T12:00:00Z`))).toEqual(
+        period,
+      );
+    }
+  });
+});
+
+describe("ukDateOf", () => {
+  it("is the UK date, which runs an hour ahead of UTC in summer", () => {
+    expect(ukDateOf(new Date("2026-07-13T23:30:00Z"))).toBe("2026-07-14");
+    expect(ukDateOf(new Date("2026-11-13T23:30:00Z"))).toBe("2026-11-13");
   });
 });
 

@@ -3,7 +3,7 @@
 import { ONBOARDING_LABELS, type MeView, type TenantListView } from "@callmate/shared";
 import { Link } from "react-router";
 import { useApi, useLoad } from "../api.ts";
-import { humanise } from "../format.ts";
+import { billingSummary, humanise } from "../format.ts";
 import { SignupLinkPanel } from "../signup-link-panel.tsx";
 import { ErrorNote, StatusBadge } from "../ui.tsx";
 
@@ -38,6 +38,7 @@ export function TenantsPage({ me }: { me: MeView }) {
                     <> · {ONBOARDING_LABELS[tenant.onboardingState]}</>
                   )}
                 </p>
+                <p className="muted">{billingSummary(tenant.billing)}</p>
               </div>
               <p className="counts">
                 <strong>{tenant.calls.last30Days}</strong> calls in 30 days

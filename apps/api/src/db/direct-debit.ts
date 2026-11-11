@@ -5,6 +5,7 @@
 // row-level security applies; the provider is only ever called outside one.
 import { randomUUID } from "node:crypto";
 import type pg from "pg";
+import type { EnqueueBillingEmail } from "../jobs/billing-email.ts";
 import type { EnqueueOnboarding } from "../jobs/onboarding.ts";
 import type { PaymentsEvent, PaymentsProvider } from "../providers/payments.ts";
 import { findTenantIdByPaymentRef } from "./cross-tenant.ts";
@@ -158,6 +159,19 @@ export async function activateMandate(
   mandateRef: string,
   enqueueOnboarding?: EnqueueOnboarding,
 ): Promise<boolean> {
+  const pending = await client.query(
+    "SELECT 1 FROM payment_mandates WHERE tenant_id = $1 AND setup_ref = $2 AND status = 'pending' FOR UPDATE",
+    [tenantId, setupRef],
+  );
+  if (pending.rowCount !== 1) return false;
+  // Two set-ups both completed (a second started while the first link was nearly out of time,
+  // say): the newest is the one to collect from, and the older one stops being used here.
+  // It's still a mandate at the provider, unused; nothing is taken from it.
+  await client.query(
+    `UPDATE payment_mandates SET status = 'cancelled', end_reason = 'superseded', ended_at = now()
+     WHERE tenant_id = $1 AND status = 'active' AND mandate_ref <> $2`,
+    [tenantId, mandateRef],
+  );
   const { rowCount } = await client.query(
     `UPDATE payment_mandates SET status = 'active', mandate_ref = $3, activated_at = now()
      WHERE tenant_id = $1 AND setup_ref = $2 AND status = 'pending'`,
@@ -185,7 +199,7 @@ async function abandonSetup(
 }
 
 /** An active mandate the bank or the business cancelled, or that failed. True if it was active. */
-async function endMandate(
+export async function endMandate(
   client: pg.ClientBase,
   tenantId: string,
   mandateRef: string,
@@ -257,6 +271,76 @@ const MANDATE_ENDED: Record<string, "cancelled" | "failed"> = {
   failed: "failed",
 };
 
+/**
+ * A payment's progress at the provider, in order. Events can arrive out of order (GoCardless
+ * says so), so a charge only ever moves forward: "confirmed" after "paid out" is ignored. The
+ * bad endings outrank everything, because a payment can fail late, after it was confirmed.
+ */
+const PAYMENT_PROGRESS: Record<string, number> = {
+  collecting: 0,
+  pending: 0,
+  submitted: 1,
+  confirmed: 2,
+  paid_out: 3,
+  failed: 4,
+  cancelled: 4,
+  charged_back: 4,
+};
+const PAYMENT_BAD = new Set(["failed", "cancelled", "charged_back"]);
+
+/** Moves a charge to what the provider says of its payment, if that's forward. */
+async function recordPaymentProgress(
+  client: pg.ClientBase,
+  paymentRef: string,
+  action: string,
+  cause: string | null,
+): Promise<{ chargeId: string; periodStart: string; status: string; becameBad: boolean } | null> {
+  const resubmitted = action === "resubmission_requested";
+  if (
+    !resubmitted &&
+    (PAYMENT_PROGRESS[action] === undefined || action === "pending" || action === "collecting")
+  ) {
+    return null;
+  }
+  const charge = (
+    await client.query<{ id: string; status: string; period_start: string }>(
+      "SELECT id, status, period_start::text FROM billing_charges WHERE payment_ref = $1 FOR UPDATE",
+      [paymentRef],
+    )
+  ).rows[0];
+  if (!charge) return null;
+  // A failed payment collected again (from the provider's dashboard, decision 019) keeps its
+  // ID and starts over: back to pending, so its progress from here is recorded, and a later
+  // failure is said again.
+  if (resubmitted) {
+    await client.query(
+      "UPDATE billing_charges SET status = 'pending', failure_reason = NULL WHERE id = $1",
+      [charge.id],
+    );
+    return {
+      chargeId: charge.id,
+      periodStart: charge.period_start,
+      status: "pending",
+      becameBad: false,
+    };
+  }
+  const was = PAYMENT_PROGRESS[charge.status] ?? 0;
+  const now = PAYMENT_PROGRESS[action] ?? 0;
+  if (now < was || charge.status === action) return null;
+  await client.query(
+    `UPDATE billing_charges SET status = $2,
+            failure_reason = CASE WHEN $3::boolean THEN $4 ELSE failure_reason END
+     WHERE id = $1`,
+    [charge.id, action, PAYMENT_BAD.has(action), cause],
+  );
+  return {
+    chargeId: charge.id,
+    periodStart: charge.period_start,
+    status: action,
+    becameBad: PAYMENT_BAD.has(action) && !PAYMENT_BAD.has(charge.status),
+  };
+}
+
 export type EventOutcome =
   | { outcome: "unknown" }
   | { outcome: "duplicate"; tenantId: string }
@@ -264,6 +348,7 @@ export type EventOutcome =
       outcome: "handled";
       tenantId: string;
       mandateEnded?: { status: string; reason: string | null };
+      paymentFailed?: { status: string; reason: string | null; periodStart: string };
     }
   | { outcome: "ignored"; tenantId: string };
 
@@ -271,12 +356,18 @@ export type EventOutcome =
  * One event from the provider's webhook. Found by the reference it names (the set-up, the
  * mandate or the payment), recorded once by its event ID, then acted on in the same
  * transaction, so a delivery that's repeated, or retried after a failure part-way, is handled
- * once. Payments' own events (collected, failed) arrive with charging.
+ * once. Emails to the business are queued in that transaction too.
  */
 export async function handlePaymentsEvent(
   pool: pg.Pool,
   event: PaymentsEvent,
-  { enqueueOnboarding }: { enqueueOnboarding?: EnqueueOnboarding | undefined } = {},
+  {
+    enqueueOnboarding,
+    enqueueBillingEmail,
+  }: {
+    enqueueOnboarding?: EnqueueOnboarding | undefined;
+    enqueueBillingEmail?: EnqueueBillingEmail | undefined;
+  } = {},
 ): Promise<EventOutcome> {
   const refs = [
     event.resourceType === "billing_requests" ? event.links.billingRequest : undefined,
@@ -319,13 +410,66 @@ export async function handlePaymentsEvent(
       }
     }
     if (event.resourceType === "mandates" && event.links.mandate) {
+      // Replaced (a scheme change, say): the new mandate takes over the old one's place.
+      if (event.action === "replaced" && event.links.newMandate) {
+        const { rowCount } = await client.query(
+          "UPDATE payment_mandates SET mandate_ref = $3 WHERE tenant_id = $1 AND mandate_ref = $2 AND status = 'active'",
+          [found, event.links.mandate, event.links.newMandate],
+        );
+        return rowCount === 1
+          ? { outcome: "handled", tenantId: found }
+          : { outcome: "ignored", tenantId: found };
+      }
+      // Reinstated after it ended: usable again, unless the business has set up another since.
+      if (event.action === "reinstated") {
+        const { rowCount } = await client.query(
+          `UPDATE payment_mandates SET status = 'active', end_reason = NULL, ended_at = NULL
+           WHERE tenant_id = $1 AND mandate_ref = $2 AND status IN ('cancelled', 'failed')
+             AND NOT EXISTS (SELECT 1 FROM payment_mandates other
+                             WHERE other.tenant_id = $1 AND other.status = 'active')`,
+          [found, event.links.mandate],
+        );
+        return rowCount === 1
+          ? { outcome: "handled", tenantId: found }
+          : { outcome: "ignored", tenantId: found };
+      }
       const ended = MANDATE_ENDED[event.action];
       if (ended && (await endMandate(client, found, event.links.mandate, ended, event.cause))) {
+        await enqueueBillingEmail?.(
+          { tenantId: found, kind: "direct_debit_ended", ref: event.links.mandate },
+          client,
+        );
         return {
           outcome: "handled",
           tenantId: found,
           mandateEnded: { status: ended, reason: event.cause },
         };
+      }
+    }
+    if (event.resourceType === "payments" && event.links.payment) {
+      const progress = await recordPaymentProgress(
+        client,
+        event.links.payment,
+        event.action,
+        event.cause,
+      );
+      if (progress) {
+        if (progress.becameBad) {
+          await enqueueBillingEmail?.(
+            { tenantId: found, kind: "payment_failed", ref: progress.chargeId },
+            client,
+          );
+          return {
+            outcome: "handled",
+            tenantId: found,
+            paymentFailed: {
+              status: progress.status,
+              reason: event.cause,
+              periodStart: progress.periodStart,
+            },
+          };
+        }
+        return { outcome: "handled", tenantId: found };
       }
     }
     return { outcome: "ignored", tenantId: found };

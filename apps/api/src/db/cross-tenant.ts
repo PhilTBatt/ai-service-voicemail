@@ -128,7 +128,23 @@ export interface TenantWithCallCounts extends TenantSummary {
   createdAt: Date;
   callsLast30Days: number;
   callsTotal: number;
+  isPilot: boolean;
+  directDebit: "none" | "pending" | "active" | "ended";
+  lastCharge: string | null;
 }
+
+/**
+ * The billing columns of the tenant list (Step 12), for a tenant aliased `t`: the pilot flag,
+ * the Direct Debit's state (as directDebitState() reads it), and the latest charge's status.
+ * Shared by the admin's list and an owner's, so the two can't drift.
+ */
+export const TENANT_BILLING_COLUMNS = `t.is_pilot AS "isPilot",
+  COALESCE((SELECT CASE m.status WHEN 'active' THEN 'active' WHEN 'pending' THEN 'pending'
+                                 WHEN 'abandoned' THEN 'none' ELSE 'ended' END
+            FROM payment_mandates m WHERE m.tenant_id = t.id
+            ORDER BY (m.status = 'active') DESC, m.created_at DESC LIMIT 1), 'none') AS "directDebit",
+  (SELECT b.status FROM billing_charges b WHERE b.tenant_id = t.id
+   ORDER BY b.period_start DESC LIMIT 1) AS "lastCharge"`;
 
 /** Every tenant with its call counts. Counts are safe for the reseller; nothing else here is content. */
 export async function listTenantsWithCallCounts(admin: AdminPool): Promise<TenantWithCallCounts[]> {
@@ -136,7 +152,8 @@ export async function listTenantsWithCallCounts(admin: AdminPool): Promise<Tenan
     `SELECT t.id, t.business_name AS "businessName", t.trade, t.status,
             t.onboarding_state AS "onboardingState", t.created_at AS "createdAt",
             COUNT(c.id) FILTER (WHERE c.started_at >= now() - interval '30 days')::int AS "callsLast30Days",
-            COUNT(c.id)::int AS "callsTotal"
+            COUNT(c.id)::int AS "callsTotal",
+            ${TENANT_BILLING_COLUMNS}
      FROM tenants t LEFT JOIN calls c ON c.tenant_id = t.id
      GROUP BY t.id ORDER BY t.created_at`,
   );
@@ -1171,6 +1188,30 @@ export async function activeNumberFor(
     [tenantId],
   );
   return rows[0] ?? null;
+}
+
+export interface BillableTenant {
+  tenantId: string;
+  /** The UK date it went live: its billing months run from here. */
+  billingStartDate: string;
+  isPilot: boolean;
+  /** The UK date it asked to leave, if it has: no month starting on or after it is charged. */
+  leftOn: string | null;
+}
+
+/**
+ * Every business that pays (decision 019): gone live, so it has a billing start date, and not
+ * the demo line or a test business from a test link (Phil trying the service), which never pay.
+ */
+export async function listBillableTenants(admin: AdminPool): Promise<BillableTenant[]> {
+  const { rows } = await admin.query<BillableTenant>(
+    `SELECT id AS "tenantId", billing_start_date::text AS "billingStartDate", is_pilot AS "isPilot",
+            to_char(cancellation_requested_at AT TIME ZONE 'Europe/London', 'YYYY-MM-DD') AS "leftOn"
+     FROM tenants
+     WHERE billing_start_date IS NOT NULL AND status <> 'demo' AND NOT is_test
+     ORDER BY billing_start_date, id`,
+  );
+  return rows;
 }
 
 /**

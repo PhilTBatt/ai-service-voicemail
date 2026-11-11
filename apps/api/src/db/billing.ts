@@ -39,6 +39,22 @@ export async function loadBillingView(
       };
     }
     const directDebit = await directDebitState(client, tenantId);
+    const charges = (
+      await client.query<{
+        period_start: string;
+        period_end: string;
+        lines: { description: string; pence: number }[];
+        vat_pence: number;
+        total_pence: number;
+        status: string;
+        charge_date: string | null;
+      }>(
+        `SELECT period_start::text, period_end::text, lines, vat_pence, total_pence, status,
+                charge_date::text
+         FROM billing_charges WHERE tenant_id = $1 ORDER BY period_start DESC LIMIT 12`,
+        [tenantId],
+      )
+    ).rows;
     return {
       available,
       plan: {
@@ -54,6 +70,15 @@ export async function loadBillingView(
         since: directDebit.since?.toISOString() ?? null,
         endReason: directDebit.endReason,
       },
+      charges: charges.map((charge) => ({
+        periodStart: charge.period_start,
+        periodEnd: charge.period_end,
+        lines: charge.lines,
+        vatPence: charge.vat_pence,
+        totalPence: charge.total_pence,
+        status: charge.status,
+        chargeDate: charge.charge_date,
+      })),
     } satisfies BillingView;
   });
 }

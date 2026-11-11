@@ -29,6 +29,15 @@ export interface TenantListItem {
   onboardingState: OnboardingState;
   createdAt: string;
   calls: { last30Days: number; total: number };
+  /**
+   * Plan and billing status (Step 12), which the reseller may see too: whether it's a pilot,
+   * where its Direct Debit stands, and how the latest month's charge went. No amounts.
+   */
+  billing: {
+    isPilot: boolean;
+    directDebit: "none" | "pending" | "active" | "ended";
+    lastCharge: string | null;
+  };
 }
 
 export interface TenantListView {
@@ -213,6 +222,24 @@ export interface BillingView {
     since: string | null;
     endReason: string | null;
   };
+  /** The months charged so far, newest first (the last twelve). */
+  charges: BillingChargeView[];
+}
+
+/** One month's charge, as the business sees it on its Account tab. */
+export interface BillingChargeView {
+  periodStart: string;
+  periodEnd: string;
+  lines: { description: string; pence: number }[];
+  vatPence: number;
+  totalPence: number;
+  /**
+   * nothing_due, no_mandate (owed, with no Direct Debit to collect from), collecting, pending,
+   * submitted, confirmed, paid_out, failed, cancelled, charged_back.
+   */
+  status: string;
+  /** The day the money is collected, once a payment is made. */
+  chargeDate: string | null;
 }
 
 /** POST /api/tenants/:id/billing/direct-debit: where to send the person to set it up. */

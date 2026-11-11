@@ -7,6 +7,7 @@ import { createApp } from "./app.ts";
 import { retellUrls, type Config } from "./config.ts";
 import { recordCallEnded, recordMidCallEmergency } from "./db/calls.ts";
 import type { AdminPool } from "./db/cross-tenant.ts";
+import { enqueueBillingEmailWith } from "./jobs/billing-email.ts";
 import { enqueueNotificationsWith } from "./jobs/enqueue-notifications.ts";
 import { enqueueOnboardingWith } from "./jobs/onboarding.ts";
 import { enqueueSyncAgent, type SyncAgentJobData } from "./jobs/sync-agent.ts";
@@ -98,7 +99,11 @@ export function buildServerApp(
       ? { webhookSecret: config.postmarkWebhookSecret }
       : undefined,
     payments: payments
-      ? { provider: payments, enqueueOnboarding: enqueueOnboardingWith(boss) }
+      ? {
+          provider: payments,
+          enqueueOnboarding: enqueueOnboardingWith(boss),
+          enqueueBillingEmail: enqueueBillingEmailWith(boss),
+        }
       : undefined,
     callPages: config.signingSecret
       ? { signingSecret: config.signingSecret, telephony: telephony?.provider, voice: retell }

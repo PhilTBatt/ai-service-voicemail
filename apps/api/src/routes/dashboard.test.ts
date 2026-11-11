@@ -460,6 +460,12 @@ describe("authorisation matrix", () => {
       onboardingState: "created",
       createdAt: expect.any(String) as string,
       calls: { last30Days: expect.any(Number) as number, total: 1 },
+      // Plan and billing status, no amounts (Step 12, carried over from Step 10).
+      billing: {
+        isPilot: false,
+        directDebit: expect.stringMatching(/^(none|pending|active|ended)$/) as string,
+        lastCharge: null,
+      },
     });
     expect(JSON.stringify(tenants)).not.toContain("+447700900701");
   });
@@ -1199,6 +1205,7 @@ describe("billing (Step 12)", () => {
       isPilot: false,
       period: null,
       directDebit: { status: "none", since: null, endReason: null },
+      charges: [],
     });
 
     // Live since 14 October, with 61 seconds this month (the test clock is 7 November).

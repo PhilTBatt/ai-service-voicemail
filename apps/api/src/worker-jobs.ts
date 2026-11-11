@@ -5,6 +5,12 @@ import type { PgBoss } from "pg-boss";
 import type pg from "pg";
 import { retellUrls, type Config } from "./config.ts";
 import type { AdminPool } from "./db/cross-tenant.ts";
+import {
+  enqueueBillingEmailWith,
+  runBillingEmail,
+  type BillingEmailJobData,
+} from "./jobs/billing-email.ts";
+import { runChargePeriods } from "./jobs/charge-periods.ts";
 import { startDeadLetterWatcher } from "./jobs/dead-letter.ts";
 import { enqueueNotificationsWith } from "./jobs/enqueue-notifications.ts";
 import { runNotifyEmail, type NotifyEmailJobData } from "./jobs/notify-email.ts";
@@ -18,6 +24,9 @@ import {
 } from "./jobs/onboarding.ts";
 import { runProcessCall, type ProcessCallJobData } from "./jobs/process-call.ts";
 import {
+  BILLING_EMAIL_QUEUE,
+  CHARGE_PERIODS_CRON,
+  CHARGE_PERIODS_QUEUE,
   DEAD_LETTER_QUEUE,
   NOTIFY_EMAIL_QUEUE,
   NOTIFY_EMERGENCY_QUEUE,
@@ -40,6 +49,7 @@ import { runSyncAgent, type SyncAgentJobData } from "./jobs/sync-agent.ts";
 import { logger } from "./logger.ts";
 import { AnthropicLlmProvider } from "./providers/anthropic.ts";
 import { ClerkAuthProvider } from "./providers/clerk.ts";
+import { GoCardlessPaymentsProvider } from "./providers/gocardless.ts";
 import { PostmarkEmailProvider } from "./providers/postmark.ts";
 import { RetellVoiceProvider } from "./providers/retell.ts";
 import { TwilioSmsProvider } from "./providers/twilio-sms.ts";
@@ -141,11 +151,36 @@ export async function registerJobs(
     await boss.work<NotifyEmailJobData>(NOTIFY_EMAIL_QUEUE, async (jobs) => {
       for (const job of jobs) await runNotifyEmail(deps, job.data);
     });
-    queues.push(NOTIFY_EMAIL_QUEUE);
+    // Receipts, failed payments and ended Direct Debits (Step 12).
+    await boss.work<BillingEmailJobData>(BILLING_EMAIL_QUEUE, async (jobs) => {
+      for (const job of jobs) {
+        await runBillingEmail({ ...deps, dashboardOrigin: config.dashboardOrigin }, job.data);
+      }
+    });
+    queues.push(NOTIFY_EMAIL_QUEUE, BILLING_EMAIL_QUEUE);
   } else {
     logger.warn(
       "Email notifications disabled: needs POSTMARK_SERVER_TOKEN, EMAIL_FROM, SIGNING_SECRET and PUBLIC_BASE_URL (jobs wait in the queue)",
     );
+  }
+
+  if (admin && config.payments) {
+    // Charging (Step 12): each paying business's ended billing months, every morning.
+    const payments = new GoCardlessPaymentsProvider(config.payments);
+    const enqueueBillingEmail = enqueueBillingEmailWith(boss);
+    await boss.work(CHARGE_PERIODS_QUEUE, async () => {
+      await runChargePeriods({
+        pool,
+        admin,
+        payments,
+        enqueueBillingEmail,
+        vat: config.vat ?? null,
+      });
+    });
+    await boss.schedule(CHARGE_PERIODS_QUEUE, CHARGE_PERIODS_CRON, null, { tz: "Europe/London" });
+    queues.push(CHARGE_PERIODS_QUEUE);
+  } else {
+    logger.warn("Charging disabled: needs GOCARDLESS_ACCESS_TOKEN and ADMIN_DATABASE_URL");
   }
 
   if (admin) {

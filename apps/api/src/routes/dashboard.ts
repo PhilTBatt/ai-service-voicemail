@@ -606,5 +606,10 @@ function presentTenantSummary(tenant: TenantWithCallCounts): TenantListItem {
     onboardingState: tenant.onboardingState,
     createdAt: tenant.createdAt.toISOString(),
     calls: { last30Days: tenant.callsLast30Days, total: tenant.callsTotal },
+    billing: {
+      isPilot: tenant.isPilot,
+      directDebit: tenant.directDebit,
+      lastCharge: tenant.lastCharge,
+    },
   };
 }

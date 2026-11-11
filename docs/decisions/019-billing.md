@@ -12,6 +12,15 @@
 4. **The pilot** is Appendix D's: the first month free, then £49 a month for three months, then the full plan. Overage is charged in every month, the free one included: the free month waives the plan fee, not usage beyond the included minutes. (Assumption for Phil to confirm; easy to change in `plans.ts`.)
 5. **Everything in `plans.ts` is data:** the plan's price, included minutes, overage rate and the pilot's shape, so a price change is an edit, not a rebuild. VAT is off until `VAT_REGISTRATION` (number and effective date) is set; from that date, 20% is added to each charge, rounded once on the subtotal.
 6. **No automatic cut-off** (the plan's rule): a failed payment alerts and notifies, and never suspends. Suspension stays a button.
+7. **Charged in arrears, the morning after each month ends** (06:00 UK), for every month that has ended and isn't charged yet, so a missed morning catches up. Added with charging (2026-11-10), each an assumption for Phil to confirm:
+   - **Test businesses never pay**, like the demo line: a business from a test link is Phil trying the service.
+   - **A business that leaves is charged for the month it left in**, and none after: a month that began before it asked to leave is charged in full, one that began on or after isn't. (Callers hear "service has ended" from the moment it asks, so there's a case for charging that month pro rata instead.)
+   - **A £0 month** (a pilot's free month inside its minutes) is recorded but sends no payment and no email.
+   - **A failed payment isn't collected again automatically**: the business is emailed and Phil alerted; collecting it again is from the GoCardless dashboard until there's a reason to automate it. When that's done, the charge follows the same payment through to paid.
+   - **A month owing less than £1** (GoCardless's Bacs minimum: a pilot's free month a few minutes over) is recorded and not collected: waived, in effect.
+   - **No call before the day a business goes live is billed**, the test call included (BUILD_PLAN Step 12: test calls excluded). A call the same day it goes live counts.
+8. **Only the bank failing a payment is the customer's payment failing.** A Direct Debit GoCardless won't collect from is ended here too and the month waits for a new one; anything else GoCardless refuses (a wrong token, a malformed request) fails the morning's run so it's retried, then dead-lettered with an alert, and the business is told nothing. (From the review of 2026-11-10.)
+9. **Known edge, accepted:** a call that reaches us after 06:00 on the morning after its month ended (a late webhook) adds to a month already charged, and isn't billed.
 
 ## 2. Options
 

@@ -22,6 +22,8 @@ export const ALERTS = [
   "number-bought-not-recorded",
   "deletion-confirmation-not-sent",
   "payment-mandate-ended",
+  "billing-no-mandate",
+  "billing-payment-failed",
   "fallback-voicemail-spike",
   "webhook-signature-spike",
   "server-error-spike",

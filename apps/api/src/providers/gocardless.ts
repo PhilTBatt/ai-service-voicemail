@@ -7,6 +7,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { redactText } from "../redact.ts";
 import {
+  MandateUnusableError,
   PaymentsWebhookError,
   type MandateSetup,
   type MandateSetupRequest,
@@ -121,6 +122,8 @@ const webhookSchema = z.object({
           billing_request: z.string().optional(),
           // On a billing request's event: "the ID of the mandate which has been created".
           mandate_request_mandate: z.string().optional(),
+          // On a mandate's "replaced" event: the mandate that takes over.
+          new_mandate: z.string().optional(),
         })
         .passthrough()
         .optional(),
@@ -217,13 +220,21 @@ export class GoCardlessPaymentsProvider implements PaymentsProvider {
       request.idempotencyKey,
     ).catch((error: unknown) => {
       // A retry of a payment already made: the same receipt, never a second payment.
-      if (!(error instanceof IdempotentCreationConflict)) throw error;
-      return this.call(
-        "GET",
-        `/payments/${encodeURIComponent(error.conflictingResourceId)}`,
-        undefined,
-        paymentSchema,
-      );
+      if (error instanceof IdempotentCreationConflict) {
+        return this.call(
+          "GET",
+          `/payments/${encodeURIComponent(error.conflictingResourceId)}`,
+          undefined,
+          paymentSchema,
+        );
+      }
+      // "invalid_state" on a new payment is the mandate: cancelled, failed or expired
+      // (GoCardless's "mandate_is_inactive"). Anything else (a bad token, a validation error)
+      // is ours to fix, and stays a GoCardlessApiError.
+      if (error instanceof GoCardlessApiError && error.type === "invalid_state") {
+        throw new MandateUnusableError(error.message);
+      }
+      throw error;
     });
     return {
       paymentRef: created.payments.id,
@@ -252,11 +263,14 @@ export class GoCardlessPaymentsProvider implements PaymentsProvider {
     const secret = this.options.webhookSecret;
     if (!secret) throw new PaymentsWebhookError("No webhook secret is configured");
     const given = headers["webhook-signature"];
-    const expected = createHmac("sha256", secret).update(rawBody).digest("hex");
+    const expected = Buffer.from(createHmac("sha256", secret).update(rawBody).digest("hex"));
+    // Byte lengths, not string lengths: a header of the right length in other characters is
+    // longer in bytes, and timingSafeEqual would throw rather than say no.
+    const givenBytes = Buffer.from(typeof given === "string" ? given : "");
     if (
       typeof given !== "string" ||
-      given.length !== expected.length ||
-      !timingSafeEqual(Buffer.from(given), Buffer.from(expected))
+      givenBytes.length !== expected.length ||
+      !timingSafeEqual(givenBytes, expected)
     ) {
       throw new PaymentsWebhookError("Missing or invalid Webhook-Signature");
     }
@@ -283,6 +297,7 @@ export class GoCardlessPaymentsProvider implements PaymentsProvider {
         payment: event.links?.payment,
         mandate: event.links?.mandate ?? event.links?.mandate_request_mandate,
         billingRequest: event.links?.billing_request,
+        newMandate: event.links?.new_mandate,
       },
       createdAt: new Date(event.created_at),
     }));

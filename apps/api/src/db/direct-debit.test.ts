@@ -146,6 +146,41 @@ describe("when the person comes back", () => {
     expect(enqueueOnboarding).toHaveBeenCalledTimes(1);
   });
 
+  it("makes the newest of two completed set-ups the one to collect from, without failing", async () => {
+    const { tenantId } = await business();
+    const insert = (setupRef: string) =>
+      withTenant(app, tenantId, (client) =>
+        client.query(
+          `INSERT INTO payment_mandates (tenant_id, setup_ref, authorisation_url, expires_at)
+           VALUES ($1, $2, 'https://pay.fake.invalid', now() + interval '7 days')`,
+          [tenantId, setupRef],
+        ),
+      );
+    const first = `BRQ${randomUUID()}`;
+    const second = `BRQ${randomUUID()}`;
+    await insert(first);
+    await insert(second);
+    const fulfil = (setupRef: string, mandate: string) =>
+      handlePaymentsEvent(
+        app,
+        event({
+          resourceType: "billing_requests",
+          action: "fulfilled",
+          links: { billingRequest: setupRef, mandate },
+        }),
+      );
+    expect(await fulfil(first, "MD_FIRST")).toMatchObject({ outcome: "handled" });
+    expect(await fulfil(second, "MD_SECOND")).toMatchObject({ outcome: "handled" });
+    const { rows } = await admin.query(
+      "SELECT mandate_ref, status, end_reason FROM payment_mandates WHERE tenant_id = $1 ORDER BY mandate_ref",
+      [tenantId],
+    );
+    expect(rows).toEqual([
+      { mandate_ref: "MD_FIRST", status: "cancelled", end_reason: "superseded" },
+      { mandate_ref: "MD_SECOND", status: "active", end_reason: null },
+    ]);
+  });
+
   it("forgets a set-up the person gave up on", async () => {
     const { tenantId, userId } = await business();
     const payments = new FakePaymentsProvider();

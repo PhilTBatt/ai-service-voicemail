@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { callsQuery, NO_FILTERS } from "./calls-query.ts";
 import {
+  billingSummary,
   formatDuration,
   formatPence,
   formatPhone,
@@ -72,6 +73,20 @@ describe("callsQuery", () => {
   it("adds the cursor for the next page", () => {
     expect(callsQuery(NO_FILTERS, "2026-11-02T09:00:00.000Z")).toBe(
       "before=2026-11-02T09%3A00%3A00.000Z",
+    );
+  });
+});
+
+describe("billingSummary", () => {
+  it("says the plan and how billing stands, in a few words and no amounts", () => {
+    expect(billingSummary({ isPilot: false, directDebit: "none", lastCharge: null })).toBe(
+      "Plan · no Direct Debit",
+    );
+    expect(billingSummary({ isPilot: true, directDebit: "active", lastCharge: "paid_out" })).toBe(
+      "Pilot · Direct Debit set up · last month: paid",
+    );
+    expect(billingSummary({ isPilot: false, directDebit: "ended", lastCharge: "failed" })).toBe(
+      "Plan · Direct Debit ended · last month: payment failed",
     );
   });
 });

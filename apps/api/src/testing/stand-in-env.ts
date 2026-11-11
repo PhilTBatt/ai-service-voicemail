@@ -19,6 +19,8 @@ export const STAND_IN_ENV = {
   POSTMARK_WEBHOOK_SECRET: "y".repeat(16),
   EMAIL_FROM: "calls@example.com",
   CLERK_SECRET_KEY: "sk_test_for_tests",
+  GOCARDLESS_ACCESS_TOKEN: "sandbox_token_for_tests",
+  GOCARDLESS_WEBHOOK_SECRET: "z".repeat(16),
 } as const;
 
 /** Just enough for the worker to start: the database and Retell. */

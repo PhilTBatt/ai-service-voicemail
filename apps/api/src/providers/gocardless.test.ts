@@ -5,7 +5,7 @@ import {
   GoCardlessApiError,
   GoCardlessPaymentsProvider,
 } from "./gocardless.ts";
-import { PaymentsWebhookError } from "./payments.ts";
+import { MandateUnusableError, PaymentsWebhookError } from "./payments.ts";
 
 interface Seen {
   method: string;
@@ -281,6 +281,38 @@ describe("GoCardlessPaymentsProvider", () => {
     });
   });
 
+  it("reports a payment refused for an unusable mandate as that, and other refusals as they are", async () => {
+    const api = stub([
+      {
+        status: 422,
+        json: {
+          error: {
+            type: "invalid_state",
+            code: 422,
+            message: "Mandate is inactive",
+            errors: [{ reason: "mandate_is_inactive", message: "Mandate is inactive" }],
+          },
+        },
+      },
+      {
+        status: 401,
+        json: { error: { type: "invalid_api_usage", code: 401, message: "Unauthorised" } },
+      },
+    ]);
+    const request = {
+      mandateRef: "MD1",
+      amountPence: 9900,
+      description: "x",
+      metadata: {},
+      idempotencyKey: "k",
+    };
+    const p = provider(api);
+    await expect(p.createPayment(request)).rejects.toBeInstanceOf(MandateUnusableError);
+    const other = await p.createPayment(request).catch((e: unknown) => e);
+    expect(other).toBeInstanceOf(GoCardlessApiError);
+    expect(other).toMatchObject({ status: 401 });
+  });
+
   it("gives up on a request GoCardless never answers", async () => {
     const hung: typeof fetch = (_input, init) =>
       new Promise((_resolve, reject) => {
@@ -355,6 +387,10 @@ describe("GoCardless webhooks", () => {
     ).toThrow(PaymentsWebhookError);
     const tampered = Buffer.from(body.toString("utf8").replace("PM1", "PM2"));
     expect(() => p.verifyAndParseWebhook(tampered, { "webhook-signature": sign(body) })).toThrow(
+      PaymentsWebhookError,
+    );
+    // The right number of characters, more bytes: a plain refusal, not a crash.
+    expect(() => p.verifyAndParseWebhook(body, { "webhook-signature": "é".repeat(64) })).toThrow(
       PaymentsWebhookError,
     );
   });

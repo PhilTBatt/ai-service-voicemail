@@ -29,6 +29,12 @@ export const DEAD_LETTER_QUEUE = "dead-letter";
 export const ONBOARDING_QUEUE = "onboarding";
 /** Messages when a business leaves, and deleting its data (BUILD_PLAN Step 13). */
 export const OFFBOARDING_QUEUE = "offboarding";
+/** Scheduled: charges each billing month the morning after it ends (BUILD_PLAN Step 12). */
+export const CHARGE_PERIODS_QUEUE = "charge-periods";
+// 06:00 UK, every day: a month ending at midnight has had six hours for its last calls to land.
+export const CHARGE_PERIODS_CRON = "0 6 * * *";
+/** Receipts, failed payments and ended Direct Debits, by email (BUILD_PLAN Step 12). */
+export const BILLING_EMAIL_QUEUE = "billing-email";
 
 /**
  * Starts pg-boss as the app role. Its schema was installed by a migration (decision 008),
@@ -107,6 +113,23 @@ export async function startQueue(connectionString: string): Promise<PgBoss> {
     // thousands of calls takes many minutes. A run that outlasts this is retried; a lock keeps
     // the two apart (jobs/offboarding.ts).
     expireInSeconds: 3600,
+    deadLetter: DEAD_LETTER_QUEUE,
+  });
+  await ensureQueue(boss, CHARGE_PERIODS_QUEUE, {
+    policy: "singleton", // never two charging runs at once
+    retryLimit: 3,
+    retryDelay: 600,
+    expireInSeconds: 1800,
+    deadLetter: DEAD_LETTER_QUEUE,
+  });
+  await ensureQueue(boss, BILLING_EMAIL_QUEUE, {
+    policy: "exclusive", // one of each email queued or running
+    retryLimit: 5,
+    retryDelay: 60,
+    retryBackoff: true,
+    expireInSeconds: 60,
+    // Where email isn't configured, waiting jobs are kept this long, then deleted.
+    retentionSeconds: 30 * 24 * 60 * 60,
     deadLetter: DEAD_LETTER_QUEUE,
   });
   await ensureQueue(boss, RETENTION_QUEUE, {

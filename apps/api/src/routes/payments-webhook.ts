@@ -9,6 +9,7 @@ import type pg from "pg";
 import { raiseAlert, type AlertFn } from "../alerts.ts";
 import { SIGNATURE_FAILURES_PER_WINDOW, Spike } from "../core/spike.ts";
 import { handlePaymentsEvent } from "../db/direct-debit.ts";
+import type { EnqueueBillingEmail } from "../jobs/billing-email.ts";
 import type { EnqueueOnboarding } from "../jobs/onboarding.ts";
 import { logger } from "../logger.ts";
 import { PaymentsWebhookError, type PaymentsProvider } from "../providers/payments.ts";
@@ -17,6 +18,8 @@ export interface PaymentsWebhookOptions {
   pool: pg.Pool;
   provider: PaymentsProvider;
   enqueueOnboarding?: EnqueueOnboarding | undefined;
+  /** Emails the business when a payment fails or its Direct Debit ends. */
+  enqueueBillingEmail?: EnqueueBillingEmail | undefined;
   alert?: AlertFn;
   now?: () => Date;
 }
@@ -28,6 +31,7 @@ export function paymentsWebhookRouter({
   pool,
   provider,
   enqueueOnboarding,
+  enqueueBillingEmail,
   alert = raiseAlert,
   now = () => new Date(),
 }: PaymentsWebhookOptions) {
@@ -52,7 +56,10 @@ export function paymentsWebhookRouter({
     // One at a time, in the order sent. A failure answers 500, so the provider sends the
     // whole batch again; the events already handled are recognised and skipped.
     for (const event of events) {
-      const result = await handlePaymentsEvent(pool, event, { enqueueOnboarding });
+      const result = await handlePaymentsEvent(pool, event, {
+        enqueueOnboarding,
+        enqueueBillingEmail,
+      });
       logger.info("Payments event", {
         eventId: event.id,
         resourceType: event.resourceType,
@@ -65,6 +72,14 @@ export function paymentsWebhookRouter({
           tenantId: result.tenantId,
           status: result.mandateEnded.status,
           reason: result.mandateEnded.reason,
+        });
+      }
+      if (result.outcome === "handled" && result.paymentFailed) {
+        alert("billing-payment-failed", {
+          tenantId: result.tenantId,
+          periodStart: result.paymentFailed.periodStart,
+          status: result.paymentFailed.status,
+          reason: result.paymentFailed.reason,
         });
       }
     }

@@ -2,6 +2,7 @@ import type { PgBoss } from "pg-boss";
 import { enqueueOnboardingWith } from "../jobs/onboarding.ts";
 import { noteTestCall } from "./onboarding.ts";
 import type pg from "pg";
+import { ukDateOf } from "../core/billing.ts";
 import { billableSeconds, usagePeriodFor } from "../core/usage.ts";
 import { NOTIFY_EMERGENCY_QUEUE, PROCESS_CALL_QUEUE } from "../jobs/queue.ts";
 import type { CallEndedEvent, FunctionCallEvent } from "../providers/voice.ts";
@@ -74,13 +75,18 @@ export async function recordCallEnded(
     }
 
     // Billable seconds accumulate per period; overage is worked out once per period (Step 12).
-    // Periods are months from the day the business went live (decision 019). Demo calls are
-    // never billed (Step 9); their costs still land in call_costs, on the demo tenant's own line.
-    if (billable > 0 && tenant?.status !== "demo") {
-      const { periodStart, periodEnd } = usagePeriodFor(
-        event.startedAt,
-        tenant?.billing_start_date ?? null,
-      );
+    // Periods are months from the day the business went live (decision 019), and only calls
+    // from that day on count: the test call, and anything else before going live, is never
+    // billed (Step 12), nor are the demo line's calls (Step 9). Their costs still land in
+    // call_costs, on the business's own line.
+    const billingStart = tenant?.billing_start_date ?? null;
+    if (
+      billable > 0 &&
+      tenant?.status !== "demo" &&
+      billingStart !== null &&
+      ukDateOf(event.startedAt) >= billingStart
+    ) {
+      const { periodStart, periodEnd } = usagePeriodFor(event.startedAt, billingStart);
       await client.query(
         `INSERT INTO usage_periods (tenant_id, period_start, period_end, billable_seconds)
          VALUES ($1, $2, $3, $4)

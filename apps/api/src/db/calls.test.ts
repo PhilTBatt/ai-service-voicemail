@@ -89,6 +89,11 @@ describe("recordCallEnded", () => {
 
   it("adds billable seconds to the tenant's usage period, and bills nothing for a call under 5 s", async () => {
     const { tenantId, number } = await makeTenant();
+    // Live since 1 July, so its billing months are July, August...
+    await admin.query(
+      "UPDATE tenants SET status = 'live', onboarding_state = 'live', billing_start_date = '2026-07-01' WHERE id = $1",
+      [tenantId],
+    );
     const july = new Date("2026-07-15T10:00:00Z");
     await recordCallEnded(app, boss, event(number, { durationSeconds: 90, startedAt: july }));
     await recordCallEnded(app, boss, event(number, { durationSeconds: 61, startedAt: july }));
@@ -300,6 +305,32 @@ describe("recordCallEnded for a demo tenant", () => {
   });
 
   // Decision 019: a live business's usage periods are months from the day it went live.
+  // BUILD_PLAN Step 12: "Demo and test calls are excluded". A business's test call comes
+  // before it goes live, as does any call while it's onboarding: none of them is billed.
+  it("bills no call from before the business went live: the test call included", async () => {
+    const { tenantId, number } = await makeTenant();
+    // Still onboarding: its test call.
+    await recordCallEnded(
+      app,
+      boss,
+      event(number, { durationSeconds: 120, startedAt: new Date("2026-06-30T10:00:00Z") }),
+    );
+    // Live from 1 July; a call recorded late, from the day before, still doesn't count.
+    await admin.query(
+      "UPDATE tenants SET status = 'live', onboarding_state = 'live', billing_start_date = '2026-07-01' WHERE id = $1",
+      [tenantId],
+    );
+    await recordCallEnded(
+      app,
+      boss,
+      event(number, { durationSeconds: 60, startedAt: new Date("2026-06-30T22:30:00Z") }),
+    );
+    const usage = await withTenant(app, tenantId, async (client) => {
+      return (await client.query("SELECT 1 FROM usage_periods")).rowCount;
+    });
+    expect(usage).toBe(0);
+  });
+
   it("files a live business's usage under its own billing month, not the calendar month", async () => {
     const tenantId = await createTenant(admin, {
       businessName: "Anchored Plumbing",

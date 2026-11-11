@@ -113,6 +113,7 @@ export class FakePaymentsProvider implements PaymentsProvider {
             ...(event.links.payment && { payment: event.links.payment }),
             ...(event.links.mandate && { mandate: event.links.mandate }),
             ...(event.links.billingRequest && { billing_request: event.links.billingRequest }),
+            ...(event.links.newMandate && { new_mandate: event.links.newMandate }),
           },
         })),
       }),
@@ -136,7 +137,12 @@ export class FakePaymentsProvider implements PaymentsProvider {
         resource_type: string;
         action: string;
         details?: { cause?: string | null; description?: string | null };
-        links?: { payment?: string; mandate?: string; billing_request?: string };
+        links?: {
+          payment?: string;
+          mandate?: string;
+          billing_request?: string;
+          new_mandate?: string;
+        };
       }[];
     };
     return body.events.map((event) => ({
@@ -154,6 +160,7 @@ export class FakePaymentsProvider implements PaymentsProvider {
         payment: event.links?.payment,
         mandate: event.links?.mandate,
         billingRequest: event.links?.billing_request,
+        newMandate: event.links?.new_mandate,
       },
       createdAt: new Date(event.created_at),
     }));

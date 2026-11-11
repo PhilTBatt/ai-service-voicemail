@@ -50,6 +50,38 @@ export function billingPeriodEndingOn(anchor: string, periodEnd: string): Billin
   return { periodStart: period.start.toString(), periodEnd, index: period.index };
 }
 
+/**
+ * The billing months that have ended by `today` (a UK date), oldest first: each is charged the
+ * morning after it ends. A business that has asked to leave (`leftOn`, a UK date) is charged for
+ * every month that began before that day, the one it left in included, and none after.
+ */
+export function endedPeriods(
+  anchor: string,
+  today: string,
+  leftOn: string | null,
+): BillingPeriod[] {
+  const start = Temporal.PlainDate.from(anchor);
+  const until = Temporal.PlainDate.from(today);
+  const left = leftOn === null ? null : Temporal.PlainDate.from(leftOn);
+  const periods: BillingPeriod[] = [];
+  for (let index = 0; ; index += 1) {
+    const periodStart = start.add({ months: index });
+    const periodEnd = start.add({ months: index + 1 });
+    if (Temporal.PlainDate.compare(periodEnd, until) > 0) break;
+    if (left !== null && Temporal.PlainDate.compare(periodStart, left) >= 0) break;
+    periods.push({ periodStart: periodStart.toString(), periodEnd: periodEnd.toString(), index });
+  }
+  return periods;
+}
+
+/** The UK calendar date at an instant, YYYY-MM-DD. */
+export function ukDateOf(at: Date): string {
+  return Temporal.Instant.fromEpochMilliseconds(at.getTime())
+    .toZonedDateTimeISO("Europe/London")
+    .toPlainDate()
+    .toString();
+}
+
 export interface VatRegistration {
   number: string;
   /** The UK date from which VAT is charged. */
@@ -103,7 +135,7 @@ export function chargeFor({ plan, period, isPilot, billableSeconds, vat }: Charg
     ...(overageMinutes > 0
       ? [
           {
-            description: `${overageMinutes} minutes over the ${plan.includedMinutes} included, at ${plan.overagePencePerMinute}p a minute`,
+            description: `${overageMinutes} ${overageMinutes === 1 ? "minute" : "minutes"} over the ${plan.includedMinutes} included, at ${plan.overagePencePerMinute}p a minute`,
             pence: overage,
           },
         ]

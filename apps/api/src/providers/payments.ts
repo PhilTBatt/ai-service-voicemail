@@ -62,9 +62,26 @@ export interface PaymentsEvent {
     payment?: string | undefined;
     mandate?: string | undefined;
     billingRequest?: string | undefined;
+    /** On a mandate "replaced" event: the mandate that takes over from this one. */
+    newMandate?: string | undefined;
   };
   createdAt: Date;
 }
+
+/**
+ * The provider won't collect against this mandate any more (cancelled, failed, expired), so
+ * a payment asked for against it was refused. Not the customer's payment failing: there's no
+ * payment. The charge waits for a Direct Debit, like one owed with none.
+ */
+export class MandateUnusableError extends Error {
+  override readonly name = "MandateUnusableError";
+}
+
+/**
+ * The lowest payment the provider will collect, in pence: GoCardless's Bacs minimum is £1
+ * (its "Transaction limits" article). A month owing less is recorded, not collected.
+ */
+export const MIN_COLLECTABLE_PENCE = 100;
 
 export interface WebhookHeaders {
   [name: string]: string | string[] | undefined;

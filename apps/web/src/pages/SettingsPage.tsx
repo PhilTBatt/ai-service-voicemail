@@ -16,10 +16,16 @@ import {
 import { useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router";
 import { ApiError, asError, useApi, useLoad } from "../api.ts";
-import { formatPence, formatPhone, humanise, toUkMobileE164 } from "../format.ts";
+import {
+  CHARGE_STATUS_LABELS,
+  formatPence,
+  formatPhone,
+  humanise,
+  toUkMobileE164,
+} from "../format.ts";
 import { NumberSection } from "../number-section.tsx";
 import { TenantHeader } from "../tenant-header.tsx";
-import { formatDate, formatUkDateTime, ukDate } from "../time.ts";
+import { addDays, formatDate, formatUkDateTime, ukDate } from "../time.ts";
 import { ErrorNote } from "../ui.tsx";
 
 export function SettingsPage({ me }: { me: MeView }) {
@@ -329,9 +335,10 @@ function Billing({ tenant }: { tenant: TenantView }) {
       )}
       {period ? (
         <p>
-          This billing month ({formatDate(period.start)} to {formatDate(period.end)}, month{" "}
-          {period.month}): {minutesUsed} of {plan.includedMinutes} minutes used so far. This month's
-          fee is {formatPence(period.feePence)}, charged by Direct Debit after the month ends.
+          This billing month ({formatDate(period.start)} to {formatDate(addDays(period.end, -1))},
+          month {period.month}): {minutesUsed} of {plan.includedMinutes} minutes used so far. This
+          month's fee is {formatPence(period.feePence)}, charged by Direct Debit after the month
+          ends.
         </p>
       ) : (
         <p className="muted">
@@ -391,6 +398,32 @@ function Billing({ tenant }: { tenant: TenantView }) {
         </>
       )}
       {error && <ErrorNote error={error} />}
+      {view.charges.length > 0 && (
+        <>
+          <h3>Past months</h3>
+          <ul className="list">
+            {view.charges.map((charge) => (
+              <li key={charge.periodStart}>
+                <p>
+                  <strong>
+                    {formatDate(charge.periodStart)} to {formatDate(addDays(charge.periodEnd, -1))}
+                  </strong>
+                  : {formatPence(charge.totalPence)}
+                  {charge.vatPence > 0
+                    ? ` (including ${formatPence(charge.vatPence)} VAT)`
+                    : ""}, {CHARGE_STATUS_LABELS[charge.status] ?? charge.status}
+                  {charge.chargeDate ? `, collected from ${formatDate(charge.chargeDate)}` : ""}
+                </p>
+                <p className="muted">
+                  {charge.lines
+                    .map((line) => `${line.description}: ${formatPence(line.pence)}`)
+                    .join(" · ")}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
     </section>
   );
 }

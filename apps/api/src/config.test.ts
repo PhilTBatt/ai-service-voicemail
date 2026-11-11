@@ -308,6 +308,32 @@ describe("loadConfig: RETELL_WEBHOOK_KEY", () => {
   });
 });
 
+describe("loadConfig: VAT", () => {
+  it("is off by default, on with a number and a date, and refuses one without the other", () => {
+    expect(loadConfig(valid).vat).toBeUndefined();
+    expect(
+      loadConfig({
+        ...valid,
+        VAT_REGISTRATION_NUMBER: "GB123456789",
+        VAT_REGISTRATION_FROM: "2027-01-01",
+      }).vat,
+    ).toEqual({ number: "GB123456789", from: "2027-01-01" });
+    expect(configErrorFor({ ...valid, VAT_REGISTRATION_NUMBER: "GB123456789" }).problems[0]).toBe(
+      "VAT_REGISTRATION_FROM is missing",
+    );
+    expect(configErrorFor({ ...valid, VAT_REGISTRATION_FROM: "2027-01-01" }).problems[0]).toBe(
+      "VAT_REGISTRATION_NUMBER is missing",
+    );
+    expect(
+      configErrorFor({
+        ...valid,
+        VAT_REGISTRATION_NUMBER: "123",
+        VAT_REGISTRATION_FROM: "2027-01-01",
+      }).problems[0],
+    ).toMatch(/^VAT_REGISTRATION_NUMBER is invalid/);
+  });
+});
+
 describe("loadConfig: GoCardless", () => {
   it("is off without a token, sandbox by default with one, and live only when said", () => {
     expect(loadConfig(valid).payments).toBeUndefined();

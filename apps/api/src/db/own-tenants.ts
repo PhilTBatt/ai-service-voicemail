@@ -6,7 +6,7 @@
 // the whole calls table. The admin and the reseller see every business, through the
 // cross-tenant module (listTenantsWithCallCounts).
 import type pg from "pg";
-import type { TenantWithCallCounts } from "./cross-tenant.ts";
+import { TENANT_BILLING_COLUMNS, type TenantWithCallCounts } from "./cross-tenant.ts";
 import { withTenant } from "./tenant.ts";
 
 export async function ownTenantWithCallCounts(
@@ -20,7 +20,8 @@ export async function ownTenantWithCallCounts(
               (SELECT count(*) FROM calls c
                 WHERE c.tenant_id = t.id AND c.started_at >= now() - interval '30 days')::int
                 AS "callsLast30Days",
-              (SELECT count(*) FROM calls c WHERE c.tenant_id = t.id)::int AS "callsTotal"
+              (SELECT count(*) FROM calls c WHERE c.tenant_id = t.id)::int AS "callsTotal",
+              ${TENANT_BILLING_COLUMNS}
        FROM tenants t WHERE t.id = $1`,
       [tenantId],
     );

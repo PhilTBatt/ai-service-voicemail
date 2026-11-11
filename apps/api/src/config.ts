@@ -65,6 +65,14 @@ const envSchema = z
     GOCARDLESS_ACCESS_TOKEN: z.string().min(1).optional(),
     GOCARDLESS_ENVIRONMENT: z.enum(["sandbox", "live"]).default("sandbox"),
     GOCARDLESS_WEBHOOK_SECRET: z.string().min(16).optional(),
+    // VAT (decision 019): off until Brockersby is VAT registered. Both or neither: the
+    // registration number (shown on receipts) and the UK date VAT is charged from; a billing
+    // month that starts on or after it has 20% added.
+    VAT_REGISTRATION_NUMBER: z
+      .string()
+      .regex(/^GB\d{9}(\d{3})?$/, "expected a UK VAT number like GB123456789")
+      .optional(),
+    VAT_REGISTRATION_FROM: z.iso.date().optional(),
     // The password in the Basic-auth webhook URL registered at Postmark (username "postmark"):
     // https://postmark:<secret>@<public host>/webhooks/postmark. Postmark doesn't sign webhooks.
     POSTMARK_WEBHOOK_SECRET: z.string().min(16).optional(),
@@ -98,6 +106,18 @@ const envSchema = z
     JUDGE_SAMPLE_RATE: z.coerce.number().min(0).max(1).default(0),
   })
   .superRefine((env, ctx) => {
+    // The two go together: name whichever one is missing.
+    if ((env.VAT_REGISTRATION_NUMBER === undefined) !== (env.VAT_REGISTRATION_FROM === undefined)) {
+      ctx.addIssue({
+        code: "custom",
+        path: [
+          env.VAT_REGISTRATION_NUMBER === undefined
+            ? "VAT_REGISTRATION_NUMBER"
+            : "VAT_REGISTRATION_FROM",
+        ],
+        message: "VAT_REGISTRATION_NUMBER and VAT_REGISTRATION_FROM go together",
+      });
+    }
     if (env.NODE_ENV !== "production") return;
     for (const name of [
       "RETELL_API_KEY",
@@ -160,6 +180,10 @@ const envSchema = z
             environment: env.GOCARDLESS_ENVIRONMENT,
             webhookSecret: env.GOCARDLESS_WEBHOOK_SECRET,
           }
+        : undefined,
+    vat:
+      env.VAT_REGISTRATION_NUMBER !== undefined && env.VAT_REGISTRATION_FROM !== undefined
+        ? { number: env.VAT_REGISTRATION_NUMBER, from: env.VAT_REGISTRATION_FROM }
         : undefined,
     outbound: { nodeEnv: env.NODE_ENV, allowlist: parseAllowlist(env.OUTBOUND_ALLOWLIST) },
     sms:

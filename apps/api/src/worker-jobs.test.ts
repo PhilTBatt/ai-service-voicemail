@@ -53,7 +53,7 @@ describe("registerJobs", () => {
     expect(worked).toHaveLength(ALL_QUEUES.length); // one worker each, never two
   });
 
-  it("runs the three recurring jobs on UK time", async () => {
+  it("runs the four recurring jobs on UK time", async () => {
     const { boss, scheduled } = recorder();
     await registerJobs(configFrom(STAND_IN_ENV), { boss, pool, admin });
     expect(scheduled).toEqual(
@@ -61,9 +61,10 @@ describe("registerJobs", () => {
         { name: queue.RECONCILE_CALLS_QUEUE, tz: "Europe/London" },
         { name: queue.RECONCILE_VOICEMAILS_QUEUE, tz: "Europe/London" },
         { name: queue.RETENTION_QUEUE, tz: "Europe/London" },
+        { name: queue.CHARGE_PERIODS_QUEUE, tz: "Europe/London" },
       ]),
     );
-    expect(scheduled).toHaveLength(3);
+    expect(scheduled).toHaveLength(4);
   });
 
   it("leaves every other queue's jobs waiting when only Retell is set up", async () => {

@@ -1,4 +1,5 @@
 // How values read on screen. Pure functions, tested in format.test.ts.
+import type { TenantListItem } from "@callmate/shared";
 
 /** "heating_engineer" → "Heating engineer" */
 export function humanise(value: string): string {
@@ -11,6 +12,38 @@ export function formatPence(pence: number): string {
   const sign = pence < 0 ? "-" : "";
   const whole = Math.abs(pence);
   return `${sign}£${Math.floor(whole / 100)}.${String(whole % 100).padStart(2, "0")}`;
+}
+
+const DIRECT_DEBIT_LABELS: Record<TenantListItem["billing"]["directDebit"], string> = {
+  none: "no Direct Debit",
+  pending: "Direct Debit started",
+  active: "Direct Debit set up",
+  ended: "Direct Debit ended",
+};
+
+/** A month's charge in a few words (BillingChargeView.status). */
+export const CHARGE_STATUS_LABELS: Record<string, string> = {
+  nothing_due: "nothing due",
+  no_mandate: "owed, no Direct Debit",
+  collecting: "being collected",
+  pending: "being collected",
+  submitted: "being collected",
+  confirmed: "paid",
+  paid_out: "paid",
+  failed: "payment failed",
+  cancelled: "payment cancelled",
+  charged_back: "payment reversed",
+};
+
+/** "Pilot · Direct Debit set up · last month: paid": the plan and billing status, no amounts. */
+export function billingSummary(billing: TenantListItem["billing"]): string {
+  return [
+    billing.isPilot ? "Pilot" : "Plan",
+    DIRECT_DEBIT_LABELS[billing.directDebit],
+    ...(billing.lastCharge
+      ? [`last month: ${CHARGE_STATUS_LABELS[billing.lastCharge] ?? billing.lastCharge}`]
+      : []),
+  ].join(" · ");
 }
 
 /** A call's length: "0:42", "2:05". */

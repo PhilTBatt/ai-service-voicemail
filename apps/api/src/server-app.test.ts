@@ -40,6 +40,7 @@ async function routesOf(env: Record<string, string>, withAdmin: boolean) {
       twilio: await ask("POST", "/webhooks/twilio/voice"),
       voice: await ask("POST", "/webhooks/voice/retell"),
       postmark: await ask("POST", "/webhooks/postmark"),
+      gocardless: await ask("POST", "/webhooks/gocardless"),
       callPage: await ask("GET", "/c/not-a-real-token"),
       dashboard: await ask("GET", "/api/me"),
     };
@@ -57,6 +58,7 @@ describe("buildServerApp", () => {
       twilio: { status: 403, mounted: true }, // Twilio's signature, checked
       voice: { status: 401, mounted: true }, // Retell's signature, checked
       postmark: { status: 401, mounted: true }, // the webhook's password, checked
+      gocardless: { status: 498, mounted: true }, // GoCardless's signature, checked
       callPage: { status: 404, mounted: true }, // a token that isn't one
       dashboard: { status: 401, mounted: true }, // a login, required
     });
@@ -65,7 +67,7 @@ describe("buildServerApp", () => {
   it("leaves a route off until its settings are there", async () => {
     const routes = await routesOf({ DATABASE_URL: TEST_DATABASE_URL }, false);
     expect(routes.health).toEqual({ status: 200, mounted: true });
-    for (const route of ["twilio", "postmark", "callPage", "dashboard"] as const) {
+    for (const route of ["twilio", "postmark", "gocardless", "callPage", "dashboard"] as const) {
       expect(routes[route], route).toEqual({ status: 404, mounted: false });
     }
     // The voice webhook's router is always there; with no Retell it knows no provider.
