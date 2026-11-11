@@ -2,7 +2,7 @@
 // flow the way the Step 2 spike proved: a static opening, a prompt node that takes the
 // message, uninterruptible global nodes for the fixed scripts, and a static end node.
 // Nothing outside this file knows Retell's shapes.
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { e164OrNull } from "../core/phone.ts";
 import { raiseAlert } from "../alerts.ts";
 import { logger } from "../logger.ts";
@@ -79,6 +79,16 @@ export class RetellVoiceProvider implements VoiceProvider {
 
   constructor(options: RetellOptions) {
     this.options = options;
+  }
+
+  /** The flow and agent bodies upsertAgent sends, hashed: they hold the prompt, the scripts,
+   * the model, the voice and both webhook addresses, so a change to any of them shows. */
+  agentFingerprint(definition: AgentDefinition): string {
+    const sent = {
+      flow: buildConversationFlow(definition, this.options.functionUrl),
+      agent: buildAgent(definition, this.options.webhookUrl),
+    };
+    return createHash("sha256").update(JSON.stringify(sent)).digest("hex");
   }
 
   async upsertAgent({ definition, existingProviderAgentId }: UpsertAgentInput) {
@@ -175,7 +185,13 @@ export class RetellVoiceProvider implements VoiceProvider {
    * each listed call is fetched in full and mapped exactly as a webhook would be. Web calls
    * and calls still in progress are filtered out server-side.
    */
-  async listEndedCalls({ since }: { since: Date }): Promise<CallEndedEvent[]> {
+  async listEndedCalls({
+    since,
+    alreadyStored,
+  }: {
+    since: Date;
+    alreadyStored?: (providerCallIds: string[]) => Promise<Set<string>>;
+  }): Promise<CallEndedEvent[]> {
     const events: CallEndedEvent[] = [];
     let unreadable = 0;
     let paginationKey: string | undefined;
@@ -194,7 +210,13 @@ export class RetellVoiceProvider implements VoiceProvider {
         limit: 1000,
         ...(paginationKey !== undefined && { pagination_key: paginationKey }),
       });
+      // A day of calls is listed every 15 minutes, and nearly all of them were stored by their
+      // webhook: those aren't fetched again (one request each, before 2026-11-11).
+      const stored = alreadyStored
+        ? await alreadyStored(page.items.map((item) => item.call_id))
+        : new Set<string>();
       for (const item of page.items) {
+        if (stored.has(item.call_id)) continue;
         // One call that can't be fetched or read is skipped (and counted), not the whole run:
         // the next run, every 15 minutes over the last day, tries it again.
         let body: unknown;

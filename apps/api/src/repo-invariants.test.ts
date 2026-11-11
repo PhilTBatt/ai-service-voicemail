@@ -395,6 +395,96 @@ describe("GitHub workflows", () => {
   });
 });
 
+/**
+ * A release runs the migrations first, and the build already running keeps answering calls until
+ * the new one is ready (RUNBOOK section 16, "When a release fails"): it runs against the new
+ * schema for a few minutes, or for as long as the new build fails its check. So a migration only
+ * adds. Taking something away (a column, a table, a function the old code calls, a column's type
+ * or its nullability) goes in two releases: the first stops the code using it, a later one
+ * removes it, with a `-- release-safe: <why>` line in that statement saying the code before it
+ * no longer uses it. Checked statement by statement, with function bodies left out.
+ */
+const RELEASE_HAZARDS: [RegExp, string][] = [
+  [/\bDROP (TABLE|FUNCTION|VIEW|TYPE|SCHEMA|MATERIALIZED VIEW)\b/i, "drops something"],
+  [
+    /\bALTER TABLE\b.*\bDROP (?!CONSTRAINT\b|DEFAULT\b|NOT NULL\b|EXPRESSION\b|IDENTITY\b)/i,
+    "drops a column",
+  ],
+  [/\bRENAME\b/i, "renames something"],
+  [/\bALTER COLUMN \S+ (SET DATA )?TYPE\b/i, "changes a column's type"],
+  [/\bSET NOT NULL\b/i, "makes a column required"],
+];
+
+function releaseHazards(sql: string): string[] {
+  const up = /-- migrate:up([\s\S]*?)(?:-- migrate:down|$)/.exec(sql)?.[1] ?? "";
+  // Function bodies ($$ ... $$, $tag$ ... $tag$) aren't schema changes, and hold semicolons.
+  const statements = up.replace(/\$(\w*)\$[\s\S]*?\$\1\$/g, "$$$$").split(";");
+  const hazards: string[] = [];
+  for (const statement of statements) {
+    if (/^\s*-- release-safe: \S/m.test(statement)) continue;
+    const code = statement.replace(/--.*$/gm, "").replace(/\s+/g, " ").trim();
+    for (const [pattern, what] of RELEASE_HAZARDS) {
+      if (pattern.test(code)) hazards.push(`${what}: ${code.slice(0, 100)}`);
+    }
+    // A new required column with no default: the running build's inserts don't fill it.
+    if (/^ALTER TABLE\b/i.test(code)) {
+      for (const clause of code.split(/,\s*(?=ADD\b)/i)) {
+        if (/\bADD (COLUMN )?(?!CONSTRAINT\b)/i.test(clause) && /\bNOT NULL\b/i.test(clause)) {
+          if (!/\bDEFAULT\b/i.test(clause)) {
+            hazards.push(`adds a required column with no default: ${clause.slice(0, 100)}`);
+          }
+        }
+      }
+    }
+  }
+  return hazards;
+}
+
+describe("migrations: the build still running during a release keeps working", () => {
+  const dir = path.join(ROOT, "apps/api/src/db/migrations");
+  // Production's first release was 2026-11-10: every migration before then ran on an empty
+  // database, with nothing running against it (two of them would fail these rules).
+  const sinceProduction = readdirSync(dir).filter(
+    (file) => file.endsWith(".sql") && file >= "20261110",
+  );
+
+  it("found the migrations since production began", () => {
+    expect(sinceProduction).toContain("20261111223000_add_agent_sync_fingerprint.sql");
+  });
+
+  it.each(sinceProduction)("%s only adds", (file) => {
+    expect(releaseHazards(readFileSync(path.join(dir, file), "utf8"))).toEqual([]);
+  });
+
+  it("catches each kind of change that would break the running build, and not the safe ones", () => {
+    const up = (body: string) => `-- migrate:up\n${body}\n-- migrate:down\nDROP TABLE t;\n`;
+    for (const unsafe of [
+      "ALTER TABLE calls DROP COLUMN summary;",
+      "ALTER TABLE calls DROP summary;",
+      "DROP TABLE call_costs;",
+      "DROP FUNCTION tenant_id_for_provider_ref(text);",
+      "ALTER TABLE calls RENAME COLUMN summary TO job_summary;",
+      "ALTER TABLE calls ALTER COLUMN duration_seconds TYPE bigint;",
+      "ALTER TABLE calls ALTER COLUMN summary SET NOT NULL;",
+      "ALTER TABLE calls ADD COLUMN source text NOT NULL;",
+      "ALTER TABLE calls ADD COLUMN a integer NOT NULL DEFAULT 0, ADD COLUMN b text NOT NULL;",
+    ]) {
+      expect(releaseHazards(up(unsafe)), unsafe).toHaveLength(1);
+    }
+    for (const safe of [
+      "ALTER TABLE calls ADD COLUMN a integer NOT NULL DEFAULT 0 CHECK (a >= 0), ADD COLUMN b timestamptz;",
+      "CREATE TABLE t (id uuid NOT NULL, name text NOT NULL);",
+      "ALTER TABLE calls ALTER COLUMN summary DROP NOT NULL;",
+      "ALTER TABLE calls DROP CONSTRAINT calls_summary_check;",
+      "DROP INDEX calls_open_idx;",
+      "CREATE OR REPLACE FUNCTION f() RETURNS void LANGUAGE plpgsql AS $$ BEGIN DROP TABLE x; END $$;",
+      "-- release-safe: nothing reads summary since 2026-12-01\nALTER TABLE calls DROP COLUMN summary;",
+    ]) {
+      expect(releaseHazards(up(safe)), safe).toEqual([]);
+    }
+  });
+});
+
 describe("npm scripts (CLAUDE.md: they run in PowerShell and on Linux CI)", () => {
   const manifests = [
     "package.json",

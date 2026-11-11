@@ -1183,6 +1183,28 @@ export async function clearExpiredTranscripts(
   return cleared;
 }
 
+/**
+ * The latest agent profile version of each business that has an agent at the voice platform
+ * (some version of its profile has synced): what the worker re-checks at start-up
+ * (jobs/sync-agent.ts). The latest version may itself have failed to sync (a platform outage when
+ * it was saved), and is tried again. Not a business that's never had an agent (one still
+ * onboarding without a contact name would only fail again), nor one that's leaving or has left
+ * (its calls hear "service has ended", never the agent).
+ */
+export async function listLatestProfilesWithLiveAgents(
+  admin: AdminPool,
+): Promise<{ tenantId: string; version: number }[]> {
+  const { rows } = await admin.query<{ tenant_id: string; version: number }>(
+    `SELECT DISTINCT ON (p.tenant_id) p.tenant_id, p.version
+     FROM agent_profiles p JOIN tenants t ON t.id = p.tenant_id
+     WHERE t.status NOT IN ('cancelling', 'cancelled')
+       AND EXISTS (SELECT 1 FROM agent_profiles s
+                   WHERE s.tenant_id = p.tenant_id AND s.synced_at IS NOT NULL)
+     ORDER BY p.tenant_id, p.version DESC`,
+  );
+  return rows.map((row) => ({ tenantId: row.tenant_id, version: row.version }));
+}
+
 /** Of these provider call IDs, the ones whose call row exists and has ended (across tenants). */
 export async function findCompletedProviderCallIds(
   admin: AdminPool,

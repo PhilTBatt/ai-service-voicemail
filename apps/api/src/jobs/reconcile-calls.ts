@@ -38,14 +38,24 @@ export async function reconcileCalls({
   lookbackHours = 24,
 }: ReconcileCallsDeps): Promise<ReconcileCallsCounts> {
   const since = new Date(now().getTime() - lookbackHours * 3600_000);
-  const events = await voice.listEndedCalls({ since });
+  // The platform leaves out the calls already stored before fetching each one's details.
+  let storedBeforeFetch = 0;
+  const events = await voice.listEndedCalls({
+    since,
+    alreadyStored: async (providerCallIds) => {
+      const stored = await findCompletedProviderCallIds(admin, providerCallIds);
+      storedBeforeFetch += stored.size;
+      return stored;
+    },
+  });
+  // Checked again: one stored since its page was listed is still a duplicate here.
   const complete = await findCompletedProviderCallIds(
     admin,
     events.map((e) => e.providerCallId),
   );
   const counts: ReconcileCallsCounts = {
-    listed: events.length,
-    alreadyStored: 0,
+    listed: events.length + storedBeforeFetch,
+    alreadyStored: storedBeforeFetch,
     stored: 0,
     duplicate: 0,
     unknownNumber: 0,

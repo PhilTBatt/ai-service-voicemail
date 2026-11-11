@@ -35,7 +35,9 @@ const CLOCK_CHANGES = [
 ];
 
 describe("formatUkDateTime and formatUkTime against Temporal", () => {
-  it("agree for every hour of 2026 to 2028", () => {
+  // 26,304 hours, each formatted three ways and checked against Temporal: about 2.5 s alone, but
+  // over the default 5 s under the full suite's load (2026-11-11). Nothing it checks is cut.
+  it("agree for every hour of 2026 to 2028", { timeout: 30_000 }, () => {
     const start = Date.UTC(2026, 0, 1);
     const end = Date.UTC(2029, 0, 1);
     for (let ms = start; ms < end; ms += HOUR) {

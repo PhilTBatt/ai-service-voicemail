@@ -87,6 +87,14 @@ export interface VoiceProvider {
   /** Creates or updates the platform agent for a definition. Must be safe to repeat. */
   upsertAgent(input: UpsertAgentInput): Promise<{ providerAgentId: string }>;
   /**
+   * A short fingerprint of exactly what upsertAgent would send the platform for this definition,
+   * this adapter's own settings included (its webhook addresses, model, voices): the same
+   * definition and settings always give the same fingerprint, and any change to what would be
+   * sent gives a different one. The sync job keeps it, so a release that changes the prompt or
+   * the adapter re-syncs every agent (jobs/sync-agent.ts).
+   */
+  agentFingerprint(definition: AgentDefinition): string;
+  /**
    * Registers a call that's about to be dialled to the platform and returns the SIP URI to
    * dial. The dial must follow within minutes.
    */
@@ -109,7 +117,11 @@ export interface VoiceProvider {
   fetchRecording(providerCallId: string): Promise<RecordingAudio | null>;
   /**
    * Phone calls that ended since a point in time, as the webhook would have reported them.
-   * For finding calls whose webhook never arrived.
+   * For finding calls whose webhook never arrived. Given `alreadyStored`, it's asked which of
+   * the listed calls are stored already, and those are left out without being fetched.
    */
-  listEndedCalls(window: { since: Date }): Promise<CallEndedEvent[]>;
+  listEndedCalls(window: {
+    since: Date;
+    alreadyStored?: (providerCallIds: string[]) => Promise<Set<string>>;
+  }): Promise<CallEndedEvent[]>;
 }

@@ -15,6 +15,7 @@ import {
 } from "./db/scheduled-runs.ts";
 import { recordHeartbeat, startHeartbeat } from "./db/worker-heartbeat.ts";
 import { createQueue, startQueueWhenReachable } from "./jobs/queue.ts";
+import { RESYNC_CHECK_DELAY_MS, enqueueAgentResyncs } from "./jobs/sync-agent.ts";
 import { logger } from "./logger.ts";
 import { registerJobs } from "./worker-jobs.ts";
 
@@ -62,9 +63,22 @@ try {
     // The recurring jobs on record, and a look every few minutes for one that's stopped.
     await registerScheduledRuns(pool, queues);
     const scheduleWatch = startScheduleWatch(createScheduleCheck({ pool, runsHere: queues }));
+    // Every agent brought up to this build's prompt, once the old worker has gone (see
+    // RESYNC_CHECK_DELAY_MS). A failure is logged, not fatal: agents keep their last prompt.
+    const resyncCheck = setTimeout(() => {
+      if (!admin) {
+        logger.warn("ADMIN_DATABASE_URL isn't set: agents aren't re-checked against this build");
+        return;
+      }
+      enqueueAgentResyncs(admin, boss).then(
+        (counts) => logger.info("Agents queued for a re-check against this build", counts),
+        (error: unknown) => logger.error("Couldn't queue the agents' re-check", { error }),
+      );
+    }, RESYNC_CHECK_DELAY_MS);
     stopTimers = () => {
       heartbeat.stop();
       scheduleWatch.stop();
+      clearTimeout(resyncCheck);
     };
     logger.info("Worker listening", {
       queues,

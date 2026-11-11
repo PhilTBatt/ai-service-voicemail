@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import type { AgentDefinition } from "../core/agent.ts";
 import {
@@ -60,6 +60,10 @@ export class FakeVoiceProvider implements VoiceProvider {
   /** Recording audio by provider call ID; tests fill this in. */
   readonly recordingAudio = new Map<string, Uint8Array<ArrayBuffer>>();
   private nextId = 1;
+
+  agentFingerprint(definition: AgentDefinition): string {
+    return createHash("sha256").update(JSON.stringify(definition)).digest("hex");
+  }
 
   upsertAgent({ definition, existingProviderAgentId }: UpsertAgentInput) {
     const providerAgentId =
@@ -136,8 +140,18 @@ export class FakeVoiceProvider implements VoiceProvider {
     return Promise.resolve();
   }
 
-  listEndedCalls({ since }: { since: Date }): Promise<CallEndedEvent[]> {
-    return Promise.resolve(this.endedCalls.filter((call) => call.endedAt >= since));
+  async listEndedCalls({
+    since,
+    alreadyStored,
+  }: {
+    since: Date;
+    alreadyStored?: (providerCallIds: string[]) => Promise<Set<string>>;
+  }): Promise<CallEndedEvent[]> {
+    const ended = this.endedCalls.filter((call) => call.endedAt >= since);
+    const stored = alreadyStored
+      ? await alreadyStored(ended.map((call) => call.providerCallId))
+      : new Set<string>();
+    return ended.filter((call) => !stored.has(call.providerCallId));
   }
 
   /** What fetchRecording says it's sending: a test can make it claim something that isn't audio. */

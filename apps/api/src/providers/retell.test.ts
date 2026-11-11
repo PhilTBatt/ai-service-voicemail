@@ -265,6 +265,35 @@ describe("RetellVoiceProvider webhooks", () => {
   );
 });
 
+describe("RetellVoiceProvider.agentFingerprint", () => {
+  // What the sync job compares to decide whether a release changed an agent (jobs/sync-agent.ts).
+  const at = (webhookUrl: string) =>
+    new RetellVoiceProvider({
+      apiKey: TEST_API_KEY,
+      webhookUrl: `${webhookUrl}/webhooks/retell`,
+      functionUrl: `${webhookUrl}/webhooks/retell/function`,
+    });
+
+  it("is the same for the same definition and settings, and changes with what would be sent", () => {
+    const definition = sampleAgentDefinition();
+    const provider = at("https://callmate.example.com");
+    expect(provider.agentFingerprint(definition)).toBe(
+      at("https://callmate.example.com").agentFingerprint(sampleAgentDefinition()),
+    );
+    // A prompt change in a release.
+    expect(
+      provider.agentFingerprint({
+        ...definition,
+        instructions: `${definition.instructions} More.`,
+      }),
+    ).not.toBe(provider.agentFingerprint(definition));
+    // The API's address after the domain move: Retell's webhooks have to follow it.
+    expect(at("https://app.callmate.example.com").agentFingerprint(definition)).not.toBe(
+      provider.agentFingerprint(definition),
+    );
+  });
+});
+
 describe("RetellVoiceProvider agents", () => {
   it("builds the flow the spike proved: static opening, scripts as uninterruptible global nodes, static close", () => {
     const definition = sampleAgentDefinition();
@@ -555,6 +584,37 @@ describe("RetellVoiceProvider listEndedCalls", () => {
       limit: 1000,
     });
     expect(stub.requests.filter((r) => r.path.startsWith("/v2/get-call/"))).toHaveLength(4);
+  });
+
+  // Every 15 minutes over the last day, nearly every call listed was stored by its webhook.
+  it("doesn't fetch the calls already stored, asking once per page which they are", async () => {
+    const { provider, stub } = makeStubHarness();
+    stub.listCallsPageSize = 2;
+    const events = [1, 2, 3].map((n) => ({
+      ...retellShapedEvent(),
+      providerCallId: `call_known_${n}`,
+    }));
+    for (const event of events) {
+      const { call } = retellPayload(event);
+      stub.listedCalls.push({
+        call_id: event.providerCallId,
+        start_timestamp: call.start_timestamp,
+      });
+      stub.callRecords.set(event.providerCallId, call);
+    }
+    const asked: string[][] = [];
+    const listed = await provider.listEndedCalls({
+      since: new Date("2026-11-06T00:00:00Z"),
+      alreadyStored: (ids) => {
+        asked.push(ids);
+        return Promise.resolve(new Set(ids.filter((id) => id !== "call_known_2")));
+      },
+    });
+    expect(listed.map((e) => e.providerCallId)).toEqual(["call_known_2"]);
+    expect(asked).toHaveLength(2); // one question a page
+    expect(
+      stub.requests.filter((r) => r.path.startsWith("/v2/get-call/")).map((r) => r.path),
+    ).toEqual(["/v2/get-call/call_known_2"]);
   });
 });
 
