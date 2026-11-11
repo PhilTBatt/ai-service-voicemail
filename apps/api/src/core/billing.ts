@@ -95,6 +95,11 @@ export interface ChargeInput {
   billableSeconds: number;
   /** Null while the business isn't VAT registered. */
   vat: VatRegistration | null;
+  /**
+   * Suspended from the first moment of the period to its end: no service, so nothing is
+   * charged (Phil, 2026-11-11). A month with any day of service is charged in full.
+   */
+  suspendedThroughout?: boolean;
 }
 
 export interface Charge {
@@ -113,9 +118,28 @@ export interface Charge {
 }
 
 /** What a business owes for a period. Integer pence throughout; VAT rounded once, on the subtotal. */
-export function chargeFor({ plan, period, isPilot, billableSeconds, vat }: ChargeInput): Charge {
+export function chargeFor({
+  plan,
+  period,
+  isPilot,
+  billableSeconds,
+  vat,
+  suspendedThroughout = false,
+}: ChargeInput): Charge {
   if (!Number.isInteger(billableSeconds) || billableSeconds < 0) {
     throw new Error("billableSeconds must be a whole, non-negative number");
+  }
+  if (suspendedThroughout) {
+    return {
+      feePence: 0,
+      overageMinutes: 0,
+      overagePence: 0,
+      subtotalPence: 0,
+      vatRatePercent: 0,
+      vatPence: 0,
+      totalPence: 0,
+      lines: [{ description: "Suspended for the whole month: no charge", pence: 0 }],
+    };
   }
   const feePence = monthlyFeePence(plan, period.index, isPilot);
   const overageMinutes = Math.max(0, Math.ceil(billableSeconds / 60) - plan.includedMinutes);

@@ -4,8 +4,10 @@
 import type { AvailableNumbersView, ProvisionedNumberView, TenantView } from "@callmate/shared";
 import { useState } from "react";
 import { asError, useApi } from "./api.ts";
+import { Alert, Button, Card, ErrorNote, TextField } from "./design/components.tsx";
+import { useConfirm } from "./design/dialog.tsx";
+import { Phone } from "./design/icons.ts";
 import { formatPence, formatPhone } from "./format.ts";
-import { ErrorNote } from "./ui.tsx";
 
 export function NumberSection({
   tenant,
@@ -18,27 +20,26 @@ export function NumberSection({
 }) {
   if (tenant.number) {
     return (
-      <section className="card">
-        <h2>Your AnswerMate number</h2>
+      <Card icon={Phone} title="Your AnswerMate number">
         <p className="big-number">{formatPhone(tenant.number)}</p>
-        <p className="hint">Calls you divert from your own phone come to this number.</p>
-      </section>
+        <p className="muted text-sm">Calls you divert from your own phone come to this number.</p>
+      </Card>
     );
   }
   return (
-    <section className="card">
-      <h2>Your AnswerMate number</h2>
-      <p>No number yet.</p>
+    <Card icon={Phone} title="Your AnswerMate number">
+      <p className="muted">No number yet.</p>
       {/* Not for a business that has left: the API refuses, as it would never be released. */}
       {isAdmin && ["onboarding", "live", "paused", "demo"].includes(tenant.status) && (
         <BuyNumber tenantId={tenant.id} onBought={onBought} />
       )}
-    </section>
+    </Card>
   );
 }
 
 function BuyNumber({ tenantId, onBought }: { tenantId: string; onBought: () => void }) {
   const { api } = useApi();
+  const confirm = useConfirm();
   const [digits, setDigits] = useState("");
   const [offers, setOffers] = useState<AvailableNumbersView | null>(null);
   const [busy, setBusy] = useState(false);
@@ -62,8 +63,13 @@ function BuyNumber({ tenantId, onBought }: { tenantId: string; onBought: () => v
       offers?.monthlyPence != null
         ? `${formatPence(offers.monthlyPence)} a month`
         : "a monthly fee";
-    const question = `Buy ${formatPhone(number)} for ${price}? This is a real purchase from Twilio, charged to the account straight away, and calls to it will reach this business's assistant.`;
-    if (!window.confirm(question)) return;
+    const yes = await confirm({
+      title: `Buy ${formatPhone(number)}?`,
+      body: `It costs ${price}. This is a real purchase from Twilio, charged to the account straight away, and calls to it will reach this business's assistant.`,
+      confirmLabel: "Buy this number",
+      tone: "danger",
+    });
+    if (!yes) return;
     setBusy(true);
     setError(null);
     try {
@@ -79,49 +85,50 @@ function BuyNumber({ tenantId, onBought }: { tenantId: string; onBought: () => v
   };
 
   return (
-    <div className="buy-number">
+    <div className="stack">
       <form
-        className="filters"
+        className="toolbar"
         onSubmit={(event) => {
           event.preventDefault();
           void search();
         }}
       >
-        <label>
-          Number contains (an area code like 0113, or leave empty)
-          <input
-            inputMode="numeric"
-            value={digits}
-            onChange={(event) => setDigits(event.target.value)}
-          />
-        </label>
-        <button type="submit" className="secondary" disabled={busy}>
+        <TextField
+          label="Number contains"
+          hint="An area code like 0113, or leave empty."
+          inputMode="numeric"
+          value={digits}
+          onChange={(event) => setDigits(event.target.value)}
+        />
+        <Button type="submit" variant="secondary" loading={busy}>
           Find numbers
-        </button>
+        </Button>
       </form>
       {offers && !offers.purchasesEnabled && (
-        <p className="card notice">
-          Buying is switched off on this server (TWILIO_PURCHASES_ENABLED), so you can look but not
-          buy.
-        </p>
+        <Alert tone="info">
+          <p>
+            Buying is switched off on this server (TWILIO_PURCHASES_ENABLED), so you can look but
+            not buy.
+          </p>
+        </Alert>
       )}
       {offers && offers.numbers.length === 0 && <p className="muted">No numbers match.</p>}
       {offers && offers.numbers.length > 0 && (
-        <ul className="list">
+        <ul className="list list-divided card">
           {offers.numbers.map((offer) => (
-            <li key={offer.number} className="row offer">
+            <li key={offer.number} className="list-item">
               <span>
-                <strong>{formatPhone(offer.number)}</strong>{" "}
-                <span className="muted">{offer.locality ?? offer.region ?? ""}</span>
+                <strong className="num">{formatPhone(offer.number)}</strong>{" "}
+                <span className="muted text-sm">{offer.locality ?? offer.region ?? ""}</span>
               </span>
-              <button
-                type="button"
+              <Button
+                size="sm"
                 disabled={busy || !offers.purchasesEnabled}
                 onClick={() => void buy(offer.number)}
               >
                 Buy
                 {offers.monthlyPence != null && ` (${formatPence(offers.monthlyPence)}/month)`}
-              </button>
+              </Button>
             </li>
           ))}
         </ul>

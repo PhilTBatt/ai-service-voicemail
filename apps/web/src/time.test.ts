@@ -1,12 +1,45 @@
 import { describe, expect, it } from "vitest";
 import {
   addDays,
+  dayLabel,
   formatDate,
   formatUkDateTime,
+  formatUkTime,
   startOfUkDay,
   ukDate,
   UK_TIME_ZONE,
 } from "./time.ts";
+
+describe("formatUkTime", () => {
+  it("shows the UK clock, an hour on in summer", () => {
+    expect(formatUkTime("2026-11-07T09:05:00Z")).toBe("09:05");
+    expect(formatUkTime("2026-07-01T23:30:00Z")).toBe("00:30");
+  });
+});
+
+describe("dayLabel", () => {
+  // 10:00 on Wednesday 11 November 2026, UK time (GMT).
+  const now = new Date("2026-11-11T10:00:00Z");
+
+  it("says today and yesterday by the UK calendar, not UTC's", () => {
+    expect(dayLabel("2026-11-11T00:10:00Z", now)).toBe("Today");
+    expect(dayLabel("2026-11-10T23:59:00Z", now)).toBe("Yesterday");
+    // 23:30 UTC on 30 June is 00:30 on 1 July in the UK (BST).
+    const summer = new Date("2026-07-01T12:00:00Z");
+    expect(dayLabel("2026-06-30T23:30:00Z", summer)).toBe("Today");
+  });
+
+  it("names older days, with the year only when it isn't this one", () => {
+    expect(dayLabel("2026-11-09T12:00:00Z", now)).toBe("Mon 9 Nov");
+    expect(dayLabel("2025-12-31T12:00:00Z", now)).toBe("Wed 31 Dec 2025");
+  });
+
+  it("counts yesterday across the clocks going back", () => {
+    // Sunday 25 October 2026 has 25 hours; 00:30 BST that day is 23:30 UTC on the 24th.
+    const monday = new Date("2026-10-26T09:00:00Z");
+    expect(dayLabel("2026-10-24T23:30:00Z", monday)).toBe("Yesterday");
+  });
+});
 
 describe("formatUkDateTime", () => {
   it("shows winter times as they are and summer times an hour on", () => {

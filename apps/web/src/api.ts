@@ -2,7 +2,7 @@
 // bearer token; the API checks it and decides what they may see. In development Vite passes
 // /api through to the API on localhost (vite.config.ts), so the browser sees one site.
 import { useAuth } from "@clerk/react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export class ApiError extends Error {
   readonly status: number;
@@ -63,7 +63,8 @@ export type Loaded<T> =
 
 /**
  * Runs `load` when the page opens and again whenever `key` changes, ignoring answers that
- * arrive after the page has moved on. `reload()` runs it again on demand.
+ * arrive after the page has moved on. `reload()` runs it again on demand, keeping what's on
+ * screen until the new answer comes, so the page doesn't blank and lose its place.
  */
 export function useLoad<T>(
   load: () => Promise<T>,
@@ -71,10 +72,13 @@ export function useLoad<T>(
 ): Loaded<T> & { reload: () => void } {
   const [state, setState] = useState<Loaded<T>>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
+  const loadedKey = useRef(key);
 
   useEffect(() => {
     let current = true;
-    setState({ status: "loading" });
+    const sameThing = loadedKey.current === key;
+    loadedKey.current = key;
+    setState((shown) => (sameThing && shown.status === "ready" ? shown : { status: "loading" }));
     void load().then(
       (data) => {
         if (current) setState({ status: "ready", data });
@@ -89,7 +93,8 @@ export function useLoad<T>(
     // `load` is a new function on every render; `key` says when it means something new.
   }, [key, attempt]);
 
-  return { ...state, reload: () => setAttempt((n) => n + 1) };
+  const reload = useCallback(() => setAttempt((n) => n + 1), []);
+  return { ...state, reload };
 }
 
 export function asError(error: unknown): Error {

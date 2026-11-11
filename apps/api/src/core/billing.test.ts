@@ -91,6 +91,21 @@ describe("the plan's fee and the pilot's shape (Appendix D)", () => {
 describe("chargeFor", () => {
   const period = { periodStart: "2026-07-14", periodEnd: "2026-08-14", index: 1 };
 
+  it("charges nothing, overage and VAT included, for a month suspended throughout", () => {
+    const charge = chargeFor({
+      plan,
+      period,
+      isPilot: false,
+      billableSeconds: 300 * 60,
+      vat: { number: "GB000000000", from: "2026-01-01" },
+      suspendedThroughout: true,
+    });
+    expect(charge).toMatchObject({ feePence: 0, overagePence: 0, vatPence: 0, totalPence: 0 });
+    expect(charge.lines).toEqual([
+      { description: "Suspended for the whole month: no charge", pence: 0 },
+    ]);
+  });
+
   it("charges the fee alone inside the included minutes, with no VAT until registered", () => {
     const charge = chargeFor({
       plan,

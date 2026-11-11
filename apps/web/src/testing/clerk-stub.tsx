@@ -24,6 +24,7 @@ export function ClerkProvider({
   children: ReactNode;
   publishableKey?: string;
   afterSignOutUrl?: string;
+  appearance?: unknown;
 }) {
   return <>{children}</>;
 }
@@ -43,7 +44,7 @@ export function SignIn(_props: { forceRedirectUrl?: string; signUpForceRedirectU
   const [email, setEmail] = useState("");
   return (
     <form
-      className="card"
+      className="card card-body stack"
       onSubmit={(event) => {
         event.preventDefault();
         const person = { subject: `e2e_${email}`, email };
@@ -51,11 +52,18 @@ export function SignIn(_props: { forceRedirectUrl?: string; signUpForceRedirectU
         window.location.reload();
       }}
     >
-      <label className="stacked">
-        Email
-        <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} />
+      <label className="field">
+        <span className="field-label">Email</span>
+        <input
+          className="input"
+          type="email"
+          value={email}
+          onChange={(event) => setEmail(event.target.value)}
+        />
       </label>
-      <button type="submit">Sign in</button>
+      <button type="submit" className="btn btn-primary">
+        Sign in
+      </button>
     </form>
   );
 }
@@ -64,7 +72,7 @@ export function UserButton() {
   return (
     <button
       type="button"
-      className="secondary"
+      className="btn btn-secondary btn-sm"
       onClick={() => {
         window.localStorage.removeItem(KEY);
         window.location.assign("/");

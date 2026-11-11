@@ -61,7 +61,8 @@ export type SuspensionResult =
  * Suspends a business (callers get the fallback voicemail, as routing already does for a
  * suspended one) or resumes it (back to answering). Only an answering or paused business can
  * be suspended, and only a suspended one resumed; the on/off switch and the OFF/ON texts can't
- * undo a suspension, because they only move between live and paused.
+ * undo a suspension, because they only move between live and paused. Each suspension is
+ * recorded with when it started and ended, for billing.
  */
 export async function setSuspended(
   pool: pg.Pool,
@@ -84,6 +85,19 @@ export async function setSuspended(
       : row.status === "suspended";
     if (!allowed) return { outcome: "not-allowed", status: row.status };
     await client.query("UPDATE tenants SET status = $2 WHERE id = $1", [tenantId, wanted]);
+    // The suspension's own record, which billing reads: a month suspended from its first day
+    // to its last isn't charged (tenant_suspensions; charge-periods.ts).
+    if (suspend) {
+      await client.query(
+        "INSERT INTO tenant_suspensions (tenant_id) VALUES ($1) ON CONFLICT (tenant_id) WHERE ended_at IS NULL DO NOTHING",
+        [tenantId],
+      );
+    } else {
+      await client.query(
+        "UPDATE tenant_suspensions SET ended_at = now() WHERE tenant_id = $1 AND ended_at IS NULL",
+        [tenantId],
+      );
+    }
     await client.query(
       "INSERT INTO audit_log (tenant_id, actor_user_id, action, details) VALUES ($1, $2, $3, $4)",
       [

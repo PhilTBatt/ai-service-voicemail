@@ -62,6 +62,27 @@ export function formatUkDateTime(iso: string): string {
   return `${weekday} ${p.day} ${MONTHS[p.month - 1]!} ${p.year}, ${pad(p.hour)}:${pad(p.minute)}`;
 }
 
+/** "09:05" in UK time. */
+export function formatUkTime(iso: string): string {
+  const p = ukParts(new Date(iso));
+  return `${pad(p.hour)}:${pad(p.minute)}`;
+}
+
+/**
+ * The heading a call list puts over a UK day: "Today", "Yesterday", "Mon 9 Nov", and the year
+ * too when it isn't this one ("Wed 31 Dec 2025"). `now` is for the tests.
+ */
+export function dayLabel(iso: string, now: Date = new Date()): string {
+  const day = ukDate(new Date(iso));
+  const today = ukDate(now);
+  if (day === today) return "Today";
+  if (day === addDays(today, -1)) return "Yesterday";
+  const [year, month, date] = parseDate(day);
+  const weekday = WEEKDAYS[new Date(Date.UTC(year, month - 1, date)).getUTCDay()]!;
+  const label = `${weekday} ${date} ${MONTHS[month - 1]!}`;
+  return year === parseDate(today)[0] ? label : `${label} ${year}`;
+}
+
 /** The UK calendar date at an instant, as YYYY-MM-DD (what a date input holds). */
 export function ukDate(at: Date): string {
   const p = ukParts(at);

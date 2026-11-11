@@ -25,7 +25,7 @@ export function SignupPage() {
   const link = useLoad(() => api<SignupLinkView>(`/signup/${encodeURIComponent(code)}`), code);
 
   return (
-    <main className="page">
+    <main className="content legacy">
       <h1 className="brand">AnswerMate</h1>
       {link.status === "loading" && <p className="muted">Checking your link…</p>}
       {link.status === "error" && (

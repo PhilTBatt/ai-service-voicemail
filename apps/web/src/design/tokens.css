@@ -1,0 +1,223 @@
+/*
+ * Design tokens: every colour, size, space, radius, shadow and timing the dashboard uses, by
+ * name. Components and pages use these names, never raw values, so a rebrand, a new theme or a
+ * spacing change is an edit here, not a hunt through every file (docs/UI.md, "Tokens").
+ *
+ * Colours are named for their job (surface, text, border, a tone's soft background), not their
+ * hue, so dark mode is the same names with other values. The dark values apply when the person
+ * chose dark, or chose nothing and their device is set to dark (theme.ts sets data-theme).
+ */
+
+:root {
+  color-scheme: light;
+
+  /* Surfaces: the page behind everything, the cards on it, and a slightly sunken well. */
+  --color-bg: #f5f7fb;
+  --color-surface: #ffffff;
+  --color-surface-2: #f8f9fc;
+  --color-surface-sunken: #eef1f6;
+  --color-border: #e2e6ee;
+  --color-border-strong: #cdd3df;
+  --color-scrim: rgb(9 13 24 / 0.5);
+
+  /* Text: body, secondary, and a faint one for icons and placeholders only (too light for words). */
+  --color-text: #131a2a;
+  --color-text-muted: #556078;
+  --color-text-subtle: #8a93a8;
+
+  /* The brand. "solid" fills buttons (white text on it passes WCAG AA), "soft" tints a
+     selected item, "link" is for links and focus. */
+  --color-brand-solid: #2952cc;
+  --color-brand-solid-hover: #2045b3;
+  --color-brand-soft: #ebf0ff;
+  --color-brand-soft-text: #1d3f9f;
+  --color-brand-border: #b9c9fb;
+  --color-on-brand: #ffffff;
+  --color-link: #2952cc;
+  --color-focus: #2952cc;
+  --color-focus-ring: rgb(41 82 204 / 0.22);
+
+  /* Tones: what a badge, an alert or a stat means. Each has a soft background, its text, a
+     border, and a solid fill. Danger is emergencies and anything final; warning is urgent or
+     needing a look; success is done or healthy; info is neutral news. */
+  --color-danger-soft: #fef1ef;
+  --color-danger-text: #b42318;
+  --color-danger-border: #f6c7c0;
+  --color-danger-solid: #c8321f;
+  --color-danger-solid-hover: #a82a1a;
+  --color-warning-soft: #fff6e6;
+  --color-warning-text: #93370d;
+  --color-warning-border: #f9d79e;
+  --color-warning-solid: #c4580a;
+  --color-success-soft: #ebfaf2;
+  --color-success-text: #05603a;
+  --color-success-border: #a6e4c3;
+  --color-success-solid: #067647;
+  --color-info-soft: #eef4ff;
+  --color-info-text: #1e4ea0;
+  --color-info-border: #c6d7fd;
+  --color-info-solid: #2e64d4;
+  --color-neutral-soft: #f1f3f7;
+  --color-neutral-text: #475467;
+  --color-neutral-border: #e1e5ec;
+  --color-neutral-solid: #667085;
+
+  /* Type. The device's own interface font: Segoe UI on Windows, SF Pro on iPhone and Mac,
+     Roboto on Android. Nothing to download, and it looks native everywhere. */
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", "Segoe UI Mono", Consolas, monospace;
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem; /* never smaller in an input: iPhones zoom in on anything under 16px */
+  --text-lg: 1.125rem;
+  --text-xl: 1.25rem;
+  --text-2xl: 1.5rem;
+  --text-3xl: 1.875rem;
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+  --leading-tight: 1.25;
+  --leading-normal: 1.5;
+
+  /* Space, on a 4px grid. */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+  --space-16: 4rem;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-full: 999px;
+
+  --shadow-xs: 0 1px 2px rgb(16 24 40 / 0.05);
+  --shadow-sm: 0 1px 3px rgb(16 24 40 / 0.08), 0 1px 2px rgb(16 24 40 / 0.04);
+  --shadow-md: 0 6px 16px -4px rgb(16 24 40 / 0.1), 0 2px 6px -2px rgb(16 24 40 / 0.05);
+  --shadow-lg: 0 20px 40px -12px rgb(16 24 40 / 0.25);
+
+  --duration-fast: 120ms;
+  --duration-normal: 200ms;
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  /* Layout. */
+  --sidebar-width: 15.5rem;
+  --topbar-height: 3.5rem;
+  --content-max: 72rem;
+  --content-narrow: 46rem;
+  --field-max: 32rem;
+
+  /* Stacking: the only z-index values anything uses. */
+  --z-sticky: 10;
+  --z-nav: 30;
+  --z-scrim: 40;
+  --z-drawer: 50;
+  --z-toast: 70;
+}
+
+/* Dark: chosen outright, or followed from the device when nothing is chosen. The two blocks
+   hold the same values; CSS can't put a media query and an attribute in one selector. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --color-bg: #0a0e17;
+  --color-surface: #121826;
+  --color-surface-2: #161d2c;
+  --color-surface-sunken: #0d121d;
+  --color-border: #222b3d;
+  --color-border-strong: #313c54;
+  --color-scrim: rgb(0 0 0 / 0.6);
+  --color-text: #e7eaf2;
+  --color-text-muted: #9ba5bb;
+  --color-text-subtle: #6a768e;
+  --color-brand-solid: #3a62e0;
+  --color-brand-solid-hover: #4c72ec;
+  --color-brand-soft: rgb(99 135 255 / 0.15);
+  --color-brand-soft-text: #a8bcff;
+  --color-brand-border: rgb(99 135 255 / 0.4);
+  --color-on-brand: #ffffff;
+  --color-link: #8ea7ff;
+  --color-focus: #8ea7ff;
+  --color-focus-ring: rgb(142 167 255 / 0.3);
+  --color-danger-soft: rgb(240 68 56 / 0.13);
+  --color-danger-text: #ff8b7c;
+  --color-danger-border: rgb(240 68 56 / 0.38);
+  --color-danger-solid: #d63a27;
+  --color-danger-solid-hover: #e54b38;
+  --color-warning-soft: rgb(247 144 9 / 0.13);
+  --color-warning-text: #fdb43c;
+  --color-warning-border: rgb(247 144 9 / 0.38);
+  --color-warning-solid: #c4580a;
+  --color-success-soft: rgb(23 178 106 / 0.13);
+  --color-success-text: #4fd193;
+  --color-success-border: rgb(23 178 106 / 0.38);
+  --color-success-solid: #088a53;
+  --color-info-soft: rgb(41 112 255 / 0.13);
+  --color-info-text: #8eb4ff;
+  --color-info-border: rgb(41 112 255 / 0.38);
+  --color-info-solid: #3a72e6;
+  --color-neutral-soft: rgb(255 255 255 / 0.06);
+  --color-neutral-text: #b4bdd0;
+  --color-neutral-border: rgb(255 255 255 / 0.1);
+  --color-neutral-solid: #7b869c;
+  --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-sm: 0 1px 3px rgb(0 0 0 / 0.45);
+  --shadow-md: 0 8px 20px -6px rgb(0 0 0 / 0.55);
+  --shadow-lg: 0 24px 48px -12px rgb(0 0 0 / 0.7);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --color-bg: #0a0e17;
+    --color-surface: #121826;
+    --color-surface-2: #161d2c;
+    --color-surface-sunken: #0d121d;
+    --color-border: #222b3d;
+    --color-border-strong: #313c54;
+    --color-scrim: rgb(0 0 0 / 0.6);
+    --color-text: #e7eaf2;
+    --color-text-muted: #9ba5bb;
+    --color-text-subtle: #6a768e;
+    --color-brand-solid: #3a62e0;
+    --color-brand-solid-hover: #4c72ec;
+    --color-brand-soft: rgb(99 135 255 / 0.15);
+    --color-brand-soft-text: #a8bcff;
+    --color-brand-border: rgb(99 135 255 / 0.4);
+    --color-on-brand: #ffffff;
+    --color-link: #8ea7ff;
+    --color-focus: #8ea7ff;
+    --color-focus-ring: rgb(142 167 255 / 0.3);
+    --color-danger-soft: rgb(240 68 56 / 0.13);
+    --color-danger-text: #ff8b7c;
+    --color-danger-border: rgb(240 68 56 / 0.38);
+    --color-danger-solid: #d63a27;
+    --color-danger-solid-hover: #e54b38;
+    --color-warning-soft: rgb(247 144 9 / 0.13);
+    --color-warning-text: #fdb43c;
+    --color-warning-border: rgb(247 144 9 / 0.38);
+    --color-warning-solid: #c4580a;
+    --color-success-soft: rgb(23 178 106 / 0.13);
+    --color-success-text: #4fd193;
+    --color-success-border: rgb(23 178 106 / 0.38);
+    --color-success-solid: #088a53;
+    --color-info-soft: rgb(41 112 255 / 0.13);
+    --color-info-text: #8eb4ff;
+    --color-info-border: rgb(41 112 255 / 0.38);
+    --color-info-solid: #3a72e6;
+    --color-neutral-soft: rgb(255 255 255 / 0.06);
+    --color-neutral-text: #b4bdd0;
+    --color-neutral-border: rgb(255 255 255 / 0.1);
+    --color-neutral-solid: #7b869c;
+    --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.4);
+    --shadow-sm: 0 1px 3px rgb(0 0 0 / 0.45);
+    --shadow-md: 0 8px 20px -6px rgb(0 0 0 / 0.55);
+    --shadow-lg: 0 24px 48px -12px rgb(0 0 0 / 0.7);
+  }
+}

@@ -7,29 +7,32 @@ import {
   DIVERT_TURN_OFF_CODES,
   divertInstructions,
   voicemailRestoreCode,
-  type MeView,
   type MobileNetwork,
   type TenantView,
 } from "@callmate/shared";
 import { useState } from "react";
-import { useParams } from "react-router";
-import { useApi, useLoad } from "../api.ts";
+import {
+  Alert,
+  Card,
+  CopyCode,
+  EmptyState,
+  SectionHeader,
+  SelectField,
+} from "../design/components.tsx";
+import { Hourglass, PhoneForwarded, ListChecks, Undo2 } from "../design/icons.ts";
 import { formatPhone } from "../format.ts";
-import { TenantHeader } from "../tenant-header.tsx";
-import { ErrorNote } from "../ui.tsx";
+import { useTenant } from "../tenant-layout.tsx";
 
-export function PhonePage({ me }: { me: MeView }) {
-  const { tenantId = "" } = useParams();
-  const { api } = useApi();
-  const tenant = useLoad(() => api<TenantView>(`/tenants/${tenantId}`), tenantId);
-
-  if (tenant.status === "loading") return <p className="muted">Loading…</p>;
-  if (tenant.status === "error") return <ErrorNote error={tenant.error} retry={tenant.reload} />;
+export function PhonePage() {
+  const { tenant } = useTenant();
   return (
-    <>
-      <TenantHeader me={me} tenant={tenant.data} />
-      <Instructions key={tenant.data.id} tenant={tenant.data} />
-    </>
+    <div className="stack stack-lg">
+      <SectionHeader
+        title="Phone setup"
+        description="Send the calls you can't answer to AnswerMate, using codes you dial on your own mobile."
+      />
+      <Instructions key={tenant.id} tenant={tenant} />
+    </div>
   );
 }
 
@@ -40,66 +43,65 @@ function Instructions({ tenant }: { tenant: TenantView }) {
   if (tenant.status === "cancelling" || tenant.status === "cancelled") {
     const restore = voicemailRestoreCode(tenant.mobileNetwork);
     return (
-      <section className="card">
-        <h2>Turn off your diverts</h2>
+      <Card icon={Undo2} title="Turn off your diverts">
         <p>
-          On your own mobile, dial each of these and press call, as if ringing a number:{" "}
-          {DIVERT_TURN_OFF_CODES.map((code, index) => (
-            <span key={code}>
-              {index > 0 && ", "}
-              <code>{code}</code>
-            </span>
+          On your own mobile, dial each of these and press call, as if ringing a number. They turn
+          off the diverts for calls you don't answer, calls when you're busy, and calls when your
+          phone is off.
+        </p>
+        <div className="cluster">
+          {DIVERT_TURN_OFF_CODES.map((code) => (
+            <CopyCode key={code} code={code} />
           ))}
-          . They turn off the diverts for calls you don't answer, calls when you're busy, and calls
-          when your phone is off.
-        </p>
-        <p>
-          {restore ? (
-            <>
-              Then dial <code>{restore}</code> to get your network's voicemail back.
-            </>
-          ) : (
-            "Then ring your network if you'd like your voicemail back: they'll tell you the code."
-          )}
-        </p>
-      </section>
+        </div>
+        {restore ? (
+          <p>
+            Then dial <CopyCode code={restore} /> to get your network's voicemail back.
+          </p>
+        ) : (
+          <p>
+            Then ring your network if you'd like your voicemail back: they'll tell you the code.
+          </p>
+        )}
+      </Card>
     );
   }
   if (!tenant.number) {
     return (
-      <section className="card">
-        <h2>Phone setup</h2>
-        <p>Your AnswerMate number isn't ready yet. These steps appear here once it is.</p>
-      </section>
+      <div className="card">
+        <EmptyState icon={Hourglass} title="Your AnswerMate number isn't ready yet">
+          These steps appear here once it is.
+        </EmptyState>
+      </div>
     );
   }
   const steps = divertInstructions(network === "" ? null : network, tenant.number);
 
   return (
     <>
-      <section className="card">
-        <h2>Send the calls you miss to AnswerMate</h2>
-        <p>
-          Your AnswerMate number is <strong>{formatPhone(tenant.number)}</strong>. On your own
-          mobile, dial each code below and press call, as if ringing a number. Your phone shows a
-          message saying whether it worked.
-        </p>
-        <label className="stacked">
-          Your mobile network
-          <select
-            value={network}
-            onChange={(event) => setNetwork(event.target.value as MobileNetwork | "")}
-          >
-            <option value="">I'm not sure</option>
-            {MOBILE_NETWORK_KEYS.map((key) => (
-              <option key={key} value={key}>
-                {MOBILE_NETWORKS[key]}
-              </option>
-            ))}
-          </select>
-        </label>
+      <Card
+        icon={PhoneForwarded}
+        title="Send the calls you miss to AnswerMate"
+        description="Dial each code below on your own mobile and press call, as if ringing a number. Your phone shows a message saying whether it worked."
+      >
+        <div className="stack stack-xs">
+          <span className="muted text-sm">Your AnswerMate number</span>
+          <span className="big-number">{formatPhone(tenant.number)}</span>
+        </div>
+        <SelectField
+          label="Your mobile network"
+          value={network}
+          onChange={(event) => setNetwork(event.target.value as MobileNetwork | "")}
+        >
+          <option value="">I'm not sure</option>
+          {MOBILE_NETWORK_KEYS.map((key) => (
+            <option key={key} value={key}>
+              {MOBILE_NETWORKS[key]}
+            </option>
+          ))}
+        </SelectField>
         <div className="table-wrap">
-          <table className="usage codes">
+          <table className="table table-stack">
             <thead>
               <tr>
                 <th>Divert calls…</th>
@@ -111,57 +113,73 @@ function Instructions({ tenant }: { tenant: TenantView }) {
             <tbody>
               {steps.codes.map((code) => (
                 <tr key={code.check}>
-                  <td>{code.when}</td>
-                  <td>
-                    <code>{code.turnOn}</code>
+                  <td data-label="">
+                    <strong>{code.when}</strong>
                   </td>
-                  <td>
-                    <code>{code.check}</code>
+                  <td data-label="Turn on">
+                    <CopyCode code={code.turnOn} />
                   </td>
-                  <td>
-                    <code>{code.turnOff}</code>
+                  <td data-label="Check">
+                    <CopyCode code={code.check} />
+                  </td>
+                  <td data-label="Turn off">
+                    <CopyCode code={code.turnOff} />
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-        <ul>
-          {steps.notes.map((note) => (
-            <li key={note}>{note}</li>
-          ))}
-        </ul>
-      </section>
+        {steps.notes.length > 0 && (
+          <Alert tone="info">
+            <ul className="stack stack-xs">
+              {steps.notes.map((note) => (
+                <li key={note}>{note}</li>
+              ))}
+            </ul>
+          </Alert>
+        )}
+      </Card>
 
-      <section className="card">
-        <h2>Check it, then test it</h2>
-        <ol>
-          <li>
-            Dial <code>*#61#</code> and press call. Your phone should say the divert is active, with
-            your AnswerMate number.
+      <Card icon={ListChecks} title="Check it, then test it">
+        <ol className="steps">
+          <li className="step">
+            <span className="step-marker" />
+            <div className="step-body">
+              <p className="step-title">Check the divert is on</p>
+              <p className="muted text-sm">
+                Dial <CopyCode code="*#61#" /> and press call. Your phone should say the divert is
+                active, with your AnswerMate number.
+              </p>
+            </div>
           </li>
-          <li>
-            Ring your mobile from another phone and don't answer. After the rings you'll hear a
-            short message and a beep: say a few words, then hang up. That's your test call: it tells
-            us your divert works.
+          <li className="step">
+            <span className="step-marker" />
+            <div className="step-body">
+              <p className="step-title">Make a test call</p>
+              <p className="muted text-sm">
+                Ring your mobile from another phone and don't answer. After the rings you'll hear a
+                short message and a beep: say a few words, then hang up. That tells us your divert
+                works.
+              </p>
+            </div>
           </li>
         </ol>
-      </section>
+      </Card>
 
-      <section className="card">
-        <h2>If you ever leave AnswerMate</h2>
+      <Card icon={Undo2} title="If you ever leave AnswerMate">
         <p>
           Turning these diverts off leaves you with no voicemail at all, because they replaced your
           network's.{" "}
           {steps.restoreVoicemail ? (
             <>
-              To get your network's voicemail back, dial <code>{steps.restoreVoicemail}</code>.
+              To get your network's voicemail back, dial <CopyCode code={steps.restoreVoicemail} />.
             </>
           ) : (
             <>Ask your network how to turn its voicemail back on.</>
           )}
         </p>
-      </section>
+      </Card>
     </>
   );
 }

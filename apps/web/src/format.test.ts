@@ -2,13 +2,58 @@ import { describe, expect, it } from "vitest";
 import { callsQuery, filtersFromSearch, NO_FILTERS, searchFromFilters } from "./calls-query.ts";
 import {
   billingSummary,
+  chargeTone,
   formatDuration,
+  formatDurationWords,
   formatPence,
   formatPhone,
   humanise,
+  initialsOf,
+  statusDisplay,
   toUkMobileE164,
   urgencyLabel,
+  urgencyTone,
 } from "./format.ts";
+
+describe("labels and colours", () => {
+  it("colours urgencies by how much they matter, and anything unknown plainly", () => {
+    expect(urgencyTone("emergency")).toBe("danger");
+    expect(urgencyTone("urgent")).toBe("warning");
+    expect(urgencyTone("routine")).toBe("info");
+    expect(urgencyTone("spam")).toBe("neutral");
+    expect(urgencyTone(null)).toBe("neutral");
+  });
+
+  it("says a business's status as its owner would", () => {
+    expect(statusDisplay("live")).toEqual({ label: "Answering", tone: "success" });
+    expect(statusDisplay("paused")).toEqual({ label: "Switched off", tone: "warning" });
+    expect(statusDisplay("suspended")).toEqual({ label: "Suspended", tone: "danger" });
+    expect(statusDisplay("something_new")).toEqual({ label: "Something new", tone: "neutral" });
+  });
+
+  it("says a call's length in words, never like a clock", () => {
+    expect(formatDurationWords(42)).toBe("42 sec");
+    expect(formatDurationWords(120)).toBe("2 min");
+    expect(formatDurationWords(125.4)).toBe("2 min 5 sec");
+    expect(formatDurationWords(-3)).toBe("0 sec");
+  });
+
+  it("colours a month's charge by where its money is", () => {
+    expect(chargeTone("paid_out")).toBe("success");
+    expect(chargeTone("charged_back")).toBe("danger");
+    expect(chargeTone("no_mandate")).toBe("warning");
+    expect(chargeTone("submitted")).toBe("info");
+    expect(chargeTone("nothing_due")).toBe("neutral");
+  });
+
+  it("makes up to two initials, or a question mark with no name", () => {
+    expect(initialsOf("Fern Lane Plumbing")).toBe("FL");
+    expect(initialsOf("robin")).toBe("R");
+    expect(initialsOf("  Élan & Électrique ")).toBe("ÉÉ");
+    expect(initialsOf(null)).toBe("?");
+    expect(initialsOf("—")).toBe("?");
+  });
+});
 
 describe("format", () => {
   it("humanises stored values", () => {

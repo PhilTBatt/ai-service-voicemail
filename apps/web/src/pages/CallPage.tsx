@@ -1,16 +1,42 @@
-// One call: who rang, what they wanted, the transcript and the recording. The recording needs
-// the login token, which an <audio> tag can't send, so it's fetched as a file first and played
-// from memory; nothing is stored in the browser.
+// One call: who rang, a button to ring them back, whether they have been, what they wanted,
+// the transcript and the recording. The recording needs the login token, which an <audio> tag
+// can't send, so it's fetched as a file first and played from memory; nothing is stored in the
+// browser.
 import type { CallHandledView, CallView } from "@callmate/shared";
 import { useEffect, useState } from "react";
 import { Link, useLocation, useParams } from "react-router";
 import { asError, useApi, useLoad } from "../api.ts";
-import { formatDuration, formatPhone } from "../format.ts";
+import {
+  Alert,
+  Avatar,
+  Badge,
+  Button,
+  ButtonAnchor,
+  Card,
+  DescriptionList,
+  ErrorNote,
+  Loading,
+} from "../design/components.tsx";
+import {
+  ArrowLeft,
+  Check,
+  FileText,
+  MessageSquare,
+  Phone,
+  Play,
+  UserRound,
+  Voicemail,
+} from "../design/icons.ts";
+import { useToast } from "../design/toast.tsx";
+import { formatDurationWords, formatPhone, urgencyTone } from "../format.ts";
+import { useTenant } from "../tenant-layout.tsx";
 import { formatUkDateTime } from "../time.ts";
-import { ErrorNote, UrgencyBadge } from "../ui.tsx";
+import { UrgencyBadge } from "../ui.tsx";
 
 export function CallPage() {
-  const { tenantId = "", callId = "" } = useParams();
+  const { tenant } = useTenant();
+  const { callId = "" } = useParams();
+  const tenantId = tenant.id;
   const { api } = useApi();
   // The list this call was opened from, filters and all, so "All calls" goes back to it.
   const listSearch = (useLocation().state as { listSearch?: string } | null)?.listSearch ?? "";
@@ -18,75 +44,122 @@ export function CallPage() {
     () => api<CallView>(`/tenants/${tenantId}/calls/${callId}`),
     `${tenantId}/${callId}`,
   );
+  const back = (
+    <Link to={`/tenants/${tenantId}${listSearch ? `?${listSearch}` : ""}`} className="back-link">
+      <ArrowLeft size={16} />
+      All calls · {tenant.businessName}
+    </Link>
+  );
 
-  if (call.status === "loading") return <p className="muted">Loading call…</p>;
+  if (call.status === "loading") {
+    return (
+      <div className="stack stack-lg">
+        {back}
+        <Loading label="Loading call…" lines={5} />
+      </div>
+    );
+  }
   if (call.status === "error") return <ErrorNote error={call.error} retry={call.reload} />;
 
   const data = call.data;
   const number = data.fields.callbackNumber ?? data.callerNumber;
   return (
-    <>
-      <p>
-        <Link to={`/tenants/${tenantId}${listSearch ? `?${listSearch}` : ""}`}>← All calls</Link>
-      </p>
-      <h1>{data.fields.callerName ?? "Unknown caller"}</h1>
-      <p className="muted">
-        {formatUkDateTime(data.startedAt)} · {formatDuration(data.durationSeconds)}
-        {data.viaFallback && " · voicemail"}
-      </p>
-      <p>
-        <UrgencyBadge urgency={data.urgency} />
-        {data.flags.map((flag) => (
-          <span key={flag} className="badge flag">
-            {flag}
-          </span>
-        ))}
-      </p>
+    <div className="stack stack-lg">
+      {back}
+      <header className="stack">
+        <div className="call-hero">
+          <Avatar name={data.fields.callerName} tone={urgencyTone(data.urgency)} size="lg" />
+          <div className="stack stack-xs">
+            <h1 className="page-title">{data.fields.callerName ?? "Unknown caller"}</h1>
+            <p className="muted text-sm">
+              {formatUkDateTime(data.startedAt)} · {formatDurationWords(data.durationSeconds)}
+            </p>
+          </div>
+        </div>
+        <div className="cluster">
+          <UrgencyBadge urgency={data.urgency} />
+          {data.viaFallback && <Badge icon={Voicemail}>Voicemail</Badge>}
+          {data.flags.map((flag) => (
+            <Badge key={flag} tone="danger">
+              {flag}
+            </Badge>
+          ))}
+        </div>
+      </header>
 
-      <CalledBack
-        key={callId}
-        tenantId={tenantId}
-        callId={callId}
-        initialHandledAt={data.handledAt}
-      />
-
-      <section className="card">
-        <dl className="details">
-          <dt>Call back on</dt>
-          <dd>{number ? <a href={`tel:${number}`}>{formatPhone(number)}</a> : "Withheld"}</dd>
-          <dt>Postcode</dt>
-          <dd>{data.fields.postcode ?? "Not given"}</dd>
-          {data.callerNumber && number !== data.callerNumber && (
-            <>
-              <dt>Rang from</dt>
-              <dd>
-                <a href={`tel:${data.callerNumber}`}>{formatPhone(data.callerNumber)}</a>
-              </dd>
-            </>
-          )}
-        </dl>
-        <h2>Summary</h2>
-        <p>{data.summary ?? "No summary yet."}</p>
-      </section>
-
-      {data.recording.available && <Recording tenantId={tenantId} callId={callId} />}
-
-      <section>
-        <h2>Transcript</h2>
-        {data.transcript === null ? (
-          <p className="muted">No transcript for this call.</p>
+      <div className="cluster cluster-lg">
+        {number ? (
+          <ButtonAnchor href={`tel:${number}`} icon={Phone} size="lg">
+            Call back {formatPhone(number)}
+          </ButtonAnchor>
         ) : (
-          <ol className="transcript">
-            {data.transcript.map((turn, index) => (
-              <li key={index} className={`turn turn-${turn.role}`}>
-                <span className="speaker">{turn.role === "agent" ? "AnswerMate" : "Caller"}</span>
-                {turn.text}
-              </li>
-            ))}
-          </ol>
+          <Alert tone="neutral">
+            <p>Their number was withheld.</p>
+          </Alert>
         )}
-      </section>
-    </>
+        <CalledBack
+          key={callId}
+          tenantId={tenantId}
+          callId={callId}
+          initialHandledAt={data.handledAt}
+        />
+      </div>
+
+      <div className="split">
+        <div className="stack stack-lg">
+          <Card icon={FileText} title="Summary">
+            <p className="pre-line">
+              {data.summary ??
+                (data.viaFallback ? "A voicemail: listen to it on this page." : "No summary yet.")}
+            </p>
+          </Card>
+          <Card icon={MessageSquare} title="Transcript">
+            {data.transcript === null || data.transcript.length === 0 ? (
+              <p className="muted">No transcript for this call.</p>
+            ) : (
+              <ol className="transcript">
+                {data.transcript.map((turn, index) => (
+                  <li
+                    key={index}
+                    className={`bubble ${turn.role === "caller" ? "bubble-caller" : ""}`}
+                  >
+                    <span className="bubble-speaker">
+                      {turn.role === "agent" ? "AnswerMate" : "Caller"}
+                    </span>
+                    {turn.text}
+                  </li>
+                ))}
+              </ol>
+            )}
+          </Card>
+        </div>
+        <div className="stack stack-lg">
+          <Card icon={UserRound} title="Details">
+            <DescriptionList
+              items={[
+                { term: "Name", detail: data.fields.callerName ?? "Not given" },
+                {
+                  term: "Call back on",
+                  detail: number ? formatPhone(number) : "Withheld",
+                },
+                // The caller ID too, when the caller gave another number: a misheard digit in
+                // that one still leaves a number that works.
+                data.callerNumber && number !== data.callerNumber
+                  ? {
+                      term: "Rang from",
+                      detail: (
+                        <a href={`tel:${data.callerNumber}`}>{formatPhone(data.callerNumber)}</a>
+                      ),
+                    }
+                  : null,
+                { term: "Postcode", detail: data.fields.postcode ?? "Not given" },
+              ]}
+            />
+          </Card>
+          {data.recording.available && <Recording tenantId={tenantId} callId={callId} />}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -105,6 +178,7 @@ function CalledBack({
   initialHandledAt: string | null;
 }) {
   const { api } = useApi();
+  const toast = useToast();
   const [handledAt, setHandledAt] = useState(initialHandledAt);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<Error | null>(null);
@@ -118,6 +192,7 @@ function CalledBack({
         body: { handled },
       });
       setHandledAt(result.handledAt);
+      toast({ title: handled ? "Marked as called back" : "Back on the list to reply to" });
     } catch (caught) {
       setError(asError(caught));
     } finally {
@@ -126,26 +201,29 @@ function CalledBack({
   };
 
   return (
-    <section className="card switch">
+    <div className="cluster">
       {handledAt ? (
         <>
-          <p>
-            <span className="badge handled">Called back</span> {formatUkDateTime(handledAt)}
-          </p>
-          <button type="button" className="link" disabled={busy} onClick={() => void mark(false)}>
+          <Badge tone="success" icon={Check}>
+            Called back {formatUkDateTime(handledAt)}
+          </Badge>
+          <Button variant="link" disabled={busy} onClick={() => void mark(false)}>
             Not done yet
-          </button>
+          </Button>
         </>
       ) : (
-        <>
-          <p>Needs a reply.</p>
-          <button type="button" disabled={busy} onClick={() => void mark(true)}>
-            Mark as called back
-          </button>
-        </>
+        <Button
+          variant="secondary"
+          size="lg"
+          icon={Check}
+          loading={busy}
+          onClick={() => void mark(true)}
+        >
+          Mark as called back
+        </Button>
       )}
       {error && <ErrorNote error={error} />}
-    </section>
+    </div>
   );
 }
 
@@ -177,16 +255,15 @@ function Recording({ tenantId, callId }: { tenantId: string; callId: string }) {
   };
 
   return (
-    <section className="card">
-      <h2>Recording</h2>
+    <Card icon={Play} title="Recording">
       {url ? (
         <audio controls autoPlay src={url} />
       ) : (
-        <button type="button" disabled={busy} onClick={() => void load()}>
-          {busy ? "Loading…" : "Play recording"}
-        </button>
+        <Button variant="secondary" icon={Play} loading={busy} block onClick={() => void load()}>
+          Play recording
+        </Button>
       )}
       {error && <ErrorNote error={error} />}
-    </section>
+    </Card>
   );
 }

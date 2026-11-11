@@ -1,36 +1,28 @@
 // One business's onboarding checklist, for the admin: every step and where the business is,
 // what the system can see, the pilot switch, and a button to move on to the next step when its
 // condition holds. The API decides; this page shows its answer, and its reason when it says no.
-import type { MeView, OnboardingView, TenantView } from "@callmate/shared";
+import type { OnboardingView } from "@callmate/shared";
 import { useState } from "react";
-import { useParams } from "react-router";
 import { asError, useApi, useLoad } from "../api.ts";
-import { TenantHeader } from "../tenant-header.tsx";
+import { useTenant } from "../tenant-layout.tsx";
 import { ErrorNote } from "../ui.tsx";
 
-export function OnboardingPage({ me }: { me: MeView }) {
-  const { tenantId = "" } = useParams();
+export function OnboardingPage() {
+  const { tenant, reload } = useTenant();
   const { api } = useApi();
-  const loaded = useLoad(async () => {
-    const [tenant, onboarding] = await Promise.all([
-      api<TenantView>(`/tenants/${tenantId}`),
-      api<OnboardingView>(`/admin/tenants/${tenantId}/onboarding`),
-    ]);
-    return { tenant, onboarding };
-  }, tenantId);
+  const onboarding = useLoad(
+    () => api<OnboardingView>(`/admin/tenants/${tenant.id}/onboarding`),
+    tenant.id,
+  );
 
-  if (loaded.status === "loading") return <p className="muted">Loading…</p>;
-  if (loaded.status === "error") return <ErrorNote error={loaded.error} retry={loaded.reload} />;
+  if (onboarding.status === "loading") return <p className="muted">Loading…</p>;
+  if (onboarding.status === "error") {
+    return <ErrorNote error={onboarding.error} retry={onboarding.reload} />;
+  }
   return (
-    <>
-      <TenantHeader me={me} tenant={loaded.data.tenant} />
-      <Checklist
-        key={loaded.data.tenant.id}
-        tenantId={loaded.data.tenant.id}
-        initial={loaded.data.onboarding}
-        onLive={loaded.reload}
-      />
-    </>
+    <div className="legacy">
+      <Checklist key={tenant.id} tenantId={tenant.id} initial={onboarding.data} onLive={reload} />
+    </div>
   );
 }
 

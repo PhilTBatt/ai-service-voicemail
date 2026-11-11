@@ -63,6 +63,16 @@ async function giveMandate(tenantId: string, mandateRef: string) {
   );
 }
 
+/** A suspension on record, as the admin screen's suspend and resume write one. */
+async function suspend(tenantId: string, startedAt: string, endedAt: string | null) {
+  await withTenant(app, tenantId, (client) =>
+    client.query(
+      "INSERT INTO tenant_suspensions (tenant_id, started_at, ended_at) VALUES ($1, $2, $3)",
+      [tenantId, startedAt, endedAt],
+    ),
+  );
+}
+
 function deps(overrides: Partial<ChargePeriodsDeps> = {}) {
   const payments = new FakePaymentsProvider();
   const enqueueBillingEmail = vi.fn(() => Promise.resolve());
@@ -148,6 +158,46 @@ describe("charging one month", () => {
     // The pilot's second month is £49.
     expect(await chargePeriod(d, tenant, JULY)).toBe("collected");
     expect(payments.payments[0]?.amountPence).toBe(4900);
+  });
+
+  it("charges nothing for a month suspended from start to end, and charges the month it began in", async () => {
+    const { tenantId, tenant } = await business();
+    // Suspended on 20 June (part of June had the service), still suspended now.
+    await suspend(tenantId, "2026-06-20T09:00:00Z", null);
+    const { deps: d, payments, enqueueBillingEmail } = deps();
+    expect(await chargePeriod(d, tenant, JUNE)).toBe("collected");
+    expect(await chargePeriod(d, tenant, JULY)).toBe("nothing-due");
+    expect(await charges(tenantId)).toEqual([
+      expect.objectContaining({ period_start: "2026-06-14", status: "pending", total_pence: 9900 }),
+      expect.objectContaining({
+        period_start: "2026-07-14",
+        status: "nothing_due",
+        total_pence: 0,
+      }),
+    ]);
+    expect(payments.payments).toHaveLength(1);
+    expect(enqueueBillingEmail).toHaveBeenCalledTimes(1);
+    const lines = await admin.query<{ lines: unknown }>(
+      "SELECT lines FROM billing_charges WHERE tenant_id = $1 AND period_start = '2026-07-14'",
+      [tenantId],
+    );
+    expect(lines.rows[0]?.lines).toEqual([
+      { description: "Suspended for the whole month: no charge", pence: 0 },
+    ]);
+  });
+
+  it("measures the month from UK midnight: suspended from 00:00 BST is the whole month, a minute later isn't", async () => {
+    // July's month starts at midnight on 14 July in London, which is 23:00 UTC on the 13th (BST).
+    const whole = await business();
+    await suspend(whole.tenantId, "2026-07-13T23:00:00Z", "2026-08-14T00:00:00Z");
+    const late = await business();
+    await suspend(late.tenantId, "2026-07-13T23:01:00Z", null);
+    const resumedEarly = await business();
+    await suspend(resumedEarly.tenantId, "2026-07-01T09:00:00Z", "2026-08-13T22:59:00Z");
+    const { deps: d } = deps();
+    expect(await chargePeriod(d, whole.tenant, JULY)).toBe("nothing-due");
+    expect(await chargePeriod(d, late.tenant, JULY)).toBe("collected");
+    expect(await chargePeriod(d, resumedEarly.tenant, JULY)).toBe("collected");
   });
 
   it("holds a month with no Direct Debit, alerts once, and collects it once there is one", async () => {

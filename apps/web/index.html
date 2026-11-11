@@ -2,8 +2,18 @@
 <html lang="en-GB">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>AnswerMate</title>
+    <script>
+      // The colour theme this device chose (src/design/theme.ts), set before the page draws so a
+      // dark choice never flashes white first. Nothing stored means following the device.
+      try {
+        var theme = window.localStorage.getItem("answermate-theme");
+        if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
+      } catch (error) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -1,0 +1,357 @@
+/*
+ * Patterns: arrangements of components that more than one page uses, or that one page needs and
+ * the components don't cover (the call list, the transcript, a business's header). A page never
+ * styles itself: if it needs something new, it goes here or in components.css, with a name.
+ */
+
+/* ---------- A business's header (business-header.tsx) ---------- */
+
+.business-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.business-identity {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.business-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  margin-top: var(--space-1);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.business-number {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- The answering switch ---------- */
+
+.answering {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5);
+}
+
+.answering-state {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.pulse {
+  position: relative;
+  flex: none;
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 50%;
+  background: var(--tone-solid);
+}
+
+.pulse[data-live="true"]::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 2px solid var(--tone-solid);
+  opacity: 0;
+  animation: pulse 2.4s var(--ease-out) infinite;
+}
+
+@keyframes pulse {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.7;
+  }
+  100% {
+    transform: scale(1.5);
+    opacity: 0;
+  }
+}
+
+/* ---------- Toolbar of filters above a list ---------- */
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-3);
+}
+
+.toolbar .field {
+  gap: var(--space-1);
+}
+
+/* Fields that belong together (From and To) and wrap as one. */
+.toolbar-group {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-3);
+}
+
+.toolbar .field-label {
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+}
+
+.toolbar .input {
+  height: 2.25rem;
+  font-size: var(--text-sm);
+}
+
+/* ---------- The call list ---------- */
+
+.day-group + .day-group {
+  margin-top: var(--space-5);
+}
+
+.day-heading {
+  margin-bottom: var(--space-2);
+  padding: 0 var(--space-1);
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.call-row > a {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-1) var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  color: inherit;
+  text-decoration: none;
+  transition: background-color var(--duration-fast) var(--ease-out);
+}
+
+.call-row > a:hover {
+  background: var(--color-surface-2);
+}
+
+.call-row:first-child > a {
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+}
+
+.call-row:last-child > a {
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+}
+
+.call-row:only-child > a {
+  border-radius: var(--radius-lg);
+}
+
+.call-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.call-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-1) var(--space-3);
+}
+
+.call-who {
+  font-weight: var(--weight-semibold);
+}
+
+.call-number {
+  color: var(--color-text-muted);
+  font-weight: var(--weight-regular);
+}
+
+.call-time {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.call-summary {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+.call-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-top: var(--space-1);
+}
+
+/* ---------- One call ---------- */
+
+.call-hero {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.transcript {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  list-style: none;
+  padding: 0;
+}
+
+.bubble {
+  max-width: min(36rem, 88%);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg) var(--radius-lg) var(--radius-lg) var(--radius-sm);
+  background: var(--color-surface-2);
+}
+
+.bubble-caller {
+  align-self: flex-end;
+  border-color: transparent;
+  border-radius: var(--radius-lg) var(--radius-lg) var(--radius-sm) var(--radius-lg);
+  background: var(--color-brand-soft);
+}
+
+.bubble-speaker {
+  display: block;
+  margin-bottom: 0.125rem;
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+}
+
+/* ---------- Forms laid out in sections (the Assistant page, the signup form) ---------- */
+
+.form-sections {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.save-bar {
+  position: sticky;
+  z-index: var(--z-sticky);
+  bottom: var(--space-4);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--color-surface) 92%, transparent);
+  box-shadow: var(--shadow-md);
+  backdrop-filter: blur(10px);
+}
+
+.hours {
+  display: flex;
+  flex-direction: column;
+}
+
+.hours-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+  min-height: 3.25rem;
+  padding: var(--space-2) 0;
+}
+
+.hours-row + .hours-row {
+  border-top: 1px solid var(--color-border);
+}
+
+.hours-row .choice {
+  align-items: center;
+  min-width: 9rem;
+}
+
+.times {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.times .input {
+  width: auto;
+  height: 2.5rem;
+}
+
+.faq {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-2);
+}
+
+/* ---------- The number, big ---------- */
+
+.big-number {
+  font-size: var(--text-3xl);
+  font-weight: var(--weight-bold);
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- A row in a list of documents, charges, businesses ---------- */
+
+.row-title {
+  font-weight: var(--weight-semibold);
+}
+
+.row-title a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.row-title a:hover {
+  color: var(--color-link);
+  text-decoration: underline;
+}
+
+.danger-zone {
+  border-color: var(--color-danger-border);
+}
+
+.signup-url {
+  display: block;
+  padding: var(--space-3);
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-sunken);
+  font-size: var(--text-sm);
+  word-break: break-all;
+}

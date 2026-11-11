@@ -1,23 +1,40 @@
-// Small pieces several pages share.
-import { urgencyLabel } from "./format.ts";
+// AnswerMate's own pieces, made from the design system's (design/components.tsx): those know
+// nothing about calls or businesses; these do.
+import { Badge } from "./design/components.tsx";
+import { statusDisplay, urgencyLabel, urgencyTone } from "./format.ts";
 
-export function ErrorNote({ error, retry }: { error: Error; retry?: () => void }) {
+export { ErrorNote } from "./design/components.tsx";
+
+export function UrgencyBadge({ urgency }: { urgency: string | null }) {
   return (
-    <section className="card error" role="alert">
-      <p>Something went wrong: {error.message}</p>
-      {retry && (
-        <button type="button" onClick={retry}>
-          Try again
-        </button>
-      )}
-    </section>
+    <Badge tone={urgencyTone(urgency)} dot>
+      {urgencyLabel(urgency)}
+    </Badge>
   );
 }
 
-export function UrgencyBadge({ urgency }: { urgency: string | null }) {
-  return <span className={`badge urgency-${urgency ?? "none"}`}>{urgencyLabel(urgency)}</span>;
+/** A business's status in words ("Answering", "Switched off"), coloured for what it means. */
+export function StatusBadge({ status }: { status: string }) {
+  const { label, tone } = statusDisplay(status);
+  return (
+    <Badge tone={tone} dot>
+      {label}
+    </Badge>
+  );
 }
 
-export function StatusBadge({ status }: { status: string }) {
-  return <span className={`badge status-${status}`}>{status}</span>;
+/** The AnswerMate mark: a speech bubble, answering. The favicon is the same drawing. */
+export function BrandMark() {
+  return (
+    <svg className="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+      <rect width="32" height="32" rx="8" fill="var(--color-brand-solid)" />
+      <path
+        d="M8 11a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v7a3 3 0 0 1-3 3h-6l-4.5 3.5V21H11a3 3 0 0 1-3-3z"
+        fill="#ffffff"
+      />
+      <circle cx="12.5" cy="14.5" r="1.4" fill="var(--color-brand-solid)" />
+      <circle cx="16" cy="14.5" r="1.4" fill="var(--color-brand-solid)" />
+      <circle cx="19.5" cy="14.5" r="1.4" fill="var(--color-brand-solid)" />
+    </svg>
+  );
 }

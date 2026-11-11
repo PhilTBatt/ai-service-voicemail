@@ -6,7 +6,8 @@
 // - the payment is asked for with an idempotency key from the business and the month, so a
 //   repeat after a crash gets the same payment back, never a second;
 // - a month with nothing to collect from (no Direct Debit) is tried again each morning.
-// Nothing is ever switched off for not paying: that stays a person's decision.
+// Nothing is ever switched off for not paying: that stays a person's decision. A month the
+// business spent suspended from start to end is recorded as nothing due (tenant_suspensions).
 import { AI_ANSWERING_PLAN, type Plan } from "@callmate/shared";
 import type pg from "pg";
 import { raiseAlert, type AlertFn } from "../alerts.ts";
@@ -133,12 +134,26 @@ export async function chargePeriod(
         [tenantId, period.periodStart],
       )
     ).rows[0];
+    // Suspended from the month's first moment (UK midnight) to its end, or still suspended:
+    // no service that month, so no charge. One that began or ended part-way is charged.
+    const suspendedThroughout = (
+      await client.query<{ suspended: boolean }>(
+        `SELECT EXISTS (
+           SELECT 1 FROM tenant_suspensions
+           WHERE tenant_id = $1
+             AND started_at <= ($2::date)::timestamp AT TIME ZONE 'Europe/London'
+             AND (ended_at IS NULL OR ended_at >= ($3::date)::timestamp AT TIME ZONE 'Europe/London')
+         ) AS suspended`,
+        [tenantId, period.periodStart, period.periodEnd],
+      )
+    ).rows[0]!.suspended;
     const charge = chargeFor({
       plan,
       period,
       isPilot: tenant.isPilot,
       billableSeconds: usage?.billable_seconds ?? 0,
       vat,
+      suspendedThroughout,
     });
     // Under the provider's minimum (a pilot's free month with a few minutes over): recorded,
     // and not collected. Nothing at all: recorded as nothing due.

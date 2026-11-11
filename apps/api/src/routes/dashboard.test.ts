@@ -1625,6 +1625,12 @@ describe("billing for the admin (Step 12)", () => {
       [tenant],
     );
     expect(audit.rows.map((row) => row.action)).toEqual(["tenant.suspended", "tenant.unsuspended"]);
+    // Billing's record of it: one suspension, opened and closed.
+    const suspensions = await admin.query<{ open: boolean }>(
+      "SELECT ended_at IS NULL AS open FROM tenant_suspensions WHERE tenant_id = $1",
+      [tenant],
+    );
+    expect(suspensions.rows).toEqual([{ open: false }]);
   });
 });
 

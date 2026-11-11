@@ -1,0 +1,260 @@
+/*
+ * The frame around every signed-in page: a sidebar with the navigation on a wide screen, and on
+ * a phone a bar across the top whose menu button slides the same sidebar in as a drawer. One
+ * navigation in the page, whatever the screen (shell/AppShell.tsx).
+ */
+
+.app {
+  min-height: 100dvh;
+}
+
+.skip-link {
+  position: absolute;
+  z-index: var(--z-toast);
+  top: var(--space-2);
+  left: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-brand-solid);
+  color: var(--color-on-brand);
+  font-weight: var(--weight-semibold);
+  transform: translateY(-200%);
+}
+
+.skip-link:focus {
+  transform: none;
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  width: var(--sidebar-width);
+  padding: var(--space-5) var(--space-4) var(--space-4);
+  border-right: 1px solid var(--color-border);
+  background: var(--color-surface);
+  overflow-y: auto;
+}
+
+.sidebar-brand {
+  padding: 0 var(--space-2);
+}
+
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.nav-section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.nav-heading {
+  padding: 0 var(--space-3) var(--space-2);
+  color: var(--color-text-subtle);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.nav-link {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: 2.5rem;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-md);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  text-decoration: none;
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
+}
+
+.nav-link:hover {
+  background: var(--color-surface-sunken);
+  color: var(--color-text);
+}
+
+.nav-link[aria-current="page"] {
+  background: var(--color-brand-soft);
+  color: var(--color-brand-soft-text);
+  font-weight: var(--weight-semibold);
+}
+
+.sidebar-footer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-top: auto;
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
+}
+
+.theme-switcher {
+  align-self: flex-start;
+}
+
+.sidebar-user {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: 0 var(--space-2);
+  min-width: 0;
+}
+
+.sidebar-note {
+  padding: 0 var(--space-2);
+  color: var(--color-text-subtle);
+  font-size: var(--text-xs);
+}
+
+.topbar {
+  position: sticky;
+  z-index: var(--z-nav);
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  height: var(--topbar-height);
+  padding: 0 var(--space-2) 0 var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+  background: color-mix(in srgb, var(--color-surface) 88%, transparent);
+  backdrop-filter: saturate(1.4) blur(10px);
+}
+
+.content {
+  width: 100%;
+  max-width: var(--content-max);
+  margin: 0 auto;
+  padding: var(--space-5) var(--space-4) var(--space-16);
+}
+
+.content:focus {
+  outline: none;
+}
+
+.scrim {
+  display: none;
+}
+
+/* A wide screen: the sidebar stays put beside the page, and the top bar isn't needed. */
+@media (min-width: 60rem) {
+  /* The sidebar's column is painted on the frame too, so its colour and edge run the page's
+     whole length, not just the first screen the sticky sidebar covers. */
+  .app {
+    display: grid;
+    grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+    background: linear-gradient(
+      90deg,
+      var(--color-surface) calc(var(--sidebar-width) - 1px),
+      var(--color-border) calc(var(--sidebar-width) - 1px),
+      var(--color-border) var(--sidebar-width),
+      transparent var(--sidebar-width)
+    );
+  }
+
+  .sidebar {
+    position: sticky;
+    top: 0;
+    height: 100dvh;
+  }
+
+  .topbar {
+    display: none;
+  }
+
+  .content {
+    padding: var(--space-8) var(--space-8) var(--space-16);
+  }
+}
+
+/* A phone or small tablet: the sidebar is a drawer, off screen (and out of reach of the
+   keyboard and screen readers) until the menu button opens it. */
+@media (max-width: 59.99rem) {
+  .sidebar {
+    position: fixed;
+    z-index: var(--z-drawer);
+    inset: 0 auto 0 0;
+    width: min(18rem, 86vw);
+    box-shadow: var(--shadow-lg);
+    transform: translateX(-100%);
+    visibility: hidden;
+    transition:
+      transform var(--duration-normal) var(--ease-out),
+      visibility 0s linear var(--duration-normal);
+  }
+
+  .app[data-nav-open="true"] .sidebar {
+    transform: none;
+    visibility: visible;
+    transition: transform var(--duration-normal) var(--ease-out);
+  }
+
+  .app[data-nav-open="true"] .scrim {
+    display: block;
+    position: fixed;
+    z-index: var(--z-scrim);
+    inset: 0;
+    background: var(--color-scrim);
+  }
+}
+
+/* ---------- Signed out, and the pages with no sidebar (signup) ---------- */
+
+.auth {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-6);
+  min-height: 100dvh;
+  padding: var(--space-8) var(--space-4);
+  background:
+    radial-gradient(60rem 30rem at 50% -10%, var(--color-brand-soft), transparent 70%),
+    var(--color-bg);
+}
+
+.auth-intro {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  text-align: center;
+}
+
+.auth-tagline {
+  max-width: 24rem;
+  color: var(--color-text-muted);
+}
+
+.auth-footer {
+  color: var(--color-text-subtle);
+  font-size: var(--text-xs);
+}
+
+.standalone {
+  min-height: 100dvh;
+}
+
+.standalone-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: var(--topbar-height);
+  padding: 0 var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.standalone .content {
+  max-width: var(--content-narrow);
+}

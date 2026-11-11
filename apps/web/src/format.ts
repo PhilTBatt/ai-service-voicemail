@@ -1,5 +1,6 @@
 // How values read on screen. Pure functions, tested in format.test.ts.
 import type { TenantListItem } from "@callmate/shared";
+import type { Tone } from "./design/tone.ts";
 
 /** "heating_engineer" → "Heating engineer" */
 export function humanise(value: string): string {
@@ -24,6 +25,7 @@ const DIRECT_DEBIT_LABELS: Record<TenantListItem["billing"]["directDebit"], stri
 /** A month's charge in a few words (BillingChargeView.status). */
 export const CHARGE_STATUS_LABELS: Record<string, string> = {
   nothing_due: "nothing due",
+  below_minimum: "under £1, waived",
   no_mandate: "owed, no Direct Debit",
   collecting: "being collected",
   pending: "being collected",
@@ -34,6 +36,15 @@ export const CHARGE_STATUS_LABELS: Record<string, string> = {
   cancelled: "payment cancelled",
   charged_back: "payment reversed",
 };
+
+/** The colour a month's charge is shown in: paid green, trouble red, waiting blue. */
+export function chargeTone(status: string): Tone {
+  if (status === "confirmed" || status === "paid_out") return "success";
+  if (status === "failed" || status === "cancelled" || status === "charged_back") return "danger";
+  if (status === "no_mandate") return "warning";
+  if (status === "collecting" || status === "pending" || status === "submitted") return "info";
+  return "neutral";
+}
 
 /** "Pilot · Direct Debit set up · last month: paid": the plan and billing status, no amounts. */
 export function billingSummary(billing: TenantListItem["billing"]): string {
@@ -50,6 +61,18 @@ export function billingSummary(billing: TenantListItem["billing"]): string {
 export function formatDuration(seconds: number): string {
   const whole = Math.max(0, Math.round(seconds));
   return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
+}
+
+/**
+ * A call's length in words, which can't be mistaken for a time of day beside one: "2 min",
+ * "42 sec", "2 min 5 sec". The same words as the page behind a text's link (call-page.ts).
+ */
+export function formatDurationWords(seconds: number): string {
+  const whole = Math.max(0, Math.round(seconds));
+  const minutes = Math.floor(whole / 60);
+  const rest = whole % 60;
+  if (minutes === 0) return `${rest} sec`;
+  return rest === 0 ? `${minutes} min` : `${minutes} min ${rest} sec`;
 }
 
 /**
@@ -88,4 +111,40 @@ export const URGENCY_LABELS: Record<string, string> = {
 
 export function urgencyLabel(urgency: string | null): string {
   return urgency === null ? "Not sorted yet" : (URGENCY_LABELS[urgency] ?? humanise(urgency));
+}
+
+const URGENCY_TONES: Record<string, Tone> = {
+  emergency: "danger",
+  urgent: "warning",
+  routine: "info",
+};
+
+/** The colour an urgency is shown in: red for emergencies, amber for urgent, blue for routine. */
+export function urgencyTone(urgency: string | null): Tone {
+  return (urgency !== null && URGENCY_TONES[urgency]) || "neutral";
+}
+
+/** A business's status as its owner would say it, and the colour it's shown in. */
+const STATUSES: Record<string, { label: string; tone: Tone }> = {
+  live: { label: "Answering", tone: "success" },
+  paused: { label: "Switched off", tone: "warning" },
+  suspended: { label: "Suspended", tone: "danger" },
+  onboarding: { label: "Setting up", tone: "info" },
+  cancelling: { label: "Leaving", tone: "warning" },
+  cancelled: { label: "Left", tone: "neutral" },
+  demo: { label: "Demo line", tone: "brand" },
+};
+
+export function statusDisplay(status: string): { label: string; tone: Tone } {
+  return STATUSES[status] ?? { label: humanise(status), tone: "neutral" };
+}
+
+/** "Fern Lane Plumbing" → "FL", "robin" → "R": up to two initials, or "?" with no name. */
+export function initialsOf(name: string | null | undefined): string {
+  const words = (name ?? "").match(/[\p{L}\p{N}][\p{L}\p{N}'’-]*/gu) ?? [];
+  const initials = words
+    .slice(0, 2)
+    .map((word) => word.charAt(0).toUpperCase())
+    .join("");
+  return initials === "" ? "?" : initials;
 }

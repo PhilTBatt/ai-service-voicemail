@@ -1,16 +1,16 @@
-// One business: its status, the on/off switch, and its calls, newest first, filterable by
-// urgency, by UK date and by whether they still need a reply, fifty at a time.
+// One business's calls: whether the assistant is answering (and the switch), then the calls,
+// newest first, grouped by UK day, filterable by urgency, by UK date and by whether they still
+// need a reply, fifty at a time.
 import {
   URGENCIES,
   type CallListView,
   type CallSummaryView,
-  type MeView,
   type SwitchView,
   type TenantView,
 } from "@callmate/shared";
 import { useEffect, useRef, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router";
-import { asError, useApi, useLoad } from "../api.ts";
+import { Link, useSearchParams } from "react-router";
+import { asError, useApi } from "../api.ts";
 import {
   callsQuery,
   filtersFromSearch,
@@ -18,45 +18,71 @@ import {
   searchFromFilters,
   type CallFilters,
 } from "../calls-query.ts";
-import { formatDuration, formatPhone, urgencyLabel } from "../format.ts";
-import { TenantHeader } from "../tenant-header.tsx";
-import { formatUkDateTime } from "../time.ts";
-import { ErrorNote, UrgencyBadge } from "../ui.tsx";
+import {
+  Avatar,
+  Badge,
+  Button,
+  Card,
+  EmptyState,
+  ErrorNote,
+  Loading,
+  Segmented,
+  SectionHeader,
+  TextField,
+  ToggleChip,
+} from "../design/components.tsx";
+import { useConfirm } from "../design/dialog.tsx";
+import { Check, Inbox, MessageSquare, Power, RotateCcw, Voicemail } from "../design/icons.ts";
+import { useToast } from "../design/toast.tsx";
+import { formatDurationWords, formatPhone, urgencyLabel, urgencyTone } from "../format.ts";
+import { useTenant } from "../tenant-layout.tsx";
+import { dayLabel, formatUkTime, ukDate } from "../time.ts";
+import { UrgencyBadge } from "../ui.tsx";
 
-export function TenantPage({ me }: { me: MeView }) {
-  const { tenantId = "" } = useParams();
-  const { api } = useApi();
-  const tenant = useLoad(() => api<TenantView>(`/tenants/${tenantId}`), tenantId);
-
-  if (tenant.status === "loading") return <p className="muted">Loading…</p>;
-  if (tenant.status === "error") return <ErrorNote error={tenant.error} retry={tenant.reload} />;
-
+export function TenantPage() {
+  const { tenant, reload } = useTenant();
   return (
     <>
-      <TenantHeader me={me} tenant={tenant.data} />
-      <AnsweringSwitch tenant={tenant.data} onChanged={tenant.reload} />
-      <Calls tenantId={tenantId} />
+      <AnsweringSwitch tenant={tenant} onChanged={reload} />
+      <Calls tenantId={tenant.id} />
     </>
   );
 }
 
-/** On and off are only for a live or paused business; anything else is support's job. */
+/**
+ * Whether the assistant is answering, and the switch. On and off are only for a live or paused
+ * business; for any other status the card says why it isn't answering, with no switch.
+ */
 function AnsweringSwitch({ tenant, onChanged }: { tenant: TenantView; onChanged: () => void }) {
   const { api } = useApi();
+  const confirm = useConfirm();
+  const toast = useToast();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<Error | null>(null);
-  if (tenant.status !== "live" && tenant.status !== "paused") return null;
-
+  const switchable = tenant.status === "live" || tenant.status === "paused";
   const on = tenant.status === "live";
+
   const flip = async () => {
-    const question = on
-      ? "Switch AnswerMate off? Callers will go to voicemail until you switch it back on."
-      : "Switch AnswerMate back on?";
-    if (!window.confirm(question)) return;
+    const yes = await confirm(
+      on
+        ? {
+            title: "Switch AnswerMate off?",
+            body: "Callers will go to voicemail until you switch it back on. You'll still get a text for each voicemail.",
+            confirmLabel: "Switch off",
+            tone: "danger",
+          }
+        : {
+            title: "Switch AnswerMate back on?",
+            body: "The assistant starts answering your diverted calls again straight away.",
+            confirmLabel: "Switch on",
+          },
+    );
+    if (!yes) return;
     setBusy(true);
     setError(null);
     try {
       await api<SwitchView>(`/tenants/${tenant.id}/switch`, { method: "PUT", body: { on: !on } });
+      toast({ title: on ? "AnswerMate is off" : "AnswerMate is on" });
       onChanged();
     } catch (caught) {
       setError(asError(caught));
@@ -65,24 +91,71 @@ function AnsweringSwitch({ tenant, onChanged }: { tenant: TenantView; onChanged:
     }
   };
 
+  const state = !switchable
+    ? notAnsweringReason(tenant.status)
+    : on
+      ? { tone: "success" as const, title: "AnswerMate is on", text: "Answering your calls." }
+      : { tone: "warning" as const, title: "AnswerMate is off", text: "Callers go to voicemail." };
+  if (!state) return null;
+
   return (
-    <section className="card switch">
-      <p>
-        AnswerMate is <strong>{on ? "on" : "off"}</strong>
-        {on ? " and answering calls." : ". Callers go to voicemail."}
-      </p>
-      <button type="button" disabled={busy} onClick={() => void flip()}>
-        {on ? "Switch off" : "Switch on"}
-      </button>
+    <section className="card answering" data-tone={state.tone} aria-label="Answering">
+      <div className="answering-state">
+        <span className="pulse" data-live={on} aria-hidden="true" />
+        <p>
+          <strong>{state.title}</strong> <span className="muted">{state.text}</span>
+        </p>
+      </div>
+      {switchable && (
+        <Button
+          variant={on ? "secondary" : "primary"}
+          icon={Power}
+          loading={busy}
+          onClick={() => void flip()}
+        >
+          {on ? "Switch off" : "Switch on"}
+        </Button>
+      )}
       {error && <ErrorNote error={error} />}
     </section>
   );
+}
+
+function notAnsweringReason(status: string) {
+  switch (status) {
+    case "onboarding":
+      return {
+        tone: "info" as const,
+        title: "Not answering yet.",
+        text: "AnswerMate starts answering once setup is finished.",
+      };
+    case "suspended":
+      return {
+        tone: "danger" as const,
+        title: "Suspended.",
+        text: "Callers go to voicemail. Please get in touch with us to sort it out.",
+      };
+    case "cancelling":
+    case "cancelled":
+      return {
+        tone: "neutral" as const,
+        title: "AnswerMate has been cancelled.",
+        text: "Callers hear that the service has ended.",
+      };
+    default:
+      return null;
+  }
 }
 
 interface CallPages {
   calls: CallSummaryView[];
   nextBefore: string | null;
 }
+
+const URGENCY_OPTIONS: { value: string; label: string }[] = [
+  { value: "", label: "All" },
+  ...URGENCIES.map((urgency) => ({ value: urgency, label: urgencyLabel(urgency) })),
+];
 
 function Calls({ tenantId }: { tenantId: string }) {
   const { api } = useApi();
@@ -140,78 +213,127 @@ function Calls({ tenantId }: { tenantId: string }) {
   };
 
   const set = (change: Partial<CallFilters>) => setFilters({ ...filters, ...change });
+  const filtered = query !== "";
+  const listSearch = searchFromFilters(filters).toString();
 
   return (
-    <section>
-      <h2>Calls</h2>
-      <form className="filters" onSubmit={(event) => event.preventDefault()}>
-        <label>
-          Urgency
-          <select
+    <section className="stack" aria-labelledby="calls-heading">
+      <div className="stack stack-sm">
+        <SectionHeader
+          title={<span id="calls-heading">Calls</span>}
+          actions={
+            filtered && (
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={RotateCcw}
+                onClick={() => setFilters(NO_FILTERS)}
+              >
+                Clear filters
+              </Button>
+            )
+          }
+        />
+        <div className="toolbar">
+          <Segmented
+            label="Urgency"
+            options={URGENCY_OPTIONS}
             value={filters.urgency}
-            onChange={(event) => set({ urgency: event.target.value })}
+            onChange={(urgency) => set({ urgency })}
+          />
+          <ToggleChip
+            pressed={filters.needsReply}
+            icon={MessageSquare}
+            onChange={(needsReply) => set({ needsReply })}
           >
-            <option value="">All</option>
-            {URGENCIES.map((urgency) => (
-              <option key={urgency} value={urgency}>
-                {urgencyLabel(urgency)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          From
-          <input
-            type="date"
-            value={filters.from}
-            onChange={(event) => set({ from: event.target.value })}
-          />
-        </label>
-        <label>
-          To
-          <input
-            type="date"
-            value={filters.to}
-            onChange={(event) => set({ to: event.target.value })}
-          />
-        </label>
-        <label className="checkbox">
-          <input
-            type="checkbox"
-            checked={filters.needsReply}
-            onChange={(event) => set({ needsReply: event.target.checked })}
-          />
-          Needs a reply
-        </label>
-        {query !== "" && (
-          <button type="button" className="link" onClick={() => setFilters(NO_FILTERS)}>
-            Clear
-          </button>
-        )}
-      </form>
+            Needs a reply
+          </ToggleChip>
+          <div className="toolbar-group">
+            <TextField
+              label="From"
+              type="date"
+              className="input-auto"
+              value={filters.from}
+              onChange={(event) => set({ from: event.target.value })}
+            />
+            <TextField
+              label="To"
+              type="date"
+              className="input-auto"
+              value={filters.to}
+              onChange={(event) => set({ to: event.target.value })}
+            />
+          </div>
+        </div>
+      </div>
 
       {error && <ErrorNote error={error} />}
-      {!pages && !error && <p className="muted">Loading calls…</p>}
-      {pages && pages.calls.length === 0 && <p className="muted">No calls match.</p>}
-      {pages && (
-        <ul className="list">
-          {pages.calls.map((call) => (
-            <CallRow
-              key={call.callId}
-              tenantId={tenantId}
-              call={call}
-              listSearch={searchFromFilters(filters).toString()}
-            />
+      {!pages && !error && (
+        <div className="card card-body">
+          <Loading label="Loading calls…" lines={4} />
+        </div>
+      )}
+      {pages && pages.calls.length === 0 && (
+        <div className="card">
+          {filtered ? (
+            <EmptyState
+              icon={Inbox}
+              title="No calls match"
+              action={
+                <Button variant="secondary" onClick={() => setFilters(NO_FILTERS)}>
+                  Clear filters
+                </Button>
+              }
+            >
+              Try another urgency or dates.
+            </EmptyState>
+          ) : (
+            <EmptyState icon={Inbox} title="No calls yet">
+              When AnswerMate answers a call, it appears here, and you get a text about it.
+            </EmptyState>
+          )}
+        </div>
+      )}
+      {pages && pages.calls.length > 0 && (
+        <div>
+          {groupByDay(pages.calls).map(({ day, label, calls }) => (
+            <section key={day} className="day-group">
+              <h3 className="day-heading">{label}</h3>
+              <Card flush>
+                <ul className="list list-divided">
+                  {calls.map((call) => (
+                    <CallRow
+                      key={call.callId}
+                      tenantId={tenantId}
+                      call={call}
+                      listSearch={listSearch}
+                    />
+                  ))}
+                </ul>
+              </Card>
+            </section>
           ))}
-        </ul>
+        </div>
       )}
       {pages?.nextBefore && (
-        <button type="button" disabled={loadingMore} onClick={() => void loadMore()}>
-          {loadingMore ? "Loading…" : "Show older calls"}
-        </button>
+        <Button variant="secondary" block loading={loadingMore} onClick={() => void loadMore()}>
+          Show older calls
+        </Button>
       )}
     </section>
   );
+}
+
+/** Calls in their UK days, newest day first, keeping the list's order within each. */
+function groupByDay(calls: CallSummaryView[]) {
+  const groups: { day: string; label: string; calls: CallSummaryView[] }[] = [];
+  for (const call of calls) {
+    const day = ukDate(new Date(call.startedAt));
+    const last = groups.at(-1);
+    if (last?.day === day) last.calls.push(call);
+    else groups.push({ day, label: dayLabel(call.startedAt), calls: [call] });
+  }
+  return groups;
 }
 
 function CallRow({
@@ -224,29 +346,32 @@ function CallRow({
   /** The list's filters, so the call page's "All calls" comes back to the same list. */
   listSearch: string;
 }) {
-  const caller = call.fields.callerName ?? "Unknown caller";
   const number = call.fields.callbackNumber ?? call.callerNumber;
   return (
-    <li className="card">
-      <Link
-        to={`/tenants/${tenantId}/calls/${call.callId}`}
-        state={{ listSearch }}
-        className="call-link"
-      >
-        <div className="row">
-          <span>{formatUkDateTime(call.startedAt)}</span>
-          <span>
-            {call.handledAt && <span className="badge handled">Called back</span>}
+    <li className="call-row">
+      <Link to={`/tenants/${tenantId}/calls/${call.callId}`} state={{ listSearch }}>
+        <Avatar name={call.fields.callerName} tone={urgencyTone(call.urgency)} />
+        <div className="call-main">
+          <div className="call-top">
+            <span className="call-who">
+              {call.fields.callerName ?? "Unknown caller"}
+              {number && <span className="call-number"> · {formatPhone(number)}</span>}
+            </span>
+            <span className="call-time">
+              {formatUkTime(call.startedAt)} · {formatDurationWords(call.durationSeconds)}
+            </span>
+          </div>
+          <p className="call-summary">{call.summary ?? "No summary yet."}</p>
+          <div className="call-tags">
             <UrgencyBadge urgency={call.urgency} />
-          </span>
+            {call.handledAt && (
+              <Badge tone="success" icon={Check}>
+                Called back
+              </Badge>
+            )}
+            {call.viaFallback && <Badge icon={Voicemail}>Voicemail</Badge>}
+          </div>
         </div>
-        <p className="row-title">
-          {caller}
-          {number && <span className="muted"> · {formatPhone(number)}</span>}
-          {call.viaFallback && <span className="muted"> · voicemail</span>}
-        </p>
-        <p className="summary">{call.summary ?? "No summary yet."}</p>
-        <p className="muted">{formatDuration(call.durationSeconds)}</p>
       </Link>
     </li>
   );
