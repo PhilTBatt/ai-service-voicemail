@@ -12,6 +12,7 @@ import { createPool } from "../db/pool.ts";
 import { withTenant } from "../db/tenant.ts";
 import { FakeAuthProvider } from "../providers/auth.fake.ts";
 import { FakeEmailProvider } from "../providers/email.fake.ts";
+import { FakePaymentsProvider } from "../providers/payments.fake.ts";
 import { FakeSmsProvider } from "../providers/sms.fake.ts";
 import { FakeTelephonyProvider } from "../providers/telephony.fake.ts";
 import { FakeVoiceProvider } from "../providers/voice.fake.ts";
@@ -292,6 +293,73 @@ describe("the delete-data action", () => {
         )
       ).rows[0]!.n,
     );
+
+  /** Makes the gone business one that paid: live from 14 August, left on 11 October. */
+  async function paidBusiness(lastStatus: string) {
+    const gone = await goneBusiness();
+    await admin.query(
+      `UPDATE tenants SET billing_start_date = '2026-08-14',
+              cancellation_requested_at = '2026-10-11T10:00:00Z' WHERE id = $1`,
+      [gone.tenantId],
+    );
+    const mandateRef = `MD${randomUUID().replaceAll("-", "").slice(0, 12)}`;
+    await withTenant(app, gone.tenantId, async (client) => {
+      await client.query(
+        `INSERT INTO payment_mandates (tenant_id, setup_ref, authorisation_url, expires_at, mandate_ref, status, activated_at)
+         VALUES ($1, $2, 'https://pay.fake.invalid', now(), $3, 'active', now())`,
+        [gone.tenantId, `BRQ${randomUUID()}`, mandateRef],
+      );
+      // Charged for the months starting 14 August and 14 September (it left in the second).
+      await client.query(
+        `INSERT INTO billing_charges (tenant_id, period_start, period_end, period_index,
+           billable_seconds, fee_pence, overage_minutes, overage_pence, vat_rate_percent,
+           vat_pence, total_pence, lines, status)
+         VALUES ($1, '2026-08-14', '2026-09-14', 0, 0, 9900, 0, 0, 0, 0, 9900, '[]', 'paid_out'),
+                ($1, '2026-09-14', '2026-10-14', 1, 0, 9900, 0, 0, 0, 0, 9900, '[]', $2)`,
+        [gone.tenantId, lastStatus],
+      );
+    });
+    return { ...gone, mandateRef };
+  }
+
+  it("cancels the Direct Debit with everything else once all it owes is collected", async () => {
+    const gone = await paidBusiness("confirmed");
+    const payments = new FakePaymentsProvider();
+    const { jobDeps } = deletionDeps(new FakeEmailProvider());
+    const run = {
+      ...jobDeps,
+      deletion: { ...jobDeps.deletion!, payments },
+      now: () => new Date("2026-11-11T12:00:00Z"),
+    };
+    expect(
+      await runOffboardingJob(run, { tenantId: gone.tenantId, action: "delete-data" }),
+    ).toMatchObject({ outcome: "deleted" });
+    expect(payments.cancelledMandates).toEqual([gone.mandateRef]);
+    const { rows } = await admin.query(
+      "SELECT status, end_reason FROM payment_mandates WHERE tenant_id = $1",
+      [gone.tenantId],
+    );
+    expect(rows).toEqual([{ status: "cancelled", end_reason: "business_left" }]);
+    // The billing record stays: it holds no personal data.
+    expect(await count("billing_charges", gone.tenantId)).toBe(2);
+  });
+
+  it("waits, touching nothing, while its last payment is still being collected", async () => {
+    const gone = await paidBusiness("submitted");
+    const payments = new FakePaymentsProvider();
+    const { voice, jobDeps } = deletionDeps(new FakeEmailProvider());
+    const run = {
+      ...jobDeps,
+      deletion: { ...jobDeps.deletion!, payments },
+      now: () => new Date("2026-11-11T12:00:00Z"),
+    };
+    expect(
+      await runOffboardingJob(run, { tenantId: gone.tenantId, action: "delete-data" }),
+    ).toEqual({ outcome: "billing-outstanding" });
+    expect(payments.cancelledMandates).toEqual([]);
+    expect(voice.deleteCalls).toEqual([]);
+    expect(await count("calls", gone.tenantId)).toBe(2);
+  });
 
   it("deletes at the providers, confirms in writing once, then deletes here, keeping the billing record", async () => {
     const gone = await goneBusiness();

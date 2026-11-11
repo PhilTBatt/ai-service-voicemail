@@ -15,7 +15,14 @@ export const notificationSettingsSchema = z.object({
 export type NotificationSettings = z.infer<typeof notificationSettingsSchema>;
 
 /** The tables a business can download as CSV (BUILD_PLAN Step 13), with what the page calls them. */
-export const CSV_EXPORTS = ["business", "calls", "messages", "assistant", "account-log"] as const;
+export const CSV_EXPORTS = [
+  "business",
+  "calls",
+  "messages",
+  "assistant",
+  "account-log",
+  "billing",
+] as const;
 export type CsvExport = (typeof CSV_EXPORTS)[number];
 export const CSV_EXPORT_LABELS: Record<CsvExport, string> = {
   business: "Business details",
@@ -23,4 +30,5 @@ export const CSV_EXPORT_LABELS: Record<CsvExport, string> = {
   messages: "Messages we sent",
   assistant: "Assistant settings",
   "account-log": "Account log",
+  billing: "Billing",
 };

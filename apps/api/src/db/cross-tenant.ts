@@ -10,6 +10,7 @@ import {
   type Trade,
 } from "@callmate/shared";
 import type pg from "pg";
+import { endedPeriods } from "../core/billing.ts";
 import type { CostPrices } from "../core/prices.ts";
 import { REVIEW_FLAGS } from "../core/review.ts";
 import { startOfUkDate, usagePeriodFor } from "../core/usage.ts";
@@ -776,9 +777,10 @@ export async function deletionPlan(
  * copies are gone. What goes: calls (with their costs and messages), the assistant's settings,
  * blocked numbers, onboarding and offboarding messages, memberships, and the people's login
  * details (their accounts are kept only as an anonymous reference for the terms record). What
- * stays: the business row, anonymised; usage periods (the billing record, kept for the period
- * Phil's accountant confirms); terms acceptances and the audit log, which are append-only
- * records; and the numbers it had, which are ours, not personal data.
+ * stays: the business row, anonymised; the billing record (usage periods, each month's charge,
+ * the Direct Debit's history and the payment provider's events, none of which holds personal
+ * details); terms acceptances and the audit log, which are append-only records; and the numbers
+ * it had, which are ours, not personal data.
  */
 export async function deleteTenantData(
   admin: AdminPool,
@@ -1259,6 +1261,61 @@ export async function tenantIdForCharge(
     [chargeId],
   );
   return rows[0]?.tenant_id ?? null;
+}
+
+/**
+ * What a business that's leaving still owes and hasn't paid yet (Step 13 with Step 12), in
+ * words, or null when nothing is: every month it's charged for (those that began before it
+ * asked to leave) has ended, been charged, and isn't still being collected. Its data, and so
+ * its Direct Debit, waits until then: cancelling the Direct Debit would cancel a payment still
+ * on its way. A month owed with no Direct Debit, or one whose payment failed, doesn't hold it
+ * up: neither will arrive by Direct Debit.
+ */
+export async function billingStillOwed(
+  admin: AdminPool,
+  tenantId: string,
+  today: string,
+): Promise<string | null> {
+  const tenant = (
+    await admin.query<{
+      billing_start_date: string | null;
+      is_test: boolean;
+      status: string;
+      left_on: string | null;
+    }>(
+      `SELECT billing_start_date::text, is_test, status,
+              to_char(cancellation_requested_at AT TIME ZONE 'Europe/London', 'YYYY-MM-DD') AS left_on
+       FROM tenants WHERE id = $1`,
+      [tenantId],
+    )
+  ).rows[0];
+  if (!tenant || tenant.billing_start_date === null || tenant.is_test || tenant.status === "demo") {
+    return null;
+  }
+  const leftOn = tenant.left_on ?? today;
+  const farEnough = Temporal.PlainDate.from(leftOn).add({ months: 2 }).toString();
+  const months = endedPeriods(tenant.billing_start_date, farEnough, leftOn);
+  const last = months.at(-1);
+  if (!last) return null;
+  if (last.periodEnd > today) {
+    return `its last month ends on ${last.periodEnd} and is charged that morning`;
+  }
+  const { rows } = await admin.query<{ period_start: string; status: string }>(
+    "SELECT period_start::text, status FROM billing_charges WHERE tenant_id = $1",
+    [tenantId],
+  );
+  const charged = new Map(rows.map((row) => [row.period_start, row.status]));
+  const uncharged = months.find((month) => !charged.has(month.periodStart));
+  if (uncharged) {
+    return `the month from ${uncharged.periodStart} hasn't been charged yet (the 06:00 run does it)`;
+  }
+  const collecting = rows.find((row) =>
+    ["collecting", "pending", "submitted"].includes(row.status),
+  );
+  if (collecting) {
+    return `the payment for the month from ${collecting.period_start} is still being collected`;
+  }
+  return null;
 }
 
 export interface BillableTenant {

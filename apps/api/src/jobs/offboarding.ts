@@ -14,9 +14,11 @@ import {
   deletionConfirmationEmail,
   deletionConfirmationText,
 } from "../core/offboarding.ts";
+import { ukDateOf } from "../core/billing.ts";
 import { checkOutbound, type OutboundPolicy } from "../core/outbound-allowlist.ts";
 import { toGsm7 } from "../core/sms.ts";
 import {
+  billingStillOwed,
   deleteTenantData,
   deletionPlan,
   recordDeletionConfirmed,
@@ -24,10 +26,12 @@ import {
   type AdminPool,
   type DeletionPlan,
 } from "../db/cross-tenant.ts";
+import { endMandate } from "../db/direct-debit.ts";
 import { withTenant } from "../db/tenant.ts";
 import { logger } from "../logger.ts";
 import type { AuthProvider } from "../providers/auth.ts";
 import type { EmailProvider } from "../providers/email.ts";
+import type { PaymentsProvider } from "../providers/payments.ts";
 import type { SmsProvider } from "../providers/sms.ts";
 import type { TelephonyProvider } from "../providers/telephony.ts";
 import type { VoiceProvider } from "../providers/voice.ts";
@@ -77,6 +81,8 @@ export interface DeletionDeps {
   telephony: TelephonyProvider;
   /** For deleting logins. Absent where the login provider isn't configured. */
   auth?: AuthProvider | undefined;
+  /** For cancelling the Direct Debit (Step 12). Absent where payments aren't configured. */
+  payments?: PaymentsProvider | undefined;
 }
 
 type ChannelOutcome =
@@ -88,7 +94,8 @@ export interface CancellationNoticesOutcome {
 }
 
 export interface DeletionOutcome {
-  outcome: "deleted" | "already-deleted" | "not-cancelled";
+  /** "billing-outstanding": a month is still to be charged or collected; nothing was touched. */
+  outcome: "deleted" | "already-deleted" | "not-cancelled" | "billing-outstanding";
   /** How the written confirmation went, or "not-sent" (an alert was raised). */
   confirmation?: "email" | "sms" | "not-sent" | "already-sent";
   calls?: number;
@@ -235,7 +242,7 @@ async function deleteData(
 
 async function deleteDataLocked(
   deps: OffboardingJobDeps,
-  { admin, voice, telephony, auth }: DeletionDeps,
+  { admin, voice, telephony, auth, payments }: DeletionDeps,
   job: OffboardingJobData,
 ): Promise<DeletionOutcome> {
   const plan = await deletionPlan(admin, job.tenantId);
@@ -247,9 +254,31 @@ async function deleteDataLocked(
     });
     return { outcome: "not-cancelled" };
   }
+  // The admin's screen checked this too; it can have changed since the job was queued. The
+  // Direct Debit is cancelled below, which would cancel a payment still on its way.
+  const owed = await billingStillOwed(
+    admin,
+    job.tenantId,
+    ukDateOf((deps.now ?? (() => new Date()))()),
+  );
+  if (owed) {
+    logger.warn("Deletion waits: the business still owes", { tenantId: job.tenantId, owed });
+    return { outcome: "billing-outstanding" };
+  }
+  const mandates = await withTenant(deps.pool, job.tenantId, async (client) =>
+    (
+      await client.query<{ mandate_ref: string }>(
+        "SELECT mandate_ref FROM payment_mandates WHERE tenant_id = $1 AND status = 'active'",
+        [job.tenantId],
+      )
+    ).rows.map((row) => row.mandate_ref),
+  );
   // Checked before anything goes, so a missing setting can't leave a deletion half done.
   if (plan.logins.length > 0 && !auth) {
     throw new Error("Deleting a login needs CLERK_SECRET_KEY set for the worker");
+  }
+  if (mandates.length > 0 && !payments) {
+    throw new Error("Cancelling a Direct Debit needs GOCARDLESS_ACCESS_TOKEN set for the worker");
   }
 
   // 1. At the providers.
@@ -269,6 +298,13 @@ async function deleteDataLocked(
   }
   for (const ref of plan.messageRefs) await deps.sms.deleteMessage(ref);
   for (const subject of plan.logins) await auth?.deleteLogin(subject);
+  // The Direct Debit: nothing more is taken from the business's account. Safe to repeat.
+  for (const mandateRef of mandates) {
+    await payments?.cancelMandate(mandateRef);
+    await withTenant(deps.pool, job.tenantId, (client) =>
+      endMandate(client, job.tenantId, mandateRef, "cancelled", "business_left"),
+    );
+  }
 
   // 2. The written confirmation, before the addresses go, and only once. If neither email nor
   //    text can carry it, an alert asks Phil to confirm another way; the deletion still happens.

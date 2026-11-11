@@ -1083,6 +1083,49 @@ describe("cancellation", () => {
     expect(tenants.find((row) => row.tenantId === tenant)?.status).toBe("cancelled");
   });
 
+  it("won't delete a business's data while it still owes a month (its Direct Debit goes with it)", async () => {
+    const tenant = await createTenant(admin, { businessName: "Owes Glazing", trade: "plumber" });
+    // Live from 20 August, left on 15 October: it's charged for the months starting 20 August
+    // and 20 September, and the second ends on 20 October. The screen's clock is 7 November.
+    await admin.query(
+      `UPDATE tenants SET status = 'cancelled', billing_start_date = '2026-08-20',
+              cancellation_requested_at = '2026-10-15T10:00:00Z' WHERE id = $1`,
+      [tenant],
+    );
+    const named = { confirm: true, businessName: "Owes Glazing" };
+    const charge = (periodStart: string, periodEnd: string, status: string) =>
+      withTenant(app, tenant, (client) =>
+        client.query(
+          `INSERT INTO billing_charges (tenant_id, period_start, period_end, period_index,
+             billable_seconds, fee_pence, overage_minutes, overage_pence, vat_rate_percent,
+             vat_pence, total_pence, lines, status)
+           VALUES ($1, $2, $3, 0, 0, 9900, 0, 0, 0, 0, 9900, '[]', $4)`,
+          [tenant, periodStart, periodEnd, status],
+        ),
+      );
+    await charge("2026-08-20", "2026-09-20", "paid_out");
+    // September's month ended on 20 October, but no charge has been made for it yet.
+    let refused = await send("POST", `/admin/tenants/${tenant}/delete-data`, named, tokens.admin);
+    expect(refused.status).toBe(409);
+    expect(((await refused.json()) as { error: string }).error).toMatch(
+      /^Not yet: the month from 2026-09-20 hasn't been charged yet/,
+    );
+    // Charged, and on its way.
+    await charge("2026-09-20", "2026-10-20", "submitted");
+    refused = await send("POST", `/admin/tenants/${tenant}/delete-data`, named, tokens.admin);
+    expect(((await refused.json()) as { error: string }).error).toMatch(/still being collected/);
+    // Collected: now it can go.
+    await withTenant(app, tenant, (client) =>
+      client.query(
+        "UPDATE billing_charges SET status = 'confirmed' WHERE tenant_id = $1 AND period_start = '2026-09-20'",
+        [tenant],
+      ),
+    );
+    expect(
+      (await send("POST", `/admin/tenants/${tenant}/delete-data`, named, tokens.admin)).status,
+    ).toBe(202);
+  });
+
   it("queues a gone business's data for deletion only once it has left, and only with its name", async () => {
     const tenant = await createTenant(admin, { businessName: "Gone Glazing", trade: "plumber" });
     await admin.query(
@@ -1341,6 +1384,27 @@ describe("billing for the admin (Step 12)", () => {
     const again = await send("POST", `/admin/charges/${chargeId}/collect-again`, {}, tokens.admin);
     expect(again.status).toBe(409);
     expect(payments.retried.filter((ref) => ref === paymentRef)).toHaveLength(1);
+  });
+
+  it("puts each month's charge in the business's own data download", async () => {
+    const { tenant } = await chargedBusiness("paid_out", "PM_DOWNLOAD");
+    const owner = await personFor(tenant);
+    const csv = await (await get(`/tenants/${tenant}/export.csv?table=billing`, owner)).text();
+    const lines = csv.replace(new RegExp(`^${String.fromCharCode(0xfeff)}`), "").split("\r\n");
+    expect(lines[0]).toBe(
+      "month_from,month_to,billable_minutes,fee,overage,vat,total,status,collected_from",
+    );
+    expect(lines[1]).toBe("2026-10-01,2026-10-31,0,99.00,0.00,0.00,99.00,paid_out,");
+    const exported = await json<{ billingCharges: { total_pence: number; status: string }[] }>(
+      get(`/tenants/${tenant}/export`, owner),
+    );
+    expect(exported.billingCharges).toEqual([
+      expect.objectContaining({
+        total_pence: 9900,
+        status: "paid_out",
+        period_start: "2026-10-01",
+      }),
+    ]);
   });
 
   it("says GoCardless's refusal plainly when it won't collect again", async () => {

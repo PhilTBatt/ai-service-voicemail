@@ -133,18 +133,24 @@ businesses" on the Admin page. After 30 days the "Release number" button appears
 number back to Twilio for good and marks the business cancelled.
 
 The business then stays on that list as "number released, data still held", with a **Delete
-data** button. Type the business's name when asked, and the worker deletes, in this order:
+data** button. It's charged for the month it left in (section 17), and deleting cancels its
+Direct Debit, so the button refuses, saying why, until that last month has ended, been charged,
+and been collected: usually a few days after the month ends. Type the business's name when
+asked, and the worker deletes, in this order:
 
 1. At Retell: each call's data, then the business's conversation flow and its agent.
 2. At Twilio: the voicemail recordings, the call records for each number the business held
    (from when it was bought until it was released), and every text we sent about it.
 3. At Clerk: the logins of the people whose only business this was.
-4. The written confirmation: by email, or by text if the email can't go (outside production,
+4. At GoCardless: the Direct Debit is cancelled, so nothing more can be taken.
+5. The written confirmation: by email, or by text if the email can't go (outside production,
    only to addresses on `OUTBOUND_ALLOWLIST`).
-5. Here: calls, messages, the assistant's settings, contact details and those people's
-   accounts. The billing totals, the terms the business accepted and the account log stay.
+6. Here: calls, messages, the assistant's settings, contact details and those people's
+   accounts. The billing record (each month's charge, the Direct Debit's history, which hold
+   no personal details), the terms the business accepted and the account log stay.
 
-The worker needs `ADMIN_DATABASE_URL`, the Twilio settings and `CLERK_SECRET_KEY` for this.
+The worker needs `ADMIN_DATABASE_URL`, the Twilio settings, `CLERK_SECRET_KEY`, and
+`GOCARDLESS_ACCESS_TOKEN` if the business has a Direct Debit, for this.
 A step that fails is retried; after the last retry the job goes to the dead-letter queue, which
 alerts you. If the confirmation can't go by email or text, the deletion still happens and you
 get a `deletion-confirmation-not-sent` alert naming the business: confirm it to them another

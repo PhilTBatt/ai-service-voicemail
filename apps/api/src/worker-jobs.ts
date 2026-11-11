@@ -126,6 +126,8 @@ export async function registerJobs(
             auth: config.clerkSecretKey
               ? new ClerkAuthProvider({ secretKey: config.clerkSecretKey, authorizedParties: [] })
               : undefined,
+            // The Direct Debit is cancelled when the data goes (Step 12).
+            payments: config.payments ? new GoCardlessPaymentsProvider(config.payments) : undefined,
           }
         : undefined;
     await boss.work<OffboardingJobData>(OFFBOARDING_QUEUE, async (jobs) => {

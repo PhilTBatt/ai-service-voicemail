@@ -144,6 +144,22 @@ export async function exportTenant(pool: pg.Pool, tenantId: string) {
       "SELECT kind, channel, status, created_at FROM offboarding_messages WHERE tenant_id = $1 ORDER BY created_at",
       [tenantId],
     );
+    // Billing (Step 12): each month's charge with its lines, and each Direct Debit set up. The
+    // provider's references are ours to look things up by; bank details never reach us.
+    const charges = await client.query(
+      `SELECT to_char(period_start, 'YYYY-MM-DD') AS period_start,
+              to_char(period_end, 'YYYY-MM-DD') AS period_end, billable_seconds, fee_pence,
+              overage_minutes, overage_pence, vat_rate_percent, vat_pence, total_pence, vat_number,
+              lines, status, to_char(charge_date, 'YYYY-MM-DD') AS charge_date, failure_reason,
+              created_at
+       FROM billing_charges WHERE tenant_id = $1 ORDER BY period_start`,
+      [tenantId],
+    );
+    const directDebits = await client.query(
+      `SELECT status, end_reason, activated_at, ended_at, created_at
+       FROM payment_mandates WHERE tenant_id = $1 ORDER BY created_at`,
+      [tenantId],
+    );
     return {
       exportedAt: new Date().toISOString(),
       tenant: (tenant.rows[0] as Record<string, unknown> | undefined) ?? null,
@@ -157,6 +173,8 @@ export async function exportTenant(pool: pg.Pool, tenantId: string) {
       blockedNumbers: blocked.rows,
       onboardingTexts: setupTexts.rows,
       offboardingMessages: leavingMessages.rows,
+      billingCharges: charges.rows,
+      directDebits: directDebits.rows,
     };
   });
 }
@@ -229,6 +247,28 @@ const CSV_QUERIES: Record<CsvExport, { header: string[]; sql: string }> = {
   "account-log": {
     header: ["at", "action", "details"],
     sql: "SELECT created_at, action, details FROM audit_log WHERE tenant_id = $1 ORDER BY created_at",
+  },
+  // Money as pounds and pence for a spreadsheet; the pence are exact, so the text is too.
+  billing: {
+    header: [
+      "month_from",
+      "month_to",
+      "billable_minutes",
+      "fee",
+      "overage",
+      "vat",
+      "total",
+      "status",
+      "collected_from",
+    ],
+    sql: `SELECT to_char(period_start, 'YYYY-MM-DD'), to_char(period_end - 1, 'YYYY-MM-DD'),
+                 ceil(billable_seconds / 60.0)::int,
+                 to_char(fee_pence / 100.0, 'FM999990.00'),
+                 to_char(overage_pence / 100.0, 'FM999990.00'),
+                 to_char(vat_pence / 100.0, 'FM999990.00'),
+                 to_char(total_pence / 100.0, 'FM999990.00'),
+                 status, to_char(charge_date, 'YYYY-MM-DD')
+          FROM billing_charges WHERE tenant_id = $1 ORDER BY period_start`,
   },
 };
 

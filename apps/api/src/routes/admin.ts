@@ -32,6 +32,7 @@ import {
   activeNumberFor,
   auditAdminAction,
   billingOverview,
+  billingStillOwed,
   tenantIdForCharge,
   tenantExists,
   withAdvisoryLock,
@@ -496,6 +497,15 @@ export function adminRouter({
     }
     if (body.data.businessName.trim().toLowerCase() !== tenant.businessName.trim().toLowerCase()) {
       res.status(409).json({ error: "That isn't the business's name" });
+      return;
+    }
+    // Deleting cancels its Direct Debit, which would cancel a payment still on its way: what
+    // it owes is charged and collected first.
+    const owed = await billingStillOwed(admin, tenantId, ukDateOf(now()));
+    if (owed) {
+      res
+        .status(409)
+        .json({ error: `Not yet: ${owed}. Its data can be deleted once that's done.` });
       return;
     }
     if (!enqueueOffboarding) {
