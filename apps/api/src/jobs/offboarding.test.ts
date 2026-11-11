@@ -248,6 +248,11 @@ describe("the delete-data action", () => {
         "INSERT INTO onboarding_texts (tenant_id, kind, status, provider_ref) VALUES ($1, 'divert_instructions', 'sent', $2)",
         [tenantId, texts[2]],
       );
+      // A caller the business blocked: their number is personal data, so it goes too.
+      await client.query(
+        "INSERT INTO blocked_numbers (tenant_id, number, reason) VALUES ($1, '+447700900642', 'nuisance')",
+        [tenantId],
+      );
       await client.query(
         `INSERT INTO offboarding_messages (tenant_id, kind, channel, status, provider_ref)
          VALUES ($1, 'cancellation', 'sms', 'sent', $2), ($1, 'cancellation', 'email', 'sent', $3)`,
@@ -424,7 +429,10 @@ describe("the delete-data action", () => {
     for (const table of [
       "calls",
       "call_costs",
+      "notifications",
       "agent_profiles",
+      "blocked_numbers",
+      "onboarding_texts",
       "tenant_memberships",
       "offboarding_messages",
     ]) {

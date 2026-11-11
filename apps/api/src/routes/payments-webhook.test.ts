@@ -192,11 +192,22 @@ describe("POST /webhooks/gocardless", () => {
     await send("paid_out");
     expect(await status()).toEqual({ status: "paid_out", failure_reason: null });
     alert.mockClear();
+    enqueueBillingEmail.mockClear();
     await send("failed", "insufficient_funds");
     expect(alert).toHaveBeenCalledWith(
       "billing-payment-failed",
       expect.objectContaining({ tenantId, status: "failed", reason: "insufficient_funds" }),
     );
+    expect(alert).toHaveBeenCalledTimes(1);
+    expect(enqueueBillingEmail).toHaveBeenCalledWith(
+      { tenantId, kind: "payment_failed", ref: chargeId },
+      expect.anything(),
+    );
+    expect(await status()).toEqual({ status: "failed", failure_reason: "insufficient_funds" });
+    // Delivered again: told once, not twice.
+    alert.mockClear();
+    await send("failed", "insufficient_funds");
+    expect(alert).not.toHaveBeenCalled();
   });
 
   it("follows a mandate that's replaced, and one reinstated after it ended", async () => {
@@ -242,16 +253,27 @@ describe("POST /webhooks/gocardless", () => {
   });
 
   it("acknowledges events about things it doesn't know, so the provider stops sending them", async () => {
-    const unknown = payments.webhookFor([
+    alert.mockClear();
+    enqueueBillingEmail.mockClear();
+    const events = [
       event({ resourceType: "payouts" as never, action: "paid" }),
       event({ resourceType: "mandates", action: "cancelled", links: { mandate: "MD_NOBODY" } }),
-    ]);
+    ];
+    const unknown = payments.webhookFor(events);
     expect((await post(unknown.rawBody, unknown.headers)).status).toBe(204);
+    // Acknowledged, and nothing recorded, ended, emailed or alerted.
+    const { rows } = await admin.query("SELECT 1 FROM payment_events WHERE event_id = ANY($1)", [
+      events.map((e) => e.id),
+    ]);
+    expect(rows).toEqual([]);
+    expect(alert).not.toHaveBeenCalled();
+    expect(enqueueBillingEmail).not.toHaveBeenCalled();
   });
 
   it("answers a bad signature with 498, changes nothing, and alerts on a run of them", async () => {
     const { tenantId, setupRef } = await businessWithSetup();
     alert.mockClear();
+    enqueueOnboarding.mockClear();
     const forged = payments.webhookFor([
       event({
         resourceType: "billing_requests",
@@ -267,6 +289,8 @@ describe("POST /webhooks/gocardless", () => {
       tenantId,
     ]);
     expect(rows).toEqual([{ status: "pending" }]);
+    // A forged "fulfilled" mustn't start the business going live either.
+    expect(enqueueOnboarding).not.toHaveBeenCalled();
     expect(alert).toHaveBeenCalledWith("webhook-signature-spike", {
       source: "gocardless",
       inWindow: SIGNATURE_FAILURES_PER_WINDOW + 1,

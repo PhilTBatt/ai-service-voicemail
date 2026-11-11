@@ -75,6 +75,11 @@ export class FakePaymentsProvider implements PaymentsProvider {
 
   async createPayment(request: PaymentRequest): Promise<PaymentReceipt> {
     await Promise.resolve();
+    // As strict as the GoCardless adapter, so a test can't pass with an amount the real one
+    // would refuse.
+    if (!Number.isInteger(request.amountPence) || request.amountPence <= 0) {
+      throw new Error("A payment's amount must be a whole number of pence above zero");
+    }
     this.failIfTold();
     const existing = this.payments.find((p) => p.idempotencyKey === request.idempotencyKey);
     if (existing) {

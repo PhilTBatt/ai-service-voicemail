@@ -3,6 +3,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { loadConfig } from "./config.ts";
 import { createAdminPool } from "./db/cross-tenant.ts";
 import { createPool } from "./db/pool.ts";
+import { SCHEDULED_JOBS } from "./db/scheduled-runs.ts";
 import * as queue from "./jobs/queue.ts";
 import { TEST_ADMIN_DATABASE_URL, TEST_DATABASE_URL } from "./testing/databases.ts";
 import { MINIMAL_WORKER_ENV, STAND_IN_ENV } from "./testing/stand-in-env.ts";
@@ -71,6 +72,9 @@ describe("registerJobs", () => {
       ]),
     );
     expect(scheduled).toHaveLength(4);
+    // Exactly the jobs the overdue check and the Admin page know: one scheduled without being
+    // known would never be watched, one known but never scheduled would always be overdue.
+    expect(scheduled.map((s) => s.name).sort()).toEqual(Object.keys(SCHEDULED_JOBS).sort());
   });
 
   it("leaves every other queue's jobs waiting when only Retell is set up", async () => {

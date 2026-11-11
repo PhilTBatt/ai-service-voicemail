@@ -163,6 +163,9 @@ function SignupForm({ code, link }: { code: string; link: SignupLinkView }) {
   return (
     <form
       className="form-sections"
+      // The schema checks it, and says what's wrong by each field. Without this, the browser's
+      // own email check stopped the form first, so nothing else was checked or marked.
+      noValidate
       onSubmit={(event) => {
         event.preventDefault();
         void submit();

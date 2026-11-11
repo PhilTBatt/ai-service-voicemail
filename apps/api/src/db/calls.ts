@@ -61,9 +61,14 @@ export async function recordCallEnded(
         billable,
         event.endReason,
         // One line per turn. A newline inside a turn would make its tail look like the other
-        // speaker's line when parsed back, so it's folded into a space.
+        // speaker's line when parsed back, so it's folded into a space. A NUL character (valid
+        // JSON, but Postgres text can't hold it) is dropped: otherwise the insert fails, and
+        // the call is lost on every redelivery and every reconciliation run.
         event.transcript
-          .map((turn) => `${turn.role}: ${turn.text.replaceAll(/\s*\n\s*/g, " ")}`)
+          .map(
+            (turn) =>
+              `${turn.role}: ${turn.text.replaceAll("\u0000", "").replaceAll(/\s*\n\s*/g, " ")}`,
+          )
           .join("\n"),
         event.recordingRef,
       ],
@@ -141,7 +146,11 @@ export async function recordMidCallEmergency(
   event: FunctionCallEvent,
   now: () => Date = () => new Date(),
 ): Promise<MidCallEmergencyResult> {
-  const kind = EMERGENCY_FUNCTION_KINDS[event.name];
+  // Own keys only: a name such as "constructor" or "__proto__" would otherwise find Object's
+  // own properties and be taken for an emergency kind.
+  const kind = Object.hasOwn(EMERGENCY_FUNCTION_KINDS, event.name)
+    ? EMERGENCY_FUNCTION_KINDS[event.name]
+    : undefined;
   if (!kind) return { outcome: "not-an-emergency-function", name: event.name };
   if (event.dialledNumber === null) return { outcome: "unknown-number" };
   const tenantId = await findTenantIdByNumber(pool, event.dialledNumber);

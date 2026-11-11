@@ -29,6 +29,11 @@ afterAll(async () => {
   await pool.end();
 });
 
+// A spy left on the shared logger by a failed assertion would silence the next test's logging.
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 const HOUR_MS = 60 * 60_000;
 
 describe("isOverdue", () => {

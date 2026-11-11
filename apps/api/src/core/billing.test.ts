@@ -70,6 +70,18 @@ describe("billingPeriodEndingOn", () => {
       periodEnd: "2026-02-28",
       index: 0,
     });
+    // After February the 31st anchor comes back: the month from 28 February ends on 31 March,
+    // and nothing ends on the 28th of March.
+    expect(billingPeriodEndingOn("2026-01-31", "2026-03-31")).toEqual({
+      periodStart: "2026-02-28",
+      periodEnd: "2026-03-31",
+      index: 1,
+    });
+    expect(billingPeriodEndingOn("2026-01-31", "2026-03-28")).toBeNull();
+    // A leap day's anchor: 29 February 2028 to 28 February 2029, then back to the 29th in 2032.
+    expect(billingPeriodEndingOn("2028-02-29", "2029-02-28")?.index).toBe(11);
+    expect(billingPeriodEndingOn("2028-02-29", "2032-02-29")?.index).toBe(47);
+    expect(billingPeriodEndingOn("2028-02-29", "2032-02-28")).toBeNull();
   });
 });
 
@@ -169,6 +181,16 @@ describe("chargeFor", () => {
       vat,
     });
     expect(before.vatPence).toBe(0);
+    // The edge: a period beginning the very day the registration does is charged VAT; one
+    // beginning the day before isn't.
+    const sameDay = { number: "GB123456789", from: period.periodStart };
+    expect(
+      chargeFor({ plan, period, isPilot: false, billableSeconds: 0, vat: sameDay }),
+    ).toMatchObject({ vatRatePercent: 20, vatPence: 1980, totalPence: 11_880 });
+    const dayLater = { number: "GB123456789", from: "2026-07-15" };
+    expect(
+      chargeFor({ plan, period, isPilot: false, billableSeconds: 0, vat: dayLater }).vatPence,
+    ).toBe(0);
   });
 
   it("waives the pilot's fee, not its overage", () => {
@@ -200,6 +222,16 @@ describe("chargeFor", () => {
     ]) {
       expect(Number.isInteger(value)).toBe(true);
     }
+    // 12,345 s is 205.75 minutes, rounded up once to 206: 6 over at 20p. VAT on £100.20 is
+    // £20.04. Being whole isn't enough; these are the sums.
+    expect(charge).toMatchObject({
+      overageMinutes: 6,
+      overagePence: 120,
+      subtotalPence: 10_020,
+      vatPence: 2004,
+      totalPence: 12_024,
+    });
+    expect(charge.lines.reduce((sum, line) => sum + line.pence, 0)).toBe(charge.subtotalPence);
   });
 });
 
@@ -222,6 +254,13 @@ describe("endedPeriods: what the morning run charges", () => {
     expect(
       endedPeriods("2026-06-14", "2026-10-01", "2026-07-14").map((p) => p.periodStart),
     ).toEqual(["2026-06-14"]);
+    // Left on the day it went live, or before (a cancellation during onboarding): nothing.
+    expect(endedPeriods("2026-06-14", "2026-10-01", "2026-06-14")).toEqual([]);
+    expect(endedPeriods("2026-06-14", "2026-10-01", "2026-05-01")).toEqual([]);
+    // Left on the second day: the first month is charged in full (no pro rata).
+    expect(endedPeriods("2026-06-14", "2026-10-01", "2026-06-15")).toEqual([
+      { periodStart: "2026-06-14", periodEnd: "2026-07-14", index: 0 },
+    ]);
   });
 
   it("agrees with billingPeriodFor around a 31st anchor", () => {
@@ -253,5 +292,9 @@ describe("formatPence", () => {
     expect(formatPence(20)).toBe("£0.20");
     expect(formatPence(11928)).toBe("£119.28");
     expect(formatPence(-5)).toBe("-£0.05");
+    expect(formatPence(0)).toBe("£0.00");
+    expect(formatPence(1)).toBe("£0.01");
+    expect(formatPence(100)).toBe("£1.00");
+    expect(formatPence(100_000)).toBe("£1000.00");
   });
 });

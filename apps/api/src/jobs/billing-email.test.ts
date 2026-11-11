@@ -65,6 +65,12 @@ describe("runBillingEmail", () => {
     });
     expect(d.email.sent[0]?.text).toContain("Total: £99.00");
     expect(d.email.sent[0]?.text).toContain("on or soon after 19 Jul 2026");
+    // Recorded as sent, once, against this charge, with the provider's reference.
+    const { rows } = await admin.query<{ status: string; provider_ref: string | null }>(
+      "SELECT status, provider_ref FROM billing_emails WHERE kind = 'receipt' AND ref = $1",
+      [chargeId],
+    );
+    expect(rows).toEqual([{ status: "sent", provider_ref: expect.any(String) as string }]);
   });
 
   it("links a business whose Direct Debit ended back to its Account tab", async () => {

@@ -48,10 +48,12 @@ export function routeInboundCall(context: InboundCallContext, now: Date): RouteD
   switch (tenant.status) {
     case "live":
     case "demo":
-      // The registered mobile is the owner testing their own line: never capped.
+      // The registered mobile is the owner testing their own line: never capped. A withheld
+      // caller is nobody in particular, even to a business with no mobile on record (null
+      // matched null, and every withheld call went uncapped).
       if (
         tenant.status === "demo" &&
-        context.callerNumber !== tenant.notificationMobile &&
+        !(context.callerNumber !== null && context.callerNumber === tenant.notificationMobile) &&
         context.callerCallsToday >= DEMO_DAILY_CALLS_PER_CALLER
       ) {
         return { kind: "demo-limit" };

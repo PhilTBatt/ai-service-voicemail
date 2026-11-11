@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { afterAll, describe, expect, it } from "vitest";
+import pg from "pg";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { clearExpiredTranscripts, createAdminPool, createTenant } from "../db/cross-tenant.ts";
 import { FakeTelephonyProvider } from "../providers/telephony.fake.ts";
 import { FakeVoiceProvider } from "../providers/voice.fake.ts";
@@ -10,8 +11,20 @@ const admin = createAdminPool(TEST_ADMIN_DATABASE_URL);
 const NOW = new Date("2026-11-06T12:00:00Z");
 const daysAgo = (days: number) => new Date(NOW.getTime() - days * 86_400_000);
 
+// Retention sweeps every business, so this file and retention.boundaries.test.ts take turns:
+// run side by side, one's sweep would take the other's rows before its own run counted them.
+const RETENTION_FILES_LOCK = 4_720_031;
+let turn: pg.Client;
+beforeAll(async () => {
+  turn = new pg.Client({ connectionString: TEST_ADMIN_DATABASE_URL });
+  await turn.connect();
+  await turn.query("SELECT pg_advisory_lock($1)", [RETENTION_FILES_LOCK]);
+}, 120_000);
+
 afterAll(async () => {
   await admin.end();
+  await turn.query("SELECT pg_advisory_unlock($1)", [RETENTION_FILES_LOCK]);
+  await turn.end();
 });
 
 interface Seed {

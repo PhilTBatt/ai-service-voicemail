@@ -107,6 +107,7 @@ function ConfirmDialog({
     requireLabel,
   } = options;
   const ref = useRef<HTMLDialogElement>(null);
+  const confirmButton = useRef<HTMLButtonElement>(null);
   const [typed, setTyped] = useState("");
   const titleId = useId();
   const inputId = useId();
@@ -114,11 +115,17 @@ function ConfirmDialog({
   const ready =
     requireText === undefined || typed.trim().toLowerCase() === requireText.trim().toLowerCase();
   const Icon = tone === "danger" ? CircleAlert : tone === "warning" ? TriangleAlert : Info;
+  // The safe choice has focus first for anything dangerous; otherwise the action.
+  const focusAction = tone !== "danger" && requireText === undefined;
 
   useEffect(() => {
     const dialog = ref.current;
     if (dialog && !dialog.open) dialog.showModal();
-  }, []);
+    // showModal() puts focus on the first control: Cancel, or the box to type in, which is
+    // right for anything dangerous. React's autoFocus can't override it (it focuses before
+    // showModal runs), so the action is focused here, after.
+    if (focusAction) confirmButton.current?.focus();
+  }, [focusAction]);
 
   return (
     <dialog
@@ -168,11 +175,10 @@ function ConfirmDialog({
             {cancelLabel}
           </button>
           <button
+            ref={confirmButton}
             type="submit"
             className={`btn ${tone === "danger" ? "btn-danger" : "btn-primary"}`}
             disabled={!ready}
-            // The safe choice has focus first for anything dangerous; otherwise the action.
-            autoFocus={tone !== "danger" && requireText === undefined}
           >
             {confirmLabel}
           </button>

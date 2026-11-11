@@ -15,6 +15,20 @@ describe("formatUkTime", () => {
     expect(formatUkTime("2026-11-07T09:05:00Z")).toBe("09:05");
     expect(formatUkTime("2026-07-01T23:30:00Z")).toBe("00:30");
   });
+
+  it("shows midnight as 00:00, never 24:00, in both seasons", () => {
+    expect(formatUkTime("2026-11-07T00:00:00Z")).toBe("00:00");
+    expect(formatUkTime("2026-06-30T23:00:00Z")).toBe("00:00");
+  });
+
+  it("shows the hour the clocks go back twice, and skips the hour they go forward", () => {
+    // 25 October 2026: 01:30 happens once in BST (00:30 UTC) and again in GMT (01:30 UTC).
+    expect(formatUkTime("2026-10-25T00:30:00Z")).toBe("01:30");
+    expect(formatUkTime("2026-10-25T01:30:00Z")).toBe("01:30");
+    // 29 March 2026: one minute after 00:59 GMT is 02:00 BST.
+    expect(formatUkTime("2026-03-29T00:59:00Z")).toBe("00:59");
+    expect(formatUkTime("2026-03-29T01:00:00Z")).toBe("02:00");
+  });
 });
 
 describe("dayLabel", () => {

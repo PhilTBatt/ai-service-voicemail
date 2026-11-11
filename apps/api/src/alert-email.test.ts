@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { alertEmailer, alertMessage } from "./alert-email.ts";
 import { raiseAlert, setAlertSink } from "./alerts.ts";
+import { logger } from "./logger.ts";
 import { FakeEmailProvider } from "./providers/email.fake.ts";
 
 const TO = "phil@example.com";
@@ -16,6 +17,7 @@ function emailer(overrides: Partial<Parameters<typeof alertEmailer>[0]> = {}) {
 
 afterEach(() => {
   setAlertSink(undefined);
+  vi.restoreAllMocks();
 });
 
 describe("alertEmailer", () => {
@@ -75,16 +77,27 @@ describe("alertEmailer", () => {
   });
 
   it("never emails an address outside the allowlist outside production", async () => {
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => logger);
     const { email, sink } = emailer({ to: "someone-else@example.com" });
     await sink("guardrail-hit", {});
     expect(email.sent).toHaveLength(0);
+    // Said in the log, so a missing alert email can be traced to the allowlist.
+    expect(warn).toHaveBeenCalledWith(
+      "Alert email not sent",
+      expect.objectContaining({ alert: "guardrail-hit" }),
+    );
   });
 
   it("logs a failed send and carries on", async () => {
+    const error = vi.spyOn(logger, "error").mockImplementation(() => logger);
     const { email, sink } = emailer();
     email.willFail("Postmark is down");
     await expect(sink("job-dead-lettered", {})).resolves.toBeUndefined();
     expect(email.sent).toHaveLength(0);
+    expect(error).toHaveBeenCalledWith(
+      "Alert email failed",
+      expect.objectContaining({ alert: "job-dead-lettered" }),
+    );
   });
 
   it("is what raiseAlert hands every alert to, without waiting on it", async () => {

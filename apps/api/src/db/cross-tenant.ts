@@ -64,8 +64,17 @@ export function createAdminPool(
   adminDatabaseUrl: string,
   { max = ADMIN_POOL_MAX } = {},
 ): AdminPool {
-  return createPool(adminDatabaseUrl, { max }) as AdminPool;
+  const pool = createPool(adminDatabaseUrl, { max });
+  // The admin functions hold a connection through a transaction or a lock. If it dies while
+  // held (the database restarting), it emits an 'error' that the pool only listens for while
+  // the connection is idle: unheard, Node would stop the whole process. The query in flight
+  // fails with the same error, which is what reports it; this only keeps the process up.
+  pool.on("acquire", (client) => client.on("error", ignoreHeldConnectionError));
+  pool.on("release", (_error, client) => client.removeListener("error", ignoreHeldConnectionError));
+  return pool as AdminPool;
 }
+
+function ignoreHeldConnectionError(): void {}
 
 export interface NewTenant {
   /** Normally generated. Seed data passes a fixed one so re-running the seed is harmless. */
@@ -1023,12 +1032,23 @@ export async function completeSignup(
         ],
       )
     ).rows[0]!.id;
-    const userId = (
-      await client.query<{ id: string }>(
-        "INSERT INTO users (auth_subject, email, role) VALUES ($1, $2, 'owner') RETURNING id",
-        [subject, loginEmail],
-      )
-    ).rows[0]!.id;
+    let userId: string;
+    try {
+      userId = (
+        await client.query<{ id: string }>(
+          "INSERT INTO users (auth_subject, email, role) VALUES ($1, $2, 'owner') RETURNING id",
+          [subject, loginEmail],
+        )
+      ).rows[0]!.id;
+    } catch (error) {
+      // The same person signing up through two links at once (two tabs, a double click): both
+      // passed the check above before either had committed, and the other has now made the
+      // account. The unique indexes stop a second one; this one gives way, as the check would.
+      if ((error as { code?: unknown }).code === "23505") {
+        return await refuse("You already have an AnswerMate account. Sign in to see it.");
+      }
+      throw error;
+    }
     await client.query("INSERT INTO tenant_memberships (tenant_id, user_id) VALUES ($1, $2)", [
       tenantId,
       userId,

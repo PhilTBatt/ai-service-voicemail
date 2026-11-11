@@ -224,7 +224,9 @@ function Calls({ tenantId }: { tenantId: string }) {
         <SectionHeader
           title={<span id="calls-heading">Calls</span>}
           actions={
-            filtered && (
+            // Not while the empty list shows its own Clear filters: one button of each name.
+            filtered &&
+            pages?.calls.length !== 0 && (
               <Button
                 variant="ghost"
                 size="sm"
@@ -251,20 +253,8 @@ function Calls({ tenantId }: { tenantId: string }) {
             Needs a reply
           </ToggleChip>
           <div className="toolbar-group">
-            <TextField
-              label="From"
-              type="date"
-              className="input-auto"
-              value={filters.from}
-              onChange={(event) => set({ from: event.target.value })}
-            />
-            <TextField
-              label="To"
-              type="date"
-              className="input-auto"
-              value={filters.to}
-              onChange={(event) => set({ to: event.target.value })}
-            />
+            <DateFilter label="From" value={filters.from} onChange={(from) => set({ from })} />
+            <DateFilter label="To" value={filters.to} onChange={(to) => set({ to })} />
           </div>
         </div>
       </div>
@@ -323,6 +313,53 @@ function Calls({ tenantId }: { tenantId: string }) {
         </Button>
       )}
     </section>
+  );
+}
+
+/**
+ * A date box for the list's filter. What it shows is kept here, not read back from the page's
+ * address: Chrome's date box reports the year digit by digit as it's typed (0002, 0020, 0202,
+ * 2026), and the address updates a moment later, so feeding the box from it wrote stale
+ * values back mid-typing and a typed date ended up blank. The filter changes only once the
+ * date is whole (or emptied); the box follows the address only when something else changes
+ * it (Clear filters, the Back button).
+ */
+function DateFilter({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const [shown, setShown] = useState(value);
+  const [seen, setSeen] = useState(value);
+  const [sent, setSent] = useState(value);
+  if (value !== seen) {
+    // The address changed: from this box (already shown), or from elsewhere (show it).
+    setSeen(value);
+    if (value !== sent) {
+      setSent(value);
+      setShown(value);
+    }
+  }
+  return (
+    <TextField
+      label={label}
+      type="date"
+      className="input-auto"
+      value={shown}
+      onChange={(event) => {
+        const typed = event.target.value;
+        setShown(typed);
+        // A year before 1970 is one still being typed: no call is that old.
+        if (typed === "" || typed >= "1970") {
+          setSent(typed);
+          onChange(typed);
+        }
+      }}
+    />
   );
 }
 

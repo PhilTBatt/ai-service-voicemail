@@ -351,7 +351,7 @@ export function EmptyState({
 }
 
 /** Grey bars where something is about to appear, and the words for screen readers. */
-export function Loading({ label = "Loadingâ€¦", lines = 3 }: { label?: string; lines?: number }) {
+export function Loading({ label = "Loading…", lines = 3 }: { label?: string; lines?: number }) {
   return (
     <div className="stack stack-sm" aria-busy="true">
       <span className="sr-only" role="status">

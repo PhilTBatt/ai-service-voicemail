@@ -36,6 +36,14 @@ describe("FakePaymentsProvider", () => {
     const first = await fake.createPayment(payment);
     expect(await fake.createPayment(payment)).toEqual(first);
     expect(fake.payments).toHaveLength(1);
+    // Like GoCardless, the key wins: a repeat with a different amount gets the original back
+    // and moves no more money.
+    expect(await fake.createPayment({ ...payment, amountPence: 19_800 })).toEqual(first);
+    expect(fake.payments.map((p) => p.amountPence)).toEqual([9900]);
+    // A different key is a different payment.
+    expect((await fake.createPayment({ ...payment, idempotencyKey: "p2" })).paymentRef).not.toBe(
+      first.paymentRef,
+    );
   });
 
   it("signs webhooks the way GoCardless does, and refuses a tampered one", () => {

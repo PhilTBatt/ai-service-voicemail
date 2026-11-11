@@ -301,18 +301,27 @@ describe("POST /webhooks/twilio/voice", () => {
   it("treats a withheld caller number as unknown rather than failing", async () => {
     const { number } = await makeTenant("demo");
     expect((await post("/webhooks/twilio/voice", call(number, "anonymous"))).status).toBe(200);
-    expect(voice.calls.at(-1)).toMatchObject({ from: null, to: number });
+    // The agent is told "unknown", never "null" or a placeholder number.
+    expect(voice.calls.at(-1)).toMatchObject({
+      from: null,
+      to: number,
+      variables: { caller_number: "unknown" },
+    });
   });
 
   it.each(["paused", "suspended", "onboarding"] as const)(
     "sends a %s tenant's caller to the voicemail",
     async (status) => {
       const { number } = await makeTenant(status);
+      const registered = voice.calls.length;
       const xml = await (await post("/webhooks/twilio/voice", call(number))).text();
       expect(xml).toContain("Sorry, the assistant isn't available right now.");
       expect(xml).toContain(
         `recordingStatusCallback="${PUBLIC_BASE_URL}/webhooks/twilio/recording"`,
       );
+      // The voicemail, and only the voicemail: the agent is never rung for this tenant.
+      expect(xml).not.toContain("<Dial");
+      expect(voice.calls).toHaveLength(registered);
     },
   );
 
@@ -323,6 +332,10 @@ describe("POST /webhooks/twilio/voice", () => {
       const xml = await (await post("/webhooks/twilio/voice", call(number))).text();
       expect(xml).toContain("This service has ended. Please call");
       expect(xml).toContain('<say-as interpret-as="telephone">07700 900001</say-as>');
+      // The message, then the end of the call: no voicemail, no agent.
+      expect(xml).toContain("<Hangup/>");
+      expect(xml).not.toContain("<Record");
+      expect(xml).not.toContain("<Dial");
     },
   );
 
@@ -342,17 +355,20 @@ describe("POST /webhooks/twilio/voice", () => {
     );
     const xml = await (await post("/webhooks/twilio/voice", call(number, "+447700900666"))).text();
     expect(xml).toContain('<Reject reason="rejected"');
+    expect(xml).not.toContain("<Dial");
   });
 
   it("sends a live tenant whose agent never synced to the voicemail, not dead air", async () => {
     const { number } = await makeTenant("live", { synced: false });
     const xml = await (await post("/webhooks/twilio/voice", call(number))).text();
     expect(xml).toContain("<Record");
+    expect(xml).not.toContain("<Dial");
   });
 
   it("sends a number nobody owns to the voicemail", async () => {
     const xml = await (await post("/webhooks/twilio/voice", call("+441632960999"))).text();
     expect(xml).toContain("<Record");
+    expect(xml).not.toContain("<Dial");
   });
 
   it("falls back to the voicemail when the voice platform can't register the call, and alerts", async () => {

@@ -78,6 +78,12 @@ describe("format", () => {
     expect(formatPhone("+447700900123")).toBe("07700 900123");
     expect(formatPhone("+441632960123")).toBe("01632960123");
     expect(formatPhone("+15555550123")).toBe("+15555550123");
+    // The AnswerMate numbers themselves are landlines: no +44, and not grouped like a mobile.
+    expect(formatPhone("+441134960150")).toBe("01134960150");
+    // Already national, or too long to be a mobile: left as it came, never mangled.
+    expect(formatPhone("07700900123")).toBe("07700900123");
+    expect(formatPhone("+4477009001234")).toBe("077009001234");
+    expect(formatPhone("")).toBe("");
   });
 
   it("turns a mobile number as people type it into the stored form", () => {
@@ -86,6 +92,10 @@ describe("format", () => {
       "+44 7700 900123",
       "0044 (7700) 900-123",
       "447700900123",
+      // How UK letterheads write it, with the national 0 in brackets.
+      "+44 (0)7700 900123",
+      // Copied from an iPhone's contacts: invisible direction marks and a non-breaking space.
+      `${String.fromCodePoint(0x202a)}+44${String.fromCodePoint(0xa0)}7700 900123${String.fromCodePoint(0x202c)}`,
     ]) {
       expect(toUkMobileE164(typed), typed).toBe("+447700900123");
     }
@@ -124,6 +134,11 @@ describe("callsQuery", () => {
     expect(
       filtersFromSearch(new URLSearchParams("urgency=loud&from=yesterday&needsReply=yes&x=1")),
     ).toEqual(NO_FILTERS);
+    // The right shape but not a real day: the date box would show nothing while the list was
+    // quietly filtered from 2 March.
+    expect(filtersFromSearch(new URLSearchParams("from=2026-02-30&to=2026-13-01"))).toEqual(
+      NO_FILTERS,
+    );
   });
 
   it("asks for only the calls still needing a reply when that box is ticked", () => {

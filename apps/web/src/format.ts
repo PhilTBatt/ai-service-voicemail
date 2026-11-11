@@ -89,15 +89,26 @@ export function formatPhone(e164: string): string {
 }
 
 /**
+ * What people put between a number's digits, and nothing else: spaces (non-breaking too),
+ * brackets, dots, dashes of every width (\p{Pd}), and invisible formatting marks (\p{Cf}), such
+ * as the direction marks a phone adds when a number is copied from its contacts (an iPhone
+ * wraps it in U+202A and U+202C).
+ */
+const NUMBER_PUNCTUATION = /[\s().\p{Pd}\p{Cf}]/gu;
+
+/**
  * A mobile number as people type it, in the form the API stores: "07700 900123",
- * "+44 7700 900123" and "0044 7700 900123" all become "+447700900123". Anything else comes
- * back with only its spaces removed, for the schema to refuse with a proper message.
+ * "+44 7700 900123", "+44 (0)7700 900123" and "0044 7700 900123" all become "+447700900123".
+ * Anything else comes back with only its punctuation removed, for the schema to refuse with a
+ * proper message.
  */
 export function toUkMobileE164(typed: string): string {
-  const compact = typed.replace(/[\s()-]/g, "");
+  const compact = typed.replace(NUMBER_PUNCTUATION, "");
   if (/^07\d{9}$/.test(compact)) return `+44${compact.slice(1)}`;
-  if (/^447\d{9}$/.test(compact)) return `+${compact}`;
-  if (/^00447\d{9}$/.test(compact)) return `+${compact.slice(2)}`;
+  // The international prefix, written "+44", "0044" or plain "44", with or without the
+  // national 0 after it ("+44 (0)7700…", as UK letterheads write it).
+  const international = /^(?:\+|00)?440?(7\d{9})$/.exec(compact);
+  if (international) return `+44${international[1]!}`;
   return compact;
 }
 

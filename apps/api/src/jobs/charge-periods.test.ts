@@ -115,7 +115,7 @@ describe("charging one month", () => {
     const { tenantId, tenant, mandateRef } = await business({
       seconds: { "2026-06-14": 201 * 60 + 1 },
     });
-    const { deps: d, payments, enqueueBillingEmail } = deps();
+    const { deps: d, payments, enqueueBillingEmail, alert } = deps();
     expect(await chargePeriod(d, tenant, JUNE)).toBe("collected");
 
     expect(payments.payments).toEqual([
@@ -144,6 +144,37 @@ describe("charging one month", () => {
     expect(await chargePeriod(d, tenant, JUNE)).toBe("already-done");
     expect(payments.payments).toHaveLength(1);
     expect(enqueueBillingEmail).toHaveBeenCalledTimes(1);
+    // The receipt is for this month's charge, and nobody was alerted about anything.
+    const ids = await admin.query<{ id: string }>(
+      "SELECT id FROM billing_charges WHERE tenant_id = $1",
+      [tenantId],
+    );
+    expect(enqueueBillingEmail).toHaveBeenCalledWith(
+      { tenantId, kind: "receipt", ref: ids.rows[0]?.id },
+      expect.anything(),
+    );
+    expect(alert).not.toHaveBeenCalled();
+    // What was recorded is the sum asked for, part by part.
+    const { rows } = await admin.query(
+      `SELECT billable_seconds::int, fee_pence, overage_pence, vat_pence, total_pence, lines,
+              charge_date::text
+       FROM billing_charges WHERE tenant_id = $1`,
+      [tenantId],
+    );
+    expect(rows).toEqual([
+      {
+        billable_seconds: 201 * 60 + 1,
+        fee_pence: 9900,
+        overage_pence: 40,
+        vat_pence: 0,
+        total_pence: 9940,
+        lines: [
+          { description: "AI Answering plan", pence: 9900 },
+          { description: "2 minutes over the 200 included, at 20p a minute", pence: 40 },
+        ],
+        charge_date: payments.payments[0]!.chargeDate,
+      },
+    ]);
   });
 
   it("records the pilot's free month inside its minutes as nothing due, and asks for nothing", async () => {
@@ -259,6 +290,10 @@ describe("charging one month", () => {
     await giveMandate(tenantId, "MD_NEW_ONE");
     expect(await chargePeriod(d, tenant, JUNE)).toBe("collected");
     expect(payments.payments[0]).toMatchObject({ mandateRef: "MD_NEW_ONE" });
+    // Only one payment was ever made, against the new Direct Debit; never a switch-off.
+    expect(payments.payments).toHaveLength(1);
+    const tenantRow = await admin.query("SELECT status FROM tenants WHERE id = $1", [tenantId]);
+    expect(tenantRow.rows).toEqual([{ status: "live" }]);
   });
 
   it("fails the run, and says nothing to the business, when the request itself is refused", async () => {
@@ -270,7 +305,14 @@ describe("charging one month", () => {
     expect((await charges(tenantId))[0]?.status).toBe("collecting");
     expect(alert).not.toHaveBeenCalled();
     expect(enqueueBillingEmail).not.toHaveBeenCalled();
+    expect(payments.payments).toHaveLength(0);
+    // The Direct Debit is still there: a refusal of ours isn't the mandate ending.
+    const { rows } = await admin.query("SELECT status FROM payment_mandates WHERE tenant_id = $1", [
+      tenantId,
+    ]);
+    expect(rows).toEqual([{ status: "active" }]);
     expect(await chargePeriod(d, tenant, JUNE)).toBe("collected");
+    expect(payments.payments).toHaveLength(1);
   });
 
   it("records, and doesn't try to collect, a month owing less than the provider's £1 minimum", async () => {
@@ -306,6 +348,13 @@ describe("charging one month", () => {
     expect((await charges(tenantId))[0]?.status).toBe("collecting");
     expect(await chargePeriod(d, tenant, JUNE)).toBe("collected");
     expect(payments.payments).toHaveLength(1);
+    // Asked for under the same key as the first try, so a provider that did make it the first
+    // time hands back that one.
+    expect(payments.payments[0]?.idempotencyKey).toBe(`charge:${tenantId}:2026-06-14`);
+    // Still one row for the month, now with its payment.
+    expect(await charges(tenantId)).toEqual([
+      expect.objectContaining({ status: "pending", payment_ref: payments.payments[0]!.paymentRef }),
+    ]);
   });
 });
 
@@ -323,7 +372,7 @@ describe("the morning run", () => {
     );
 
     // 14 August: June's and July's months have ended.
-    const { deps: d } = deps();
+    const { deps: d, payments } = deps();
     await runChargePeriods(d);
     expect((await charges(paying.tenantId)).map((c) => c.period_start)).toEqual([
       "2026-06-14",
@@ -333,5 +382,18 @@ describe("the morning run", () => {
     expect(await charges(test.tenantId)).toEqual([]);
     // It asked to leave in June's month: that month is charged, July's isn't.
     expect((await charges(left.tenantId)).map((c) => c.period_start)).toEqual(["2026-06-14"]);
+
+    // The same morning again (the queue retrying, say): nothing new for any of them. Other
+    // test files' businesses may be in the database too, so only these four are counted.
+    const mine = new Set([paying, demo, test, left].map((b) => b.tenantId));
+    const paymentsFor = () =>
+      payments.payments.filter((p) => mine.has(p.metadata["tenantId"] ?? ""));
+    const before = paymentsFor().length;
+    expect(before).toBe(3);
+    await runChargePeriods(d);
+    expect(paymentsFor()).toHaveLength(before);
+    expect((await charges(paying.tenantId)).map((c) => c.status)).toEqual(["pending", "pending"]);
+    expect(await charges(demo.tenantId)).toEqual([]);
+    expect(await charges(test.tenantId)).toEqual([]);
   });
 });

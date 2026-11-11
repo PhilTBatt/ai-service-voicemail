@@ -473,16 +473,48 @@ describe("authorisation matrix", () => {
     });
   }
 
+  // Every row of the matrix, with no usable login: no token, one the provider never issued,
+  // one it has revoked, and a real one under the wrong scheme. All 401, before anything else.
+  it("everyone without a usable login gets a 401 at every door", async () => {
+    const revoked = auth.tokenFor({ subject: `sub_${randomUUID()}`, email: "gone@example.com" });
+    auth.revoke(revoked);
+    const logins: (string | undefined)[] = [undefined, "fake_not-issued", revoked, ""];
+    for (const endpoint of endpoints()) {
+      for (const token of logins) {
+        const { status } =
+          endpoint.body === undefined
+            ? await get(endpoint.path, token)
+            : await send(endpoint.method ?? "PUT", endpoint.path, endpoint.body, token);
+        expect(status, `${endpoint.name} with ${String(token)}`).toBe(401);
+      }
+      const basic = await fetch(`${apiRoot}${endpoint.path}`, {
+        method: endpoint.body === undefined ? "GET" : (endpoint.method ?? "PUT"),
+        headers: {
+          authorization: `Basic ${tokens.admin}`,
+          ...(endpoint.body !== undefined && { "content-type": "application/json" }),
+        },
+        ...(endpoint.body !== undefined && { body: JSON.stringify(endpoint.body) }),
+      });
+      expect(basic.status, `${endpoint.name} with Basic`).toBe(401);
+    }
+  });
+
   it("reseller cannot get call content", async () => {
     // The named test BUILD_PLAN Step 10 asks for. Everything under a tenant is content.
     for (const path of [
       `/tenants/${tenantA}`,
       `/tenants/${tenantA}/calls`,
+      `/tenants/${tenantA}/calls?needsReply=true`,
       `/tenants/${tenantA}/calls/${callA}`,
       `/tenants/${tenantA}/calls/${callA}/recording`,
       `/tenants/${tenantA}/profile`,
+      `/tenants/${tenantA}/documents`,
+      `/tenants/${tenantA}/billing`,
       `/tenants/${tenantA}/export`,
-      `/tenants/${tenantA}/export.csv?table=calls`,
+      ...CSV_EXPORTS.map((table) => `/tenants/${tenantA}/export.csv?table=${table}`),
+      // The admin's call lists carry content too, so they're no more the reseller's.
+      "/admin/review-queue",
+      "/admin/health",
     ]) {
       const response = await get(path, tokens.reseller);
       expect(response.status, path).toBe(403);

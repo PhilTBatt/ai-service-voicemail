@@ -1,11 +1,15 @@
 // Smoke tests (BUILD_PLAN Step 10): sign in, see the right businesses, view a call, edit the
 // assistant's details. The data comes from apps/api/src/testing/e2e-server.ts.
 import { expect, test, type Page } from "@playwright/test";
+import { apiAs, FERN_LANE, freshEmail, OWNER, tenantIdOf } from "./support.ts";
 
 async function signIn(page: Page, email: string) {
   await page.goto("/");
   await page.getByLabel("Email").fill(email);
+  // Signing in reloads the page: wait for that, so the next step never acts on the old one.
+  const reloaded = page.waitForEvent("load");
   await page.getByRole("button", { name: "Sign in" }).click();
+  await reloaded;
 }
 
 test("the admin signs in and sees every business", async ({ page }) => {
@@ -92,12 +96,18 @@ test("the editor refuses a price in an answer before anything is saved", async (
   await page.getByRole("link", { name: "Assistant" }).click();
   await page.getByRole("button", { name: "Add a question" }).click();
   await page.getByLabel("Question 1").fill("What's the call-out fee?");
-  await page.getByLabel("Answer").fill("It's £60 to come out.");
+  await page.getByLabel("Answer", { exact: true }).fill("It's £60 to come out.");
   await page.getByRole("button", { name: "Save" }).click();
   await expect(
     page.getByText("Question 1, answer: can't include prices: the assistant never quotes them"),
   ).toBeVisible();
+  await expect(page.getByText("Some details need changing. They're marked above.")).toBeVisible();
   await expect(page.getByText("Version 2")).toHaveCount(0);
+  // Whatever an earlier test saved, this answer never reached the server.
+  await page.reload();
+  await expect(page.getByLabel("Services, one per line")).toBeVisible();
+  await expect(page.getByLabel("Question 1")).toHaveCount(0);
+  await expect(page.getByText("It's £60 to come out.")).toHaveCount(0);
 });
 
 test("someone nobody invited is told so, and sees nothing", async ({ page }) => {
@@ -128,9 +138,12 @@ test("a new tradesperson signs up through a link and lands on their business", a
   await page.getByRole("button", { name: "Create a signup link" }).click();
   const url = await page.locator("code.signup-url").innerText();
   await page.getByRole("button", { name: "Sign out" }).click();
+  // Signed out once the sign-in box is back: only then open the link, or the two navigations race.
+  await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
 
   await page.goto(new URL(url).pathname + new URL(url).search);
-  await page.getByLabel("Email").fill("newbie@example.com");
+  // A new address each run, so a retry isn't refused as someone who already signed up.
+  await page.getByLabel("Email").fill(freshEmail("newbie"));
   await page.getByRole("button", { name: "Sign in" }).click();
 
   await page.getByLabel("Business name").fill("Kestrel Roofing");
@@ -151,7 +164,22 @@ test("a new tradesperson signs up through a link and lands on their business", a
   await expect(page.getByRole("heading", { name: "Kestrel Roofing" })).toBeVisible();
 });
 
-test("a tradesperson switches AnswerMate off and on, asked first each time", async ({ page }) => {
+test.describe("switching off", () => {
+  // Every test after this one expects the business answering, so it's switched back on after,
+  // even if the test stopped halfway or ran out of time. An afterEach hook, not a `finally`:
+  // after a timeout Playwright has already closed the test's request by the time a `finally`
+  // runs, while hooks still get it, with time of their own.
+  test.afterEach(async ({ request }) => {
+    const fern = await tenantIdOf(request, FERN_LANE);
+    await apiAs(request, OWNER, "PUT", `/tenants/${fern}/switch`, { on: true });
+  });
+
+  test("a tradesperson switches AnswerMate off and on, asked first each time", async ({ page }) => {
+    await switchOffAndOn(page);
+  });
+});
+
+async function switchOffAndOn(page: Page) {
   await signIn(page, "owner@example.com");
   const card = page.getByRole("region", { name: "Answering" });
   await expect(card.getByText("AnswerMate is on", { exact: true })).toBeVisible();
@@ -175,7 +203,10 @@ test("a tradesperson switches AnswerMate off and on, asked first each time", asy
   await card.getByRole("button", { name: "Switch on" }).click();
   await dialog.getByRole("button", { name: "Switch on" }).click();
   await expect(card.getByText("AnswerMate is on", { exact: true })).toBeVisible();
-});
+  // The server has it too, not just the page.
+  await page.reload();
+  await expect(card.getByText("AnswerMate is on", { exact: true })).toBeVisible();
+}
 
 test("the admin moves between the Admin pages", async ({ page }) => {
   await signIn(page, "admin@example.com");
@@ -199,6 +230,9 @@ test("the admin moves between the Admin pages", async ({ page }) => {
 test("on a phone, the menu opens, goes to a page and closes", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await signIn(page, "owner@example.com");
+  // Landed on the business first: signing in starts at "/", and the move to the business is a
+  // new page, which closes the menu. Opened before that, it shut under the test's finger.
+  await expect(page.getByRole("heading", { level: 1, name: FERN_LANE })).toBeVisible();
   // Closed, the sidebar's links are out of reach.
   await expect(page.getByRole("link", { name: "Phone setup" })).toHaveCount(0);
   await page.getByRole("button", { name: "Open the menu" }).click();
@@ -230,7 +264,7 @@ test("a tradesperson sees the divert codes for their network and number", async 
   await signIn(page, "owner@example.com");
   await page.getByRole("link", { name: "Phone setup" }).click();
   await expect(page.getByText("**61*+441134960150*11*20#")).toBeVisible();
-  await expect(page.getByText("**61*901#")).toBeVisible(); // O2's voicemail restore code
+  await expect(page.getByText("**61*901#", { exact: true })).toBeVisible(); // O2's voicemail restore code
   // Another network changes the codes on the spot.
   await page.getByLabel("Your mobile network").selectOption("three");
   await expect(page.getByText("**61*+441134960150#", { exact: true })).toBeVisible();

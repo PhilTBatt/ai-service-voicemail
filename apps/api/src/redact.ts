@@ -11,15 +11,17 @@ const EMAIL = /(?<![\p{L}\p{N}._%+-])[\p{L}\p{N}._%+-]+@[\p{L}\p{N}.-]+\.\p{L}{2
 const EMAIL_CUT = /(?<![\p{L}\p{N}._%+-])[\p{L}\p{N}._%+-]+@[\p{L}\p{N}-]+(?![\p{L}\p{N}.-])/gu;
 
 // UK numbers written nationally (07700 900123, (020) 7946 0123) or internationally
-// (+44 7700 900123, +44 (0)20 7946 0123, 0044 7700 900123), with spaces, hyphens or dots.
+// (+44 7700 900123, +44 (0)20 7946 0123, 0044 7700 900123), with spaces, hyphens or dots, or
+// with a + for each space (a form-encoded body: Body=Call+me+on+07700+900123). A number may
+// follow an underscore (caller_07700900123), which \b alone would treat as part of a word.
 const UK_PHONE =
-  /(?:(?:\+|\b00)44[\s.-]?(?:\(0\)[\s.-]?)?|\(?\b0)[1-9](?:[\s.-]?\)?[\s.-]?\d){8,9}\b/g;
+  /(?:(?:\+|(?<![A-Za-z0-9])00)44[\s.+-]?(?:\(0\)[\s.+-]?)?|\(?(?<![A-Za-z0-9])0)[1-9](?:[\s.+-]?\)?[\s.+-]?\d){8,9}\b/g;
 
 // A UK number with its 44 but no + (447700900123), or a mobile with no leading 0 (7700900123).
-const UK_PHONE_BARE = /\b(?:44[1-9]\d{8,9}|7\d{9})\b/g;
+const UK_PHONE_BARE = /(?<![A-Za-z0-9])(?:44[1-9]\d{8,9}|7\d{9})\b/g;
 
 // Any other international number (+ or 00, then 8 to 15 digits), such as a caller from abroad.
-const INTERNATIONAL_PHONE = /(?:\+|\b00)[1-9](?:[\s.-]?\d){7,14}\b/g;
+const INTERNATIONAL_PHONE = /(?:\+|(?<![A-Za-z0-9])00)[1-9](?:[\s.+-]?\d){7,14}\b/g;
 
 // UK postcodes in all six shapes (A9 9AA to AA9A 9AA), any case, with or without the space,
 // or with a + for it (as in a form-encoded body).
@@ -32,8 +34,15 @@ const CALL_TOKEN = /\/c\/[0-9a-f]{32}\.[0-9a-z]{1,8}\.[A-Za-z0-9_-]{22}(?![A-Za-
 const REDACTED_KEYS = new Set([
   "transcript",
   "transcript_object",
+  // The same content under the names it's given in our own code, and Retell's fuller copy.
+  "transcriptobject",
+  "transcript_with_tool_calls",
+  "transcriptwithtoolcalls",
   "summary",
   "call_summary",
+  "callsummary",
+  "custom_analysis_data",
+  "customanalysisdata",
   "body",
   "message",
   "text",

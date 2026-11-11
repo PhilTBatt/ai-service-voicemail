@@ -102,7 +102,7 @@ describe("POST /webhooks/postmark", () => {
   });
 
   it("rejects a request without the right Basic auth", async () => {
-    const { messageId } = await makeSentEmail();
+    const { messageId, callId } = await makeSentEmail();
     const body = { RecordType: "Bounce", Type: "HardBounce", MessageID: messageId };
     expect((await post(body, "")).status).toBe(401);
     expect(
@@ -114,6 +114,18 @@ describe("POST /webhooks/postmark", () => {
     expect((await post(body, `Basic ${"é".repeat(right.length - "Basic ".length)}`)).status).toBe(
       401,
     );
+    // The right password under another user name, the secret alone, or as a bearer token.
+    for (const wrong of [
+      `Basic ${Buffer.from(`admin:${SECRET}`).toString("base64")}`,
+      `Basic ${Buffer.from(SECRET).toString("base64")}`,
+      `Bearer ${SECRET}`,
+    ]) {
+      const response = await post(body, wrong);
+      expect(response.status, wrong).toBe(401);
+      expect(await response.json()).toEqual({ error: "Unauthorized" });
+    }
     expect((await row(messageId))?.status).toBe("sent");
+    // A forged bounce raises nothing: no alert names a business or a call.
+    expect(alert).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ callId }));
   });
 });

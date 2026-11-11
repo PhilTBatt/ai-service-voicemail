@@ -10,6 +10,10 @@ describe("billableSeconds", () => {
   it("bills from 5 seconds, in whole seconds", () => {
     expect(billableSeconds(5)).toBe(5);
     expect(billableSeconds(90.7)).toBe(90);
+    // The line is exactly at 5 seconds, and a negative duration (clocks disagreeing) is nothing.
+    expect(billableSeconds(4.999)).toBe(0);
+    expect(billableSeconds(5.999)).toBe(5);
+    expect(billableSeconds(-12)).toBe(0);
   });
 });
 
@@ -64,6 +68,11 @@ describe("usagePeriodFor", () => {
 describe("overagePence (200 included minutes, 20p a minute)", () => {
   it("is zero exactly at the included minutes", () => {
     expect(overagePence(200 * 60, 200, 20)).toBe(0);
+    // And anywhere inside them, or with none used.
+    expect(overagePence(0, 200, 20)).toBe(0);
+    expect(overagePence(199 * 60 + 59, 200, 20)).toBe(0);
+    expect(overagePence(0, 0, 20)).toBe(0);
+    expect(overagePence(1, 0, 20)).toBe(20);
   });
 
   it("is one minute's overage at one second over", () => {
@@ -77,6 +86,8 @@ describe("overagePence (200 included minutes, 20p a minute)", () => {
 
   it("stays in integer pence", () => {
     expect(Number.isInteger(overagePence(12345, 200, 20))).toBe(true);
+    // 205.75 minutes rounds up once to 206: six over.
+    expect(overagePence(12345, 200, 20)).toBe(120);
   });
 });
 
@@ -84,5 +95,11 @@ describe("startOfUkDate", () => {
   it("is midnight UTC in winter and 23:00 UTC the day before in summer", () => {
     expect(startOfUkDate("2026-11-01").toISOString()).toBe("2026-11-01T00:00:00.000Z");
     expect(startOfUkDate("2026-07-01").toISOString()).toBe("2026-06-30T23:00:00.000Z");
+    // The clocks change at 01:00 UTC, after midnight: the day they go forward still starts at
+    // GMT midnight, and the day they go back at BST midnight.
+    expect(startOfUkDate("2026-03-29").toISOString()).toBe("2026-03-29T00:00:00.000Z");
+    expect(startOfUkDate("2026-03-30").toISOString()).toBe("2026-03-29T23:00:00.000Z");
+    expect(startOfUkDate("2026-10-25").toISOString()).toBe("2026-10-24T23:00:00.000Z");
+    expect(startOfUkDate("2026-10-26").toISOString()).toBe("2026-10-26T00:00:00.000Z");
   });
 });

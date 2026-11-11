@@ -34,6 +34,11 @@ export function voiceWebhookRouter({
   now = () => new Date(),
 }: VoiceWebhookOptions) {
   const router = Router();
+  // Only the providers given: a name from the URL such as "constructor" or "__proto__" would
+  // otherwise find Object's own properties, and an unsigned request would answer 500 (and
+  // count towards the server-error alert) instead of 404.
+  const providerNamed = (name: string): VoiceProvider | undefined =>
+    Object.hasOwn(providers, name) ? providers[name] : undefined;
   // A run of refused signatures is a forger at work, or a key that changed on one side only.
   const refusals = new Spike({ limit: SIGNATURE_FAILURES_PER_WINDOW });
   const refused = (what: string, providerName: string, reason: string) => {
@@ -46,7 +51,7 @@ export function voiceWebhookRouter({
   // Any content type: the signature, not the header, decides whether the request is genuine.
   router.post("/voice/:provider", raw({ type: () => true, limit: "2mb" }), async (req, res) => {
     const providerName = req.params.provider;
-    const provider = providers[providerName];
+    const provider = providerNamed(providerName);
     if (!provider) {
       res.status(404).json({ error: "Unknown provider" });
       return;
@@ -76,7 +81,7 @@ export function voiceWebhookRouter({
     raw({ type: () => true, limit: "2mb" }),
     async (req, res) => {
       const providerName = req.params.provider;
-      const provider = providers[providerName];
+      const provider = providerNamed(providerName);
       if (!provider) {
         res.status(404).json({ error: "Unknown provider" });
         return;

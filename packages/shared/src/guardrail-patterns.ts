@@ -80,6 +80,8 @@ const ASKED = "(?:(?:able|managed)\\s+to|did\\s+you|(?:you|they)\\s+(?:can't|can
 /** What the tradesperson does on the job: "he'll turn the water off", "we switch the power off". */
 const THE_TRADE_DOES = "(?:we|he|she|they)(?:'ll|\\s+will|\\s+can|\\s+may|\\s+would)?\\s+";
 const NOT_ADVICE = `(?<!\\b(?:${DECLINED}|${DEFERRED}|${ASKED}|${THE_TRADE_DOES}))`;
+/** Which doors or windows: "the", "your", "all", "all the", "some of the". */
+const WHICH = "(?:(?:all|some) (?:of )?)?(?:the |your )?";
 
 /**
  * Safety advice: the agent gives only Appendix A's messages, word for word, so a profile may
@@ -94,9 +96,10 @@ export const SAFETY_ADVICE_PATTERNS: RegExp[] = [
   `\\bswitch (?:it|them|everything|the ${SUPPLY}|your ${SUPPLY})(?: supply)? off\\b`,
   `\\bswitch off (?:the |your )?${SUPPLY}\\b`,
   "\\bunplug (?:it|them|everything|the (?:boiler|appliance|heater|socket))\\b",
-  "\\bopen (?:the |all |your |some )?(?:doors|windows)\\b",
+  // "all the windows" and "all of the windows" too: one word between used to be the limit.
+  `\\bopen ${WHICH}(?:doors|windows)\\b`,
   // Not "get": a locksmith gets doors open for a living.
-  "\\b(?:keep|leave) (?:the |all |your |some )?(?:doors|windows)(?: and (?:the )?(?:doors|windows))? open\\b",
+  `\\b(?:keep|leave) ${WHICH}(?:doors|windows)(?: and (?:the )?(?:doors|windows))? open\\b`,
   "\\b(?:don't|do not|never) (?:use|touch|press|flick) (?:any |the |your )?(?:light |electrical )?switch(?:es)?\\b",
   // Only as an instruction: "Don't touch it", "Get out now", not "we don't touch gas work".
   "(?:^|[.!?,;]\\s+|\\bplease\\s+)(?:(?:don't|do not) (?:touch|go near|go back in(?:side|to)?)|get out)\\b",

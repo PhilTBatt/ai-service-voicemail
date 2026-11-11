@@ -5,7 +5,8 @@ import { signupProblems } from "./signup-form.ts";
 describe("signupProblems", () => {
   it("puts each problem by its field, in words, from the real schema", () => {
     const result = signupInputSchema.safeParse({
-      code: "x",
+      // A whole code, as every link has: this test is about the fields the person fills in.
+      code: "x".repeat(20),
       businessName: "",
       trade: "plumber",
       contactName: "Jo",
@@ -20,9 +21,16 @@ describe("signupProblems", () => {
     expect(problems.mobileNetwork).toEqual(["Choose your network"]);
     expect(problems.accepted).toEqual(["Documents: tick all three to continue"]);
     expect(problems.usesNetworkVoicemail).toEqual(["Choose yes or no"]);
-    expect(problems.businessName?.length).toBe(1);
-    expect(problems.mobile?.length).toBe(1);
+    // The words the person reads, capitalised, not just that there is one.
+    expect(problems.businessName).toEqual(["Can't be empty"]);
+    expect(problems.mobile).toEqual(["Must be a UK mobile like +447700900123"]);
     expect(problems.contactName).toBeUndefined();
+    expect(problems.trade).toBeUndefined();
+    expect(problems.email).toBeUndefined();
+    // Nothing lands under a field the form doesn't have.
+    expect(Object.keys(problems).sort()).toEqual(
+      ["accepted", "businessName", "mobile", "mobileNetwork", "usesNetworkVoicemail"].sort(),
+    );
     // The schema's list of allowed networks never reaches the page.
     expect(JSON.stringify(problems)).not.toMatch(/expected one of/i);
   });

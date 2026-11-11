@@ -57,7 +57,12 @@ export function callSms(input: CallNotificationInput): { body: string; segments:
   // Two segments at most: a long summary is cut at a word boundary until it fits.
   while (smsEncoding(body).segments > 2 && summary.length > 20) {
     const room = Math.max(20, summary.length - (body.length - 306) - 3);
-    summary = `${summary.slice(0, room).replace(/\s+\S*$/, "")}...`;
+    let shorter = `${summary.slice(0, room).replace(/\s+\S*$/, "")}...`;
+    // A cut that isn't shorter would go round forever, blocking the whole worker: a summary
+    // with no space to cut at while a long name or postcode fills the text, or extension
+    // characters (two septets each) that body.length undercounts. Take a character, then.
+    if (shorter.length >= summary.length) shorter = `${summary.slice(0, summary.length - 4)}...`;
+    summary = shorter;
     body = compose();
   }
   return { body, segments: smsEncoding(body).segments };

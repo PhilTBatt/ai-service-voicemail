@@ -22,6 +22,11 @@ afterAll(async () => {
   await pool.end();
 });
 
+// A spy left on the shared logger by a failed assertion would silence the next test's logging.
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 describe("workerState", () => {
   const now = new Date("2026-11-08T13:00:00Z");
   const ago = (ms: number) => ({ seenAt: new Date(now.getTime() - ms) });

@@ -228,6 +228,17 @@ describe("the provider's events", () => {
     expect(rows).toEqual([
       { resource_type: "billing_requests", action: "fulfilled", resource_ref: setupRef },
     ]);
+    // Fulfilled again under a new event ID (GoCardless sends a fresh one per event): the
+    // set-up is no longer pending, so nothing changes and nothing more is queued.
+    expect(
+      await handlePaymentsEvent(
+        app,
+        { ...fulfilled, id: `EV${randomUUID()}` },
+        { enqueueOnboarding },
+      ),
+    ).toEqual({ outcome: "handled", tenantId });
+    expect(enqueueOnboarding).toHaveBeenCalledTimes(1);
+    expect(await state(tenantId)).toMatchObject({ status: "active" });
   });
 
   it("ends an active mandate the bank cancelled, and says so", async () => {
@@ -261,12 +272,17 @@ describe("the provider's events", () => {
   });
 
   it("acknowledges what it doesn't know, and events it has nothing to do for", async () => {
-    expect(
-      await handlePaymentsEvent(
-        app,
-        event({ resourceType: "mandates", action: "cancelled", links: { mandate: "MD_NOBODY" } }),
-      ),
-    ).toEqual({ outcome: "unknown" });
+    const nobody = event({
+      resourceType: "mandates",
+      action: "cancelled",
+      links: { mandate: "MD_NOBODY" },
+    });
+    expect(await handlePaymentsEvent(app, nobody)).toEqual({ outcome: "unknown" });
+    // Not recorded against anyone: there's no business it could be filed under.
+    const unrecorded = await admin.query("SELECT 1 FROM payment_events WHERE event_id = $1", [
+      nobody.id,
+    ]);
+    expect(unrecorded.rows).toEqual([]);
     const { tenantId, setupRef } = await businessWithSetup();
     expect(
       await handlePaymentsEvent(

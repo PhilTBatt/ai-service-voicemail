@@ -258,6 +258,10 @@ function Notifications({ tenant }: { tenant: TenantView }) {
 
   return (
     <form
+      // The schema checks it, and says what's wrong by each field. Without this, the browser's
+      // own email check stopped the form first: its own bubble, in its own words, and nothing
+      // said about the mobile until the email was put right.
+      noValidate
       onSubmit={(event) => {
         event.preventDefault();
         void save();

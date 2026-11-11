@@ -19,13 +19,28 @@ export const NO_FILTERS: CallFilters = { urgency: "", from: "", to: "", needsRep
 const UK_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
+ * A date that exists on the calendar. The shape alone lets "2026-02-30" through: the date box
+ * can't show it (it goes blank), yet the query would quietly roll it on to 2 March. Any year
+ * is kept, even 0002: Chrome's date box reports the year digit by digit as it's typed, and
+ * refusing one would blank the box mid-typing. setUTCFullYear, not Date.UTC, which reads
+ * years 0–99 as 1900–1999.
+ */
+function isCalendarDate(value: string): boolean {
+  if (!UK_DATE.test(value)) return false;
+  const [year, month, day] = value.split("-").map(Number) as [number, number, number];
+  const at = new Date(0);
+  at.setUTCFullYear(year, month - 1, day);
+  return at.toISOString().slice(0, 10) === value;
+}
+
+/**
  * The filters as the page's address carries them (?urgency=urgent&needsReply=1), so they
  * survive opening a call and coming back, and a filtered list can be bookmarked. Anything that
  * isn't a filter, or isn't a valid one, is ignored rather than sent on.
  */
 export function filtersFromSearch(search: URLSearchParams): CallFilters {
   const urgency = search.get("urgency") ?? "";
-  const date = (value: string | null) => (value !== null && UK_DATE.test(value) ? value : "");
+  const date = (value: string | null) => (value !== null && isCalendarDate(value) ? value : "");
   return {
     urgency: (URGENCIES as readonly string[]).includes(urgency) ? urgency : "",
     from: date(search.get("from")),

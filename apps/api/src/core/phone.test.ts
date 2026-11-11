@@ -6,7 +6,17 @@ describe("e164OrNull", () => {
     expect(e164OrNull("+447700900123")).toBe("+447700900123");
     expect(e164OrNull("anonymous")).toBeNull();
     expect(e164OrNull("+266696687")).toBeNull();
+    // RESTRICTED, UNAVAILABLE and BLOCKED on a keypad, the same kind of placeholder.
+    expect(e164OrNull("+7378742833")).toBeNull();
+    expect(e164OrNull("+86282452253")).toBeNull();
+    expect(e164OrNull("+2562533")).toBeNull();
     expect(e164OrNull(undefined)).toBeNull();
+    // Retell's withheld callers come as "" or null; neither may reach the database as a number.
+    expect(e164OrNull("")).toBeNull();
+    expect(e164OrNull(null)).toBeNull();
+    // Only the exact form: a space or a national number would break the e164_phone column.
+    expect(e164OrNull("+44 7700 900123")).toBeNull();
+    expect(e164OrNull("07700900123")).toBeNull();
   });
 });
 

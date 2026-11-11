@@ -311,8 +311,11 @@ async function recordPaymentProgress(
   if (!charge) return null;
   // A failed payment collected again (from the provider's dashboard, decision 019) keeps its
   // ID and starts over: back to pending, so its progress from here is recorded, and a later
-  // failure is said again.
+  // failure is said again. Only a payment that ended badly starts over: the event can arrive
+  // late (redelivered after the retried payment was already paid out, or after Collect again
+  // set it pending), and going back to pending then would show a paid month as owed for good.
   if (resubmitted) {
+    if (!PAYMENT_BAD.has(charge.status)) return null;
     await client.query(
       "UPDATE billing_charges SET status = 'pending', failure_reason = NULL WHERE id = $1",
       [charge.id],

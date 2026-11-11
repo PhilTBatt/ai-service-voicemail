@@ -20,6 +20,14 @@ export async function withTenant<T>(
 
   const client = await pool.connect();
   let broken = false;
+  // A connection that dies while checked out (the database restarting or failing over) emits
+  // an 'error' event as well as failing the query in flight. The pool only listens while the
+  // connection is idle, so with nobody listening here Node would treat it as uncaught and stop
+  // the whole process, every call and request with it. The failed query already reports it.
+  const onError = () => {
+    broken = true;
+  };
+  client.on("error", onError);
   try {
     await client.query("BEGIN");
     await client.query("SELECT set_config('app.tenant_id', $1, true)", [tenantId]);
@@ -33,6 +41,7 @@ export async function withTenant<T>(
     });
     throw error;
   } finally {
+    client.removeListener("error", onError);
     client.release(broken);
   }
 }

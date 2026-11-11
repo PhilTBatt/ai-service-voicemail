@@ -101,8 +101,10 @@ const envSchema = z
       .pipe(z.string().startsWith("-----BEGIN PUBLIC KEY-----", "expected a PEM public key"))
       .optional(),
     // The site the dashboard is served from. Login tokens made for any other site are refused.
-    // Defaults to the local dev server (npm run dev:web).
-    DASHBOARD_ORIGIN: z.url().optional(),
+    // Defaults to the local dev server (npm run dev:web). http or https only: without a scheme,
+    // "localhost:5173" parses as a URL whose scheme is "localhost", its origin is "null", and
+    // every login would be refused with nothing in the start-up log to say why.
+    DASHBOARD_ORIGIN: z.url({ protocol: /^https?$/ }).optional(),
     // The built dashboard (apps/web/dist), served by the API at /. Set in the container image
     // only: in development the dashboard comes from its own dev server (npm run dev:web).
     DASHBOARD_DIST: z.string().min(1).optional(),
@@ -175,8 +177,10 @@ const envSchema = z
             ...(env.TWILIO_ADDRESS_SID !== undefined && { addressSid: env.TWILIO_ADDRESS_SID }),
           }
         : undefined,
-    publicBaseUrl: env.PUBLIC_BASE_URL?.replace(/\/$/, ""),
-    alternateBaseUrl: env.ALTERNATE_BASE_URL?.replace(/\/$/, ""),
+    // Every trailing slash, not just one: "https://host//" left one behind, so the webhook URLs
+    // given to Twilio and Retell had "//" in them, and the API's routes don't answer those.
+    publicBaseUrl: env.PUBLIC_BASE_URL?.replace(/\/+$/, ""),
+    alternateBaseUrl: env.ALTERNATE_BASE_URL?.replace(/\/+$/, ""),
     fallbackVoicemailUrl: env.FALLBACK_VOICEMAIL_URL,
     adminDatabaseUrl: env.ADMIN_DATABASE_URL,
     signingSecret: env.SIGNING_SECRET,
