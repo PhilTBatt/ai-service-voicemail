@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { SCHEDULED_JOBS } from "../db/scheduled-runs.ts";
 import { TEST_DATABASE_URL } from "../testing/databases.ts";
 import * as queue from "./queue.ts";
-import { startQueue } from "./queue.ts";
+import { createQueue, startQueue, startQueueWhenReachable } from "./queue.ts";
 
 /** Every queue jobs/queue.ts defines: a new one is checked here without being listed. */
 const ALL_QUEUES = Object.entries(queue)
@@ -30,6 +30,35 @@ const settingsOf = async (name: string) => {
   if (!found) throw new Error(`queue ${name} doesn't exist`);
   return found;
 };
+
+describe("startQueueWhenReachable (the API and the worker at start-up)", () => {
+  it("keeps trying a database it can't reach, and stops cleanly when told to", async () => {
+    // Nothing listens on port 1: every attempt is refused at once, as in a restart or failover.
+    const down = createQueue("postgres://callmate_app@127.0.0.1:1/callmate?sslmode=disable");
+    const stopping = new AbortController();
+    const outcome = startQueueWhenReachable(down, { signal: stopping.signal, pauseMs: 50 });
+    // Still trying after a couple of seconds: it hasn't thrown or given up.
+    const early = await Promise.race([
+      outcome,
+      new Promise<"still trying">((resolve) => setTimeout(() => resolve("still trying"), 2_000)),
+    ]);
+    expect(early).toBe("still trying");
+    // A shutdown: the signal, then stopping pg-boss, which cancels its wait between attempts.
+    stopping.abort();
+    await down.stop({ close: true, graceful: false });
+    expect(await outcome).toBe("stopped");
+  }, 30_000);
+
+  it("starts, with every queue made, once the database answers", async () => {
+    const up = createQueue(TEST_DATABASE_URL);
+    try {
+      expect(await startQueueWhenReachable(up)).toBe("started");
+      for (const name of ALL_QUEUES) expect(await up.getQueue(name), name).toBeTruthy();
+    } finally {
+      await up.stop({ close: true, graceful: false });
+    }
+  }, 30_000);
+});
 
 describe("startQueue", () => {
   it("finds every queue the code names", () => {

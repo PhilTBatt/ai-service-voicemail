@@ -359,6 +359,31 @@ describe("GitHub workflows", () => {
     for (const { file, text } of workflows) expect(text, file).not.toContain("pull_request_target");
   });
 
+  // The release safety of 2026-11-11: production changes only from main, and a release that's
+  // only done once the new build is the one answering, API and worker both.
+  describe("deploy.yml", () => {
+    const deploy = workflows.find((w) => w.file === "deploy.yml")!.text;
+    /** A job's `if:` line, by the job's name. */
+    const jobIf = (job: string) =>
+      new RegExp(`^ {2}${job}:\\n(?: {4}#.*\\n)* {4}if: (.*)$`, "m").exec(deploy)?.[1];
+
+    it("changes production only from main, and fails a run from anywhere else", () => {
+      for (const job of ["infrastructure", "release", "task", "apply"]) {
+        expect(jobIf(job), job).toMatch(/&& github\.ref == 'refs\/heads\/main'$/);
+      }
+      expect(jobIf("main-only")).toContain("github.ref != 'refs/heads/main'");
+      expect(deploy).toMatch(/main-only:[\s\S]*?exit 1/);
+    });
+
+    it("builds the commit into the image, and waits for the API and worker to report it", () => {
+      expect(deploy).toContain("APP_VERSION=${{ github.sha }}");
+      expect(dockerfile).toMatch(/^ARG APP_VERSION\nENV APP_VERSION=\$\{APP_VERSION\}$/m);
+      expect(deploy).toContain(`= "ready $IMAGE_TAG"`);
+      expect(deploy).toContain(`= "running $IMAGE_TAG"`);
+      expect(deploy).toContain("/healthz/worker");
+    });
+  });
+
   it("run their shell scripts from files that exist", () => {
     const scripts = workflows.flatMap(({ file, text }) =>
       [...text.matchAll(/(\.github\/scripts\/[\w.-]+\.sh)/g)].map((m) => ({ file, script: m[1]! })),

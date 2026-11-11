@@ -60,6 +60,12 @@ COPY --from=build /usr/local/bin/dbmate /usr/local/bin/dbmate
 # The API serves the built dashboard at / (config.ts DASHBOARD_DIST).
 ENV DASHBOARD_DIST=/app/apps/web/dist
 
+# The commit this image is built from (the Deploy workflow passes it): /readyz and the worker's
+# check-in report it, so the release check can tell the new build from the old. Late in the
+# file, so a new commit doesn't throw away the cached layers above.
+ARG APP_VERSION
+ENV APP_VERSION=${APP_VERSION}
+
 # Files stay owned by root, so the app (running as the unprivileged node user) can read
 # its code but not change it.
 USER node

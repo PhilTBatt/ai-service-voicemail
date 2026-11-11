@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createPool } from "./pool.ts";
-import { TEST_DATABASE_URL } from "../testing/databases.ts";
+import { TEST_DATABASE_URL, TEST_MIGRATION_DATABASE_URL } from "../testing/databases.ts";
 import {
   GLOBAL_SETTINGS_LOCK_TIMEOUT_MS,
   holdGlobalSettings,
@@ -21,6 +21,25 @@ afterAll(async () => {
 
 afterAll(async () => {
   await app.end();
+});
+
+describe("the role that runs the migrations", () => {
+  // A migration waiting for a lock on a busy table queues every query behind it, call routing
+  // included: the owner role gives up after 5 seconds instead (20261111170000_release_safety).
+  it("waits at most 5 seconds for a lock, by default, in every new session", async () => {
+    const owner = createPool(TEST_MIGRATION_DATABASE_URL.replace("?sslmode=disable", ""));
+    try {
+      const { rows } = await owner.query<{ lock_timeout: string }>("SHOW lock_timeout");
+      expect(rows[0]?.lock_timeout).toBe("5s");
+    } finally {
+      await owner.end();
+    }
+  });
+
+  it("leaves the app role without it: a call's own queries keep Postgres's default", async () => {
+    const { rows } = await app.query<{ lock_timeout: string }>("SHOW lock_timeout");
+    expect(rows[0]?.lock_timeout).toBe("0");
+  });
 });
 
 describe("the app role", () => {

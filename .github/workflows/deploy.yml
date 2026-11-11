@@ -48,6 +48,20 @@ env:
   RESOURCE_GROUP: rg-callmate-prod
 
 jobs:
+  # Production changes only from main: a run started from another branch (by mistake, from the
+  # Actions tab's branch picker) would put unreviewed code live. Those jobs skip themselves for
+  # any other branch (their `if`), and this one fails the run with the reason, so it doesn't
+  # look like a success. Building an image or running the restore drill changes nothing.
+  main-only:
+    if: github.ref != 'refs/heads/main' && inputs.step != 'image' && inputs.step != 'restore-drill'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions: {}
+    steps:
+      - run: |
+          echo "::error::Deploy changes production only from main, and this run is on $GITHUB_REF_NAME. Merge to main, then run it from there."
+          exit 1
+
   image:
     if: inputs.step == 'image' || inputs.step == 'database-setup' || inputs.step == 'release'
     runs-on: ubuntu-latest
@@ -75,13 +89,16 @@ jobs:
           push: true
           tags: ${{ env.IMAGE }}:${{ github.sha }}
           # Clerk's publishable key is public by design (decision 012); it's a repository
-          # variable, not a secret. The build fails without it.
-          build-args: CLERK_PUBLISHABLE_KEY=${{ vars.CLERK_PUBLISHABLE_KEY }}
+          # variable, not a secret. The build fails without it. APP_VERSION is the commit, which
+          # the release check waits to see the new API and worker report.
+          build-args: |
+            CLERK_PUBLISHABLE_KEY=${{ vars.CLERK_PUBLISHABLE_KEY }}
+            APP_VERSION=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
   infrastructure:
-    if: startsWith(inputs.step, 'infrastructure')
+    if: startsWith(inputs.step, 'infrastructure') && github.ref == 'refs/heads/main'
     # One change to production at a time: an apply approved while a release runs could
     # otherwise put the apps back on the old image after the new migrations. The restore drill
     # isn't in the group, so its hours never hold up a release.
@@ -149,7 +166,7 @@ jobs:
   # Puts a built image to work: the jobs first, then (for a release) the migrations, then the
   # apps. Waits for the image job, so it never runs an image that wasn't published.
   release:
-    if: inputs.step == 'database-setup' || inputs.step == 'release'
+    if: (inputs.step == 'database-setup' || inputs.step == 'release') && github.ref == 'refs/heads/main'
     # One change to production at a time: an apply approved while a release runs could
     # otherwise put the apps back on the old image after the new migrations. The restore drill
     # isn't in the group, so its hours never hold up a release.
@@ -227,18 +244,30 @@ jobs:
                          deployApps=true \
             --query properties.outputs.publicBaseUrl.value --output tsv
 
-      # Step 8's smoke check: the new API answers, and reaches the database. Each try gives up
-      # after 15 seconds: with no replica ready, Azure's ingress holds a request open for
-      # minutes rather than refusing it, which once kept this loop going for half an hour.
-      - name: Check the API is ready
+      # Step 8's smoke check, for this release's own build: /readyz says ready (the database and
+      # the job queue answer) and reports this commit, and the worker has checked in running it.
+      # The old revision answers /readyz until the new one is ready, and the old worker's
+      # check-in can still be the latest, so a plain 200 or "running" proved nothing about the
+      # release (the 2026-11-11 audit). Each try gives up after 15 seconds: with no replica
+      # ready, Azure's ingress holds a request open for minutes rather than refusing it.
+      - name: Check the new API and worker are running
         if: inputs.step == 'release'
         run: |
           url="$(az containerapp show --name callmate-api --resource-group "$RESOURCE_GROUP" --query properties.configuration.ingress.fqdn --output tsv)"
+          api="" worker=""
           for attempt in $(seq 1 30); do
-            if curl --silent --fail --max-time 15 "https://$url/readyz"; then echo; echo "Ready: https://$url"; exit 0; fi
+            api="$(curl --silent --max-time 15 "https://$url/readyz" || true)"
+            worker="$(curl --silent --max-time 15 "https://$url/healthz/worker" || true)"
+            if [ "$(echo "$api" | jq -r '.status + " " + (.version // "")' 2>/dev/null)" = "ready $IMAGE_TAG" ] &&
+               [ "$(echo "$worker" | jq -r '.status + " " + (.version // "")' 2>/dev/null)" = "running $IMAGE_TAG" ]; then
+              echo "Ready: https://$url, API and worker on $IMAGE_TAG"
+              exit 0
+            fi
             sleep 10
           done
-          echo "::error::https://$url/readyz didn't answer 200 within 5 minutes"
+          echo "Last /readyz: $api"
+          echo "Last /healthz/worker: $worker"
+          echo "::error::The API and worker didn't both report $IMAGE_TAG as ready and running within 5 minutes"
           exit 1
 
   # One script against production: the callmate-task job (made by the last release, with the
@@ -246,7 +275,7 @@ jobs:
   # "command" box. Anything typed there is in this public repository's run log, so contact
   # details go in Key Vault, not here (create-demo-business reads DEMO_MOBILE and DEMO_EMAIL).
   task:
-    if: inputs.step == 'task'
+    if: inputs.step == 'task' && github.ref == 'refs/heads/main'
     # One change to production at a time: an apply approved while a release runs could
     # otherwise put the apps back on the old image after the new migrations. The restore drill
     # isn't in the group, so its hours never hold up a release.
@@ -291,7 +320,7 @@ jobs:
   # The template again, for the apps, with the image they already run: a settings change or
   # a custom-domain stage without an eight-minute release. Needs a release to have happened.
   apply:
-    if: inputs.step == 'apply'
+    if: inputs.step == 'apply' && github.ref == 'refs/heads/main'
     # One change to production at a time: an apply approved while a release runs could
     # otherwise put the apps back on the old image after the new migrations. The restore drill
     # isn't in the group, so its hours never hold up a release.

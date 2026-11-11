@@ -1,3 +1,4 @@
+import { AssertionError } from "node:assert";
 import { PgBoss } from "pg-boss";
 import type pg from "pg";
 import { QUEUE_POOL_MAX } from "../db/pool.ts";
@@ -38,11 +39,11 @@ export const CHARGE_PERIODS_CRON = "0 6 * * *";
 export const BILLING_EMAIL_QUEUE = "billing-email";
 
 /**
- * Starts pg-boss as the app role. Its schema was installed by a migration (decision 008),
- * so pg-boss never creates or migrates anything itself: if a pg-boss upgrade needs a
- * schema change, start() fails fast instead of altering the database at runtime.
+ * pg-boss as the app role, not yet started. Its schema was installed by a migration (decision
+ * 008), so pg-boss never creates or migrates anything itself: if a pg-boss upgrade needs a
+ * schema change, start() fails instead of altering the database at runtime.
  */
-export async function startQueue(connectionString: string): Promise<PgBoss> {
+export function createQueue(connectionString: string): PgBoss {
   const boss = new PgBoss({
     connectionString,
     // Within the connection budget (db/pool.ts): the default is 10.
@@ -52,8 +53,64 @@ export async function startQueue(connectionString: string): Promise<PgBoss> {
     createSchema: false,
   });
   boss.on("error", (error: Error) => logger.error("Job queue error", { error }));
-  await boss.start();
+  // pg-boss says once when a start attempt fails and it will try again (startQueueWhenReachable).
+  boss.on("warning", (warning: { message: string }) =>
+    logger.warn("Job queue warning", { warning: warning.message }),
+  );
+  return boss;
+}
 
+/** Starts the queue (trying `attempts` times, waiting longer each time) and makes every queue. */
+export async function prepareQueue(boss: PgBoss, { attempts = 1 } = {}): Promise<PgBoss> {
+  await boss.start({ attempts });
+  await ensureQueues(boss);
+  return boss;
+}
+
+/** Starts pg-boss as the app role, once: for tests and scripts, where failing is the answer. */
+export async function startQueue(connectionString: string): Promise<PgBoss> {
+  return prepareQueue(createQueue(connectionString));
+}
+
+/** How long to wait between rounds of start attempts, once pg-boss's own have run out. */
+const START_ROUND_PAUSE_MS = 30_000;
+
+/**
+ * For the API and the worker: starts the queue, and if the database can't be reached (a
+ * restart, a failover, the network), keeps trying until it can, rather than exiting. Before
+ * this, a process that started during a database blip threw, Azure restarted it, it threw
+ * again, and Azure's restarts slowed down each time: the API could stay down for minutes after
+ * the database was back. pg-boss's start() retries on the same instance (1 s, 2 s, 4 s... up to
+ * 30 s apart, its docs and source say safe to repeat); this repeats that in rounds, forever.
+ *
+ * Gives up only on what can't get better by waiting: pg-boss refusing its configuration (an
+ * AssertionError), which is thrown. Stops quietly once `signal` is aborted (shutting down).
+ */
+export async function startQueueWhenReachable(
+  boss: PgBoss,
+  { signal, pauseMs = START_ROUND_PAUSE_MS }: { signal?: AbortSignal; pauseMs?: number } = {},
+): Promise<"started" | "stopped"> {
+  for (;;) {
+    if (signal?.aborted) return "stopped";
+    try {
+      await prepareQueue(boss, { attempts: 20 });
+      return "started";
+    } catch (error) {
+      if (error instanceof AssertionError) throw error;
+      if (signal?.aborted) return "stopped";
+      logger.error("Job queue can't reach the database yet; still trying", { error });
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, pauseMs);
+        signal?.addEventListener("abort", () => {
+          clearTimeout(timer);
+          resolve();
+        });
+      });
+    }
+  }
+}
+
+async function ensureQueues(boss: PgBoss): Promise<void> {
   await ensureQueue(boss, DEAD_LETTER_QUEUE, {});
   await ensureQueue(boss, SYNC_AGENT_QUEUE, {
     // One job per singletonKey (tenant + profile version) queued or active at a time.
@@ -156,7 +213,6 @@ export async function startQueue(connectionString: string): Promise<PgBoss> {
     expireInSeconds: 300,
     deadLetter: DEAD_LETTER_QUEUE,
   });
-  return boss;
 }
 
 async function ensureQueue(

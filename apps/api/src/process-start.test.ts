@@ -126,11 +126,14 @@ describe("server.ts", () => {
     });
     try {
       await waitFor(async () => (await fetch(`http://127.0.0.1:${port}/healthz`)).ok, "/healthz");
+      // Ready once the job queue has connected, a moment after listening.
+      await waitFor(async () => (await fetch(`http://127.0.0.1:${port}/readyz`)).ok, "/readyz");
       const ready = await fetch(`http://127.0.0.1:${port}/readyz`);
       expect(ready.status).toBe(200);
 
       const messages = logLines(run.output()).map((line) => line.message);
       expect(messages).toContain("API listening");
+      expect(messages).toContain("Job queue ready");
       // Each switched-off feature says so at start-up, which is how Phil finds a missing setting.
       expect(messages).toEqual(
         expect.arrayContaining([
@@ -141,6 +144,38 @@ describe("server.ts", () => {
           "Alert emails off: needs ALERT_EMAIL, POSTMARK_SERVER_TOKEN and EMAIL_FROM",
         ]),
       );
+    } finally {
+      run.child.kill();
+      await run.exited;
+    }
+  }, 60_000);
+
+  // Before, a start while the database was unreachable threw and exited, and Azure's restarts
+  // of a crashing container slow down each time: the API could stay down after the database
+  // was back. Now it listens, says it's alive but not ready, and keeps trying the queue.
+  it("keeps running when the database can't be reached, alive but not ready", async () => {
+    const port = await freePort();
+    const run = start(SERVER, {
+      NODE_ENV: "test",
+      // Nothing listens on this port: the database is "down" for the whole test.
+      DATABASE_URL: `postgres://callmate_app@127.0.0.1:${await freePort()}/callmate?sslmode=disable`,
+      PORT: String(port),
+      APP_VERSION: "test-build-1",
+    });
+    try {
+      await waitFor(async () => (await fetch(`http://127.0.0.1:${port}/healthz`)).ok, "/healthz");
+      const ready = await fetch(`http://127.0.0.1:${port}/readyz`);
+      expect(ready.status).toBe(503);
+      expect(await ready.json()).toEqual({ status: "starting", version: "test-build-1" });
+      // Still running a few seconds on, after several failed attempts.
+      const code = await Promise.race([
+        run.exited,
+        new Promise<"still running">((resolve) =>
+          setTimeout(() => resolve("still running"), 5_000),
+        ),
+      ]);
+      expect(code, run.output()).toBe("still running");
+      expect(logLines(run.output()).map((line) => line.message)).toContain("API listening");
     } finally {
       run.child.kill();
       await run.exited;

@@ -19,25 +19,32 @@ export interface Heartbeat {
   seenAt: Date;
   /** When the worker that last checked in started. */
   startedAt: Date;
+  /** The build it runs (APP_VERSION), or null for one built without it (local, older images). */
+  version: string | null;
 }
 
 export type WorkerState =
   { state: "running"; seenAt: Date } | { state: "down"; seenAt: Date } | { state: "never" };
 
-export async function recordHeartbeat(pool: pg.Pool, startedAt: Date): Promise<void> {
+export async function recordHeartbeat(
+  pool: pg.Pool,
+  startedAt: Date,
+  version: string | null = null,
+): Promise<void> {
   await pool.query(
-    `INSERT INTO worker_heartbeat (seen_at, started_at) VALUES (now(), $1)
-     ON CONFLICT (id) DO UPDATE SET seen_at = now(), started_at = EXCLUDED.started_at`,
-    [startedAt],
+    `INSERT INTO worker_heartbeat (seen_at, started_at, version) VALUES (now(), $1, $2)
+     ON CONFLICT (id) DO UPDATE
+       SET seen_at = now(), started_at = EXCLUDED.started_at, version = EXCLUDED.version`,
+    [startedAt, version],
   );
 }
 
 export async function lastHeartbeat(pool: pg.Pool): Promise<Heartbeat | null> {
-  const { rows } = await pool.query<{ seen_at: Date; started_at: Date }>(
-    "SELECT seen_at, started_at FROM worker_heartbeat",
+  const { rows } = await pool.query<{ seen_at: Date; started_at: Date; version: string | null }>(
+    "SELECT seen_at, started_at, version FROM worker_heartbeat",
   );
   const row = rows[0];
-  return row ? { seenAt: row.seen_at, startedAt: row.started_at } : null;
+  return row ? { seenAt: row.seen_at, startedAt: row.started_at, version: row.version } : null;
 }
 
 /** Running if it checked in within WORKER_DOWN_AFTER_MS of `now`. */

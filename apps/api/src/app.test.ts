@@ -74,6 +74,26 @@ describe("GET /readyz", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ status: "ready" });
   });
+
+  it("says starting, not ready, while the job queue is still connecting, with its build", async () => {
+    let queueUp = false;
+    const pool = createPool(TEST_DATABASE_URL);
+    const server = createApp({ pool, ready: () => queueUp, version: "abc123" }).listen(0);
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+    try {
+      const starting = await fetch(`http://127.0.0.1:${port}/readyz`);
+      expect(starting.status).toBe(503);
+      expect(await starting.json()).toEqual({ status: "starting", version: "abc123" });
+      queueUp = true;
+      const ready = await fetch(`http://127.0.0.1:${port}/readyz`);
+      expect(ready.status).toBe(200);
+      expect(await ready.json()).toEqual({ status: "ready", version: "abc123" });
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+      await pool.end();
+    }
+  });
 });
 
 describe("serving the built dashboard (production)", () => {

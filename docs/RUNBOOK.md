@@ -327,6 +327,14 @@ Azure portal, **Key vaults**, `kv-callmate-dalbkqkh`, **Objects**, **Secrets**, 
 
 After that, every release is just step 3.
 
+### When a release fails
+
+Deploy changes production only from `main`: a run started from another branch fails at once (the `main-only` job says so) and changes nothing. Merge, then run it from `main`.
+
+- **"Run the migrations" fails with `canceling statement due to lock timeout`.** A migration waited more than 5 seconds for a lock on a table something else was holding (a long query, a stuck transaction). It gave up rather than hold up calls (the owner role's `lock_timeout`, migration `20261111170000`), and the apps weren't moved to the new image, so nothing changed for callers. Run `release` again in a few minutes. If it fails the same way twice, something is holding the lock for good: ask me to find it with you (`pg_stat_activity`).
+- **"Check the new API and worker are running" fails.** The log's last two lines show what `/readyz` and `/healthz/worker` said. `/readyz` reports the build answering (`version`) and `"starting"` while it's still connecting to the job queue; `/healthz/worker` reports the build that last checked in. Old build still answering after 5 minutes: the new revision didn't become ready, so look at the API's logs in the Azure portal (Container App `callmate-api`, Log stream). API right but the worker on the old build, or `"down"`: the same for `callmate-worker`. Callers are safe either way: Azure keeps traffic on the old API until the new one is ready, and a worker that's down only delays texts and summaries (they're queued).
+- **The database was down while the API or worker started.** Neither crashes any more: both wait for it and carry on by themselves. The API answers `/readyz` with `"starting"` until then, and Twilio's fallback URL takes calls meanwhile.
+
 ### Running a script against production (the `task` step)
 
 **Deploy**, `task`, with the script's name and arguments in the **command** box, for example `invite-user --email you@example.com --role admin`. It runs that script from `apps/api/src/scripts` in the `callmate-task` job, which has the apps' image and every setting they have, and prints the script's output in the Actions log. The job is created by a release, so the first `task` needs a release before it. Whatever is typed in the box is visible in this public repository's run log, so a script that needs contact details reads them from Key Vault instead: add the optional secrets `demo-mobile` and `demo-email` and list them in `OPTIONAL_SECRET_NAMES` before the demo business step below. A script opens database connections of its own, up to 8 (`create-demo-business`), on top of the apps' 17: 25 of the database's 35. A release already reaches 35 at its peak, so `task` waits for any release to finish (they share one queue in the workflow) and a release waits for a task. Don't start the `callmate-task` job by hand from the Azure portal while a release is running.

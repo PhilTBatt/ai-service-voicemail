@@ -49,6 +49,14 @@ export interface AppOptions {
    * host is sent on to the dashboard's own address, the only one its logins work at.
    */
   moveDashboard?: { fromHost: string; toOrigin: string } | undefined;
+  /**
+   * Whether everything the API needs beyond the database is up: false while the job queue is
+   * still connecting (server.ts), so /readyz keeps traffic on the old revision during a
+   * release until this one can enqueue. Always ready if not given.
+   */
+  ready?: (() => boolean) | undefined;
+  /** The commit this image was built from (APP_VERSION), reported by /readyz for the release check. */
+  version?: string | undefined;
   voiceProviders?: Record<string, VoiceProvider>;
   onCallEnded?: (event: CallEndedEvent) => Promise<void>;
   /** A mid-call emergency function fired (Step 6). */
@@ -81,6 +89,8 @@ export function createApp({
   pool,
   dashboardDist,
   moveDashboard,
+  ready = () => true,
+  version,
   voiceProviders = {},
   onCallEnded = () => Promise.resolve(),
   onFunctionCall,
@@ -107,26 +117,35 @@ export function createApp({
   // which decide whether Azure restarts or routes to this API instance.
   app.get("/healthz/worker", async (_req, res) => {
     try {
-      const worker = workerState(await lastHeartbeat(pool), new Date());
+      const beat = await lastHeartbeat(pool);
+      const worker = workerState(beat, new Date());
       res.status(worker.state === "running" ? 200 : 503).json({
         status: worker.state,
         lastSeen: worker.state === "never" ? null : worker.seenAt.toISOString(),
+        // Which build checked in last: the release check waits for the new worker's.
+        version: beat?.version ?? null,
       });
     } catch (error) {
       logger.warn("Worker check-in lookup failed", { error });
-      res.status(503).json({ status: "unknown", lastSeen: null });
+      res.status(503).json({ status: "unknown", lastSeen: null, version: null });
     }
   });
 
   // Readiness: can this instance do useful work? A 503 tells the load balancer to stop
-  // sending traffic here until the database is reachable again.
+  // sending traffic here until the database (and the job queue) are reachable again. The
+  // version says which build answered: the release check waits for its own.
+  const versioned = version === undefined ? {} : { version };
   app.get("/readyz", async (_req, res) => {
+    if (!ready()) {
+      res.status(503).json({ status: "starting", ...versioned });
+      return;
+    }
     try {
       await pool.query("SELECT 1");
-      res.json({ status: "ready" });
+      res.json({ status: "ready", ...versioned });
     } catch (error) {
       logger.warn("Readiness check failed", { error });
-      res.status(503).json({ status: "unavailable" });
+      res.status(503).json({ status: "unavailable", ...versioned });
     }
   });
 

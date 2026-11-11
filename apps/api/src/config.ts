@@ -108,6 +108,10 @@ const envSchema = z
     // The built dashboard (apps/web/dist), served by the API at /. Set in the container image
     // only: in development the dashboard comes from its own dev server (npm run dev:web).
     DASHBOARD_DIST: z.string().min(1).optional(),
+    // The commit the image was built from, set in the image (Dockerfile, from the Deploy
+    // workflow). /readyz and the worker's check-in report it, so the release check knows the
+    // new build is the one answering. Unset locally.
+    APP_VERSION: z.string().trim().min(1).max(100).optional(),
     LLM_MODEL: z.string().min(1).default("claude-haiku-5-5"),
     // Share of processed calls whose summary is checked by the hallucination judge (Step 7):
     // 0 (off) to 1 (every call). Off by default; each check is one more model call.
@@ -142,6 +146,7 @@ const envSchema = z
     // An origin is scheme, host and port: a trailing slash or path would never match a token.
     dashboardOrigin: new URL(env.DASHBOARD_ORIGIN ?? "http://localhost:5173").origin,
     dashboardDist: env.DASHBOARD_DIST,
+    appVersion: env.APP_VERSION,
     email:
       env.POSTMARK_SERVER_TOKEN !== undefined && env.EMAIL_FROM !== undefined
         ? {

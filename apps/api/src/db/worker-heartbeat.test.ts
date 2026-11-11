@@ -94,10 +94,10 @@ describe("the check-in in the database, and GET /healthz/worker", () => {
       expect(await lastHeartbeat(pool)).toBeNull();
       const never = await app.get("/healthz/worker");
       expect(never.status).toBe(503);
-      expect(await never.json()).toEqual({ status: "never", lastSeen: null });
+      expect(await never.json()).toEqual({ status: "never", lastSeen: null, version: null });
 
       const startedAt = new Date("2026-11-08T12:00:00Z");
-      await recordHeartbeat(pool, startedAt);
+      await recordHeartbeat(pool, startedAt, "build-old");
       const beat = await lastHeartbeat(pool);
       expect(beat?.startedAt).toEqual(startedAt);
       const running = await app.get("/healthz/worker");
@@ -105,13 +105,18 @@ describe("the check-in in the database, and GET /healthz/worker", () => {
       expect(await running.json()).toEqual({
         status: "running",
         lastSeen: beat!.seenAt.toISOString(),
+        version: "build-old",
       });
 
-      // A later check-in updates the one row; it never adds another.
-      await recordHeartbeat(pool, startedAt);
+      // A later check-in updates the one row; it never adds another. A new worker's check-in
+      // (a release) replaces the old one's build, which is what the release check waits for.
+      await recordHeartbeat(pool, startedAt, "build-new");
       expect((await pool.query("SELECT count(*)::int AS n FROM worker_heartbeat")).rows[0]).toEqual(
         { n: 1 },
       );
+      expect(await (await app.get("/healthz/worker")).json()).toMatchObject({
+        version: "build-new",
+      });
 
       await pool.query("UPDATE worker_heartbeat SET seen_at = now() - interval '10 minutes'");
       const down = await app.get("/healthz/worker");

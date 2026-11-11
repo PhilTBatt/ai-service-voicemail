@@ -23,7 +23,18 @@ import { TwilioTelephonyProvider } from "./providers/twilio.ts";
  */
 export function buildServerApp(
   config: Config,
-  { pool, boss, admin }: { pool: pg.Pool; boss: PgBoss; admin: AdminPool | undefined },
+  {
+    pool,
+    boss,
+    admin,
+    ready,
+  }: {
+    pool: pg.Pool;
+    boss: PgBoss;
+    admin: AdminPool | undefined;
+    /** False while the job queue is still connecting (server.ts); /readyz says "starting". */
+    ready?: () => boolean;
+  },
 ) {
   const voiceProviders = config.retellApiKey
     ? { retell: new RetellVoiceProvider({ apiKey: config.retellApiKey, ...retellUrls(config) }) }
@@ -109,6 +120,8 @@ export function buildServerApp(
 
   return createApp({
     pool,
+    ready,
+    version: config.appVersion,
     dashboardDist: config.dashboardDist,
     moveDashboard: config.alternateBaseUrl
       ? { fromHost: new URL(config.alternateBaseUrl).host, toOrigin: config.dashboardOrigin }
