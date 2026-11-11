@@ -170,6 +170,17 @@ export interface HealthView {
    * record). Without a worker, no syncs, summaries or texts happen.
    */
   worker: { state: "running" | "down" | "never"; lastSeen: string | null };
+  /**
+   * The recurring jobs the worker has run (the two reconciliations, retention, billing): when
+   * each last succeeded and failed, and whether it's overdue, meaning it has stopped running.
+   */
+  scheduledJobs: {
+    queue: string;
+    label: string;
+    lastSucceededAt: string | null;
+    lastFailedAt: string | null;
+    overdue: boolean;
+  }[];
   /** Businesses whose latest profile has waited over 5 minutes, neither synced nor failed. */
   waitingSyncs: { tenantId: string; businessName: string; version: number; savedAt: string }[];
   /** The latest texts and emails that couldn't be sent, newest first, with the provider's reason. */

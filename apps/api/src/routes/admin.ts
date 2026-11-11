@@ -48,6 +48,7 @@ import {
   type AdminPool,
 } from "../db/cross-tenant.ts";
 import { advanceOnboarding, onboardingStatus, setPilot } from "../db/onboarding.ts";
+import { SCHEDULED_JOBS, isOverdue, listScheduledRuns } from "../db/scheduled-runs.ts";
 import { SYNC_WAITING_AFTER_MS, workerState } from "../db/worker-heartbeat.ts";
 import { ukDateTime } from "../core/uk-time.ts";
 import { withTenant } from "../db/tenant.ts";
@@ -218,15 +219,17 @@ export function adminRouter({
   router.get("/health", async (_req, res) => {
     const at = now();
     const since = new Date(at.getTime() - DAY_MS);
-    const [snapshot, deadLettered, failedRecent, deadLettersRecent] = await Promise.all([
-      healthSnapshot(admin, {
-        since,
-        waitingBefore: new Date(at.getTime() - SYNC_WAITING_AFTER_MS),
-      }),
-      countDeadLettered(pool, since),
-      recentFailedNotifications(admin, since),
-      recentDeadLetters(pool, since),
-    ]);
+    const [snapshot, deadLettered, failedRecent, deadLettersRecent, scheduledRuns] =
+      await Promise.all([
+        healthSnapshot(admin, {
+          since,
+          waitingBefore: new Date(at.getTime() - SYNC_WAITING_AFTER_MS),
+        }),
+        countDeadLettered(pool, since),
+        recentFailedNotifications(admin, since),
+        recentDeadLetters(pool, since),
+        listScheduledRuns(pool),
+      ]);
     const { workerSeenAt, waitingSyncs, ...counts } = snapshot;
     // Is anything running the jobs? A stopped worker used to be silent here.
     const worker = workerState(workerSeenAt ? { seenAt: workerSeenAt } : null, at);
@@ -237,6 +240,14 @@ export function adminRouter({
         state: worker.state,
         lastSeen: worker.state === "never" ? null : worker.seenAt.toISOString(),
       },
+      // A recurring job that stopped running says nothing by itself (db/scheduled-runs.ts).
+      scheduledJobs: scheduledRuns.map((run) => ({
+        queue: run.queue,
+        label: SCHEDULED_JOBS[run.queue]?.label ?? run.queue,
+        lastSucceededAt: run.lastSucceededAt?.toISOString() ?? null,
+        lastFailedAt: run.lastFailedAt?.toISOString() ?? null,
+        overdue: isOverdue(run, at),
+      })),
       waitingSyncs: waitingSyncs.map((sync) => ({ ...sync, savedAt: sync.savedAt.toISOString() })),
       // The reasons behind the two counts, so a failed send or job can be understood here
       // rather than in the worker's log. A job's data is whatever was queued: only the IDs

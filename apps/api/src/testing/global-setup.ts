@@ -60,6 +60,8 @@ export default async function setup(): Promise<void> {
     // No worker has checked in at the start of a run (db/worker-heartbeat.ts): the tests that
     // need one record it, and the smoke tests show the admin a worker that isn't running.
     await owner.query("TRUNCATE worker_heartbeat");
+    // Nor has any recurring job run (db/scheduled-runs.ts).
+    await owner.query("TRUNCATE scheduled_runs");
   } finally {
     await owner.end();
   }

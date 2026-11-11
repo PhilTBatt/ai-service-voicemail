@@ -24,14 +24,19 @@ const ALL_QUEUES = Object.entries(queue)
 /** Stands in for pg-boss: records each worker and schedule, and never runs a job. */
 function recorder() {
   const worked: string[] = [];
-  const scheduled: { name: string; tz: string | undefined }[] = [];
+  const scheduled: { name: string; tz: string | undefined; missed: string | undefined }[] = [];
   const boss = {
     work: (name: string) => {
       worked.push(name);
       return Promise.resolve(`worker-${name}`);
     },
-    schedule: (name: string, _cron: string, _data: unknown, options?: { tz?: string }) => {
-      scheduled.push({ name, tz: options?.tz });
+    schedule: (
+      name: string,
+      _cron: string,
+      _data: unknown,
+      options?: { tz?: string; missed?: string },
+    ) => {
+      scheduled.push({ name, tz: options?.tz, missed: options?.missed });
       return Promise.resolve();
     },
     send: () => Promise.resolve(null),
@@ -53,15 +58,16 @@ describe("registerJobs", () => {
     expect(worked).toHaveLength(ALL_QUEUES.length); // one worker each, never two
   });
 
-  it("runs the four recurring jobs on UK time", async () => {
+  // UK time, and a run that fell while no worker was running is sent once when one is back.
+  it("runs the four recurring jobs on UK time, catching up a missed run", async () => {
     const { boss, scheduled } = recorder();
     await registerJobs(configFrom(STAND_IN_ENV), { boss, pool, admin });
     expect(scheduled).toEqual(
       expect.arrayContaining([
-        { name: queue.RECONCILE_CALLS_QUEUE, tz: "Europe/London" },
-        { name: queue.RECONCILE_VOICEMAILS_QUEUE, tz: "Europe/London" },
-        { name: queue.RETENTION_QUEUE, tz: "Europe/London" },
-        { name: queue.CHARGE_PERIODS_QUEUE, tz: "Europe/London" },
+        { name: queue.RECONCILE_CALLS_QUEUE, tz: "Europe/London", missed: "once" },
+        { name: queue.RECONCILE_VOICEMAILS_QUEUE, tz: "Europe/London", missed: "once" },
+        { name: queue.RETENTION_QUEUE, tz: "Europe/London", missed: "once" },
+        { name: queue.CHARGE_PERIODS_QUEUE, tz: "Europe/London", missed: "once" },
       ]),
     );
     expect(scheduled).toHaveLength(4);

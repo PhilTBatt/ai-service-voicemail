@@ -4,6 +4,11 @@ import { installAlertEmail } from "./alert-email.ts";
 import { ConfigError, loadConfig } from "./config.ts";
 import { createAdminPool } from "./db/cross-tenant.ts";
 import { createPool } from "./db/pool.ts";
+import {
+  createScheduleCheck,
+  registerScheduledRuns,
+  startScheduleWatch,
+} from "./db/scheduled-runs.ts";
 import { recordHeartbeat, startHeartbeat } from "./db/worker-heartbeat.ts";
 import { startQueue } from "./jobs/queue.ts";
 import { logger } from "./logger.ts";
@@ -26,12 +31,16 @@ try {
   // The check-in the health panel, /healthz/worker and npm run demo:profile read.
   const startedAt = new Date();
   const heartbeat = startHeartbeat(() => recordHeartbeat(pool, startedAt));
+  // The recurring jobs on record, and a look every few minutes for one that's stopped.
+  await registerScheduledRuns(pool, queues);
+  const scheduleWatch = startScheduleWatch(createScheduleCheck({ pool, runsHere: queues }));
   logger.info("Worker listening", { queues, nodeEnv: config.nodeEnv });
 
   // Let the job in hand finish, then close the queue and both pools (Azure sends SIGTERM).
   const shutdown = (signal: NodeJS.Signals) => {
     logger.info("Worker shutting down", { signal });
     heartbeat.stop();
+    scheduleWatch.stop();
     void boss
       .stop({ graceful: true, timeout: 30_000, close: true })
       .then(() => Promise.all([pool.end(), admin?.end()]))

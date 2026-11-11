@@ -27,6 +27,7 @@ export const ALERTS = [
   "fallback-voicemail-spike",
   "webhook-signature-spike",
   "server-error-spike",
+  "scheduled-job-overdue",
 ] as const;
 
 export type AlertName = (typeof ALERTS)[number];

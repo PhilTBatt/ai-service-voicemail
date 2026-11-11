@@ -179,6 +179,7 @@ function Health() {
         {error && <ErrorNote error={error} />}
       </div>
       <Worker worker={data.worker} />
+      <ScheduledJobs jobs={data.scheduledJobs} />
       <div className="stats">
         <Stat label="Calls sent to voicemail" value={data.fallbackCalls} />
         <Stat label="Texts and emails that failed" value={data.failedNotifications} />
@@ -286,6 +287,42 @@ function Worker({ worker }: { worker: HealthView["worker"] }) {
         Until one runs, assistants aren't updated and no call summaries, texts or emails go out.
         Check the worker's logs (locally, start it with npm run worker).
       </p>
+    </div>
+  );
+}
+
+/**
+ * The recurring jobs: when each last ran, and a red card if one has stopped. A failure shows
+ * only when it's newer than the last success (an older one has been put right since).
+ */
+function ScheduledJobs({ jobs }: { jobs: HealthView["scheduledJobs"] }) {
+  if (jobs.length === 0) {
+    return <p className="muted">No scheduled job has run yet.</p>;
+  }
+  const overdue = jobs.some((job) => job.overdue);
+  return (
+    <div className={`card ${overdue ? "error" : ""}`}>
+      <h3>Scheduled jobs</h3>
+      <ul>
+        {jobs.map((job) => (
+          <li key={job.queue}>
+            {job.overdue && <strong>Overdue: </strong>}
+            {job.label}:{" "}
+            {job.lastSucceededAt
+              ? `last ran ${formatUkDateTime(job.lastSucceededAt)}`
+              : "hasn't run yet"}
+            {job.lastFailedAt && (!job.lastSucceededAt || job.lastFailedAt > job.lastSucceededAt)
+              ? `; last failed ${formatUkDateTime(job.lastFailedAt)}`
+              : ""}
+          </li>
+        ))}
+      </ul>
+      {overdue && (
+        <p className="muted">
+          An overdue job has stopped running. RUNBOOK section 11, scheduled-job-overdue, has the
+          first checks.
+        </p>
+      )}
     </div>
   );
 }

@@ -1541,6 +1541,26 @@ describe("admin screens", () => {
     expect(health.worker.lastSeen === null).toBe(health.worker.state === "never");
   });
 
+  it("lists the recurring jobs' last runs", async () => {
+    // A queue of this test's own: db/scheduled-runs.test.ts writes the real ones. A queue that
+    // isn't a recurring job shows by its name and is never overdue.
+    await app.query(
+      `INSERT INTO scheduled_runs (queue, registered_at, last_succeeded_at, last_failed_at)
+       VALUES ('dashboard-test-queue', now() - interval '30 days', now() - interval '20 days',
+               now() - interval '10 days')
+       ON CONFLICT (queue) DO NOTHING`,
+    );
+    const health = await json<HealthView>(get("/admin/health", tokens.admin));
+    expect(health.scheduledJobs.find((job) => job.queue === "dashboard-test-queue")).toEqual({
+      queue: "dashboard-test-queue",
+      label: "dashboard-test-queue",
+      lastSucceededAt: expect.any(String) as unknown,
+      lastFailedAt: expect.any(String) as unknown,
+      overdue: false,
+    });
+    for (const job of health.scheduledJobs) expect(typeof job.overdue).toBe("boolean");
+  });
+
   it("flips the kill switch and says who did it", async () => {
     try {
       expect(

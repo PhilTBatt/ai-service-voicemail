@@ -1,10 +1,11 @@
 // What the worker runs, given its settings: each queue's job handler, and the recurring jobs.
 // Kept apart from worker.ts, which only starts and stops the process, so a test can check the
 // wiring (worker-jobs.test.ts): that every queue gets a worker once its provider is set up.
-import type { PgBoss } from "pg-boss";
+import type { PgBoss, ScheduleOptions } from "pg-boss";
 import type pg from "pg";
 import { retellUrls, type Config } from "./config.ts";
 import type { AdminPool } from "./db/cross-tenant.ts";
+import { trackRun } from "./db/scheduled-runs.ts";
 import {
   enqueueBillingEmailWith,
   runBillingEmail,
@@ -54,6 +55,16 @@ import { PostmarkEmailProvider } from "./providers/postmark.ts";
 import { RetellVoiceProvider } from "./providers/retell.ts";
 import { TwilioSmsProvider } from "./providers/twilio-sms.ts";
 import { TwilioTelephonyProvider } from "./providers/twilio.ts";
+
+/**
+ * How the four recurring jobs are scheduled: on UK time, and a run that came due while nothing
+ * was checking the schedules is sent once when something is back, rather than skipped (pg-boss's
+ * default). The API's pg-boss checks them too, so a worker that's down alone loses nothing: the
+ * API queues the run and the worker takes it when it's back. This is for both being down at
+ * once, or the database. Each job catches up to now in one run, so once is enough: billing
+ * charges every ended month not yet charged, retention clears everything due.
+ */
+const SCHEDULE_OPTIONS: ScheduleOptions = { tz: "Europe/London", missed: "once" };
 
 /**
  * Gives each queue its worker, as far as the settings allow, and returns the queues that got
@@ -170,16 +181,12 @@ export async function registerJobs(
     // Charging (Step 12): each paying business's ended billing months, every morning.
     const payments = new GoCardlessPaymentsProvider(config.payments);
     const enqueueBillingEmail = enqueueBillingEmailWith(boss);
-    await boss.work(CHARGE_PERIODS_QUEUE, async () => {
-      await runChargePeriods({
-        pool,
-        admin,
-        payments,
-        enqueueBillingEmail,
-        vat: config.vat ?? null,
-      });
-    });
-    await boss.schedule(CHARGE_PERIODS_QUEUE, CHARGE_PERIODS_CRON, null, { tz: "Europe/London" });
+    await boss.work(CHARGE_PERIODS_QUEUE, () =>
+      trackRun(pool, CHARGE_PERIODS_QUEUE, () =>
+        runChargePeriods({ pool, admin, payments, enqueueBillingEmail, vat: config.vat ?? null }),
+      ),
+    );
+    await boss.schedule(CHARGE_PERIODS_QUEUE, CHARGE_PERIODS_CRON, null, SCHEDULE_OPTIONS);
     queues.push(CHARGE_PERIODS_QUEUE);
   } else {
     logger.warn("Charging disabled: needs GOCARDLESS_ACCESS_TOKEN and ADMIN_DATABASE_URL");
@@ -187,10 +194,10 @@ export async function registerJobs(
 
   if (admin) {
     // Agent calls whose webhook never arrived (and provisional mid-call rows): stored every 15 min.
-    await boss.work(RECONCILE_CALLS_QUEUE, async () => {
-      await reconcileCalls({ pool, admin, boss, voice });
-    });
-    await boss.schedule(RECONCILE_CALLS_QUEUE, RECONCILE_CALLS_CRON, null, { tz: "Europe/London" });
+    await boss.work(RECONCILE_CALLS_QUEUE, () =>
+      trackRun(pool, RECONCILE_CALLS_QUEUE, () => reconcileCalls({ pool, admin, boss, voice })),
+    );
+    await boss.schedule(RECONCILE_CALLS_QUEUE, RECONCILE_CALLS_CRON, null, SCHEDULE_OPTIONS);
     queues.push(RECONCILE_CALLS_QUEUE);
   } else {
     logger.warn("Call reconciliation disabled: ADMIN_DATABASE_URL isn't set");
@@ -198,24 +205,25 @@ export async function registerJobs(
 
   if (config.twilio) {
     const telephony = new TwilioTelephonyProvider(config.twilio);
-    await boss.work(RECONCILE_VOICEMAILS_QUEUE, async () => {
-      await reconcileVoicemails({
-        pool,
-        telephony,
-        enqueueNotifications,
-        enqueueOnboarding: enqueueOnboardingWith(boss),
-      });
-    });
-    await boss.schedule(RECONCILE_VOICEMAILS_QUEUE, RECONCILE_VOICEMAILS_CRON, null, {
-      tz: "Europe/London",
-    });
+    const enqueueOnboarding = enqueueOnboardingWith(boss);
+    await boss.work(RECONCILE_VOICEMAILS_QUEUE, () =>
+      trackRun(pool, RECONCILE_VOICEMAILS_QUEUE, () =>
+        reconcileVoicemails({ pool, telephony, enqueueNotifications, enqueueOnboarding }),
+      ),
+    );
+    await boss.schedule(
+      RECONCILE_VOICEMAILS_QUEUE,
+      RECONCILE_VOICEMAILS_CRON,
+      null,
+      SCHEDULE_OPTIONS,
+    );
     queues.push(RECONCILE_VOICEMAILS_QUEUE);
 
     if (admin) {
-      await boss.work(RETENTION_QUEUE, async () => {
-        await runRetention({ admin, voice, telephony });
-      });
-      await boss.schedule(RETENTION_QUEUE, RETENTION_CRON, null, { tz: "Europe/London" });
+      await boss.work(RETENTION_QUEUE, () =>
+        trackRun(pool, RETENTION_QUEUE, () => runRetention({ admin, voice, telephony })),
+      );
+      await boss.schedule(RETENTION_QUEUE, RETENTION_CRON, null, SCHEDULE_OPTIONS);
       queues.push(RETENTION_QUEUE);
     } else {
       logger.warn("Retention disabled: ADMIN_DATABASE_URL isn't set");
