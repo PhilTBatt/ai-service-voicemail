@@ -110,7 +110,12 @@ export function buildServerApp(
         }
       : undefined,
     callPages: config.signingSecret
-      ? { signingSecret: config.signingSecret, telephony: telephony?.provider, voice: retell }
+      ? {
+          signingSecret: config.signingSecret,
+          telephony: telephony?.provider,
+          voice: retell,
+          dashboardOrigin: config.dashboardOrigin,
+        }
       : undefined,
     onFunctionCall: async (event) => {
       const result = await recordMidCallEmergency(pool, boss, event);

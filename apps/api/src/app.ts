@@ -33,6 +33,8 @@ export interface AppOptions {
         signingSecret: string;
         telephony?: TelephonyProvider | undefined;
         voice?: VoiceProvider | undefined;
+        /** Where an expired link's page points: the dashboard. */
+        dashboardOrigin?: string | undefined;
         now?: () => Date;
       }
     | undefined;

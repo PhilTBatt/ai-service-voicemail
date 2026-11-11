@@ -17,7 +17,7 @@ export interface CallNotificationInput {
   callUrl: string;
 }
 
-const URGENCY_LABEL: Record<NonNullable<CallNotificationInput["urgency"]>, string> = {
+export const URGENCY_LABEL: Record<NonNullable<CallNotificationInput["urgency"]>, string> = {
   emergency: "EMERGENCY",
   urgent: "URGENT",
   routine: "New enquiry",
