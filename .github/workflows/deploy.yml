@@ -12,6 +12,8 @@
 #                             (the "command" box: e.g. invite-user --email a@b.c --role admin)
 #   apply                     re-apply infra/main.bicep to the apps with the image they already
 #                             run: no build, no migrations (settings changes, the custom domain)
+#   restore-drill             restore the live database to a scratch server, time it, check the
+#                             copy, delete it (BUILD_PLAN Step 14). Pennies; the live one untouched
 # The Azure steps run in the "production" environment, so GitHub waits for Phil's approval
 # first, and sign in to Azure with OIDC: no Azure password is stored in GitHub.
 name: Deploy
@@ -30,6 +32,7 @@ on:
           - release
           - task
           - apply
+          - restore-drill
         default: infrastructure-what-if
       command:
         description: "task only: the script and its arguments, e.g. invite-user --email a@b.c --role admin"
@@ -316,3 +319,28 @@ jobs:
                          customDomainStage="$CUSTOM_DOMAIN_STAGE" \
                          deployApps=true \
             --query properties.outputs
+
+  # The restore drill (BUILD_PLAN Step 14): the live database restored to a scratch server,
+  # timed, checked and deleted. A restore never touches the server it's made from.
+  restore-drill:
+    if: inputs.step == 'restore-drill'
+    runs-on: ubuntu-latest
+    # Microsoft: "a few minutes up to a few hours".
+    timeout-minutes: 240
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Restore, check and delete
+        run: bash .github/scripts/restore-drill.sh

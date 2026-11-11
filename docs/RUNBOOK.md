@@ -241,8 +241,12 @@ app at it.
 1. In the Azure portal, open the server, Overview, Restore. Choose "Latest restore point (Now)"
    or a "Custom restore point" (in UTC), name the new server, then Review + create. Or with the
    Azure CLI: `az postgres flexible-server restore --resource-group <group> --name <new-server> --source-server <server> --restore-time 2026-11-07T02:10:00+00:00`.
-2. Microsoft says it takes from a few minutes to a few hours. The restore drill (Step 14) will
-   time ours once production exists.
+2. Microsoft says it takes from a few minutes to a few hours. To find out for ours, and prove a
+   backup really comes back: **Deploy**, `restore-drill`. It restores the live database to a
+   scratch server, times it, checks the copy (the businesses, the calls, the newest migration,
+   the three logins), and deletes the scratch server, all in one run (a few pence: about 2p an
+   hour for the server, by the database's £14 a month). The live server isn't touched. The run's
+   summary says how long it took: record it here.
 3. Firewall and network rules and server parameters don't come across: set them again on the
    new server, and check our roles (`callmate_app`, `callmate_admin`) can log in.
 4. Point `DATABASE_URL` and `ADMIN_DATABASE_URL` (in Key Vault) at the new server, restart the
