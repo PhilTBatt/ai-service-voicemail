@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { buildExtractionPrompt, callExtractionSchema } from "../core/extraction.ts";
+import { logger } from "../logger.ts";
 import { AnthropicLlmProvider } from "./anthropic.ts";
 
 const PROMPT = buildExtractionPrompt(
@@ -72,6 +73,34 @@ describe("AnthropicLlmProvider", () => {
     const api = fakeApi({ text: JSON.stringify({ urgency: "panic" }) });
     const result = await provider(api).extract({ ...PROMPT, schema: callExtractionSchema });
     expect(result).toMatchObject({ ok: false, reason: "invalid-output" });
+  });
+
+  // An invalid extraction left nothing to say why (the eval run of 2026-11-11).
+  it("logs which field broke which rule, and never what the output said", async () => {
+    const tooLong = `Caller Sam on 07700 900123 says ${"the tap drips ".repeat(40)}`;
+    const api = fakeApi({
+      text: JSON.stringify({
+        callerName: "Sam",
+        callbackNumber: "+447700900123",
+        postcode: "XQ12 3JL",
+        jobSummary: tooLong,
+        urgency: "routine",
+        priceAsked: false,
+        flags: [],
+      }),
+    });
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => logger);
+    try {
+      const result = await provider(api).extract({ ...PROMPT, schema: callExtractionSchema });
+      expect(result).toMatchObject({ ok: false, reason: "invalid-output" });
+      expect(warn).toHaveBeenCalledWith("LLM output didn't match the schema", {
+        model: "claude-haiku-5-5",
+        issues: [{ path: "jobSummary", code: "too_big" }],
+      });
+      expect(JSON.stringify(warn.mock.calls)).not.toMatch(/tap drips|07700|Sam/);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("reports a refusal", async () => {

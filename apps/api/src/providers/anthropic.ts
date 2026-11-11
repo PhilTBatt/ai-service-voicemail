@@ -64,8 +64,16 @@ export class AnthropicLlmProvider implements LlmProvider {
       return { ok: false, reason: "invalid-output", usage };
     }
     const parsed = schema.safeParse(json);
-    return parsed.success
-      ? { ok: true, value: parsed.data, usage }
-      : { ok: false, reason: "invalid-output", usage };
+    if (parsed.success) return { ok: true, value: parsed.data, usage };
+    // Which field broke which rule, never what it held (a transcript's words): before this, an
+    // invalid extraction left nothing to say why (the eval run of 2026-11-11).
+    logger.warn("LLM output didn't match the schema", {
+      model: this.model,
+      issues: parsed.error.issues.map((issue) => ({
+        path: issue.path.join("."),
+        code: issue.code,
+      })),
+    });
+    return { ok: false, reason: "invalid-output", usage };
   }
 }

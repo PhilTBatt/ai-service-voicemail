@@ -10,8 +10,15 @@ export const callExtractionSchema = z.object({
   /** As the caller gave it, normalised to E.164 when it's clearly a UK number. */
   callbackNumber: z.string().nullable(),
   postcode: z.string().nullable(),
-  /** At most two short lines. */
-  jobSummary: z.string().min(1).max(300),
+  /**
+   * At most two short lines, the prompt says. The limit is a backstop, not the target: the
+   * output format can't enforce a length, so a summary over it fails the whole extraction (the
+   * call gets "Couldn't summarise"). 300 was close to what a busy call's summary reaches once it
+   * also carries what the caller asked to pass on (164 to 214 characters replaying one in the
+   * eval run of 2026-11-11, which failed twice, most likely just over), so 400. The texts trim
+   * it to fit their two segments anyway (core/notifications.ts).
+   */
+  jobSummary: z.string().min(1).max(400),
   urgency: z.enum(URGENCIES),
   priceAsked: z.boolean(),
   /** Anything the tradesperson should know, such as "mentioned gas smell", "caller abusive". */
@@ -34,10 +41,10 @@ export const EMPTY_TRANSCRIPT_SUMMARY = "Nothing to summarise, the call has no t
  * calmly mentioned gas smell as unsupported when it didn't know these rules (2026-11-07).
  */
 export const URGENCY_RULES = `- "emergency" if there was any mention of a gas smell or a suspected gas leak, carbon monoxide or a CO alarm, fire, smoke, sparks, a burning smell, an electric shock, exposed live wires, water that can't be stopped (a burst pipe, flooding, water pouring through a ceiling), a ceiling, wall or roof coming down, or danger to a person. Even when the caller plays it down: over-trigger on purpose.
-- "urgent" if the problem can't wait: no heating, hot water, water or power at all (one cold radiator or one dead socket isn't that), water getting in that isn't pouring, someone locked out, or a property that can't be secured.
-- "routine" for any other job. A caller wanting someone soon, today or at a set time doesn't make a job urgent on its own: judge the problem, not the request.
-- "spam" for sales calls, robocalls or wrong numbers.
-- "other" if the call wasn't about a job at all, or the caller said nothing.`;
+- "urgent" if the problem can't wait: no heating, hot water, water or power at all (one cold radiator or one dead socket isn't that), water getting into the building that isn't pouring (rain through a roof or a window), someone locked out, or a property that can't be secured.
+- "routine" for any other job, including a dripping tap and a dripping or running toilet cistern: those are leaks to fix, not water getting in. A caller wanting someone soon, today or at a set time doesn't make a job urgent on its own: judge the problem, not the request.
+- "spam" for sales calls, robocalls or wrong numbers (a wrong number is spam, not "other").
+- "other" if the call wasn't about a job and isn't spam (a supplier, a question about the business), or the caller said nothing.`;
 
 export interface ExtractionContext {
   businessName: string;
@@ -60,12 +67,13 @@ Rules:
       : ""
   }
 - postcode: as given, upper case, with the usual space (for example "LS1 4AP"). A postcode spelled out letter by letter ("L S one, four A P") counts as given: put it together. Write it even if you don't recognise the area. Null only if it wasn't given or was cut off.
+- A name or postcode the assistant read back to the caller, and the caller didn't correct, is confirmed: use it in the field, whatever the area or spelling looks like to you.
 - Speech recognition mangles names and postcodes: a caller's answer can appear as nonsense ("Alice fifteen seven q y" where they said a postcode; "Oh, four" where they said their name). When the caller plainly answered but the words don't make a name or a postcode, leave that field null, never a guess, and say so in jobSummary in a few words with what it sounded like, for example 'Postcode not caught: sounded like "Alice fifteen seven q y"' or 'Name not caught', so ${tradespersonName} knows to ask. If a reading is obvious, offer it there as a possibility ("possibly LS15 7QY"), still not in the field.
-- jobSummary: what the job is and anything essential, in at most two short lines, written for ${tradespersonName}. No greetings, no padding. Nothing is ever booked on these calls: if the caller asked for a day or time, write it as their request ("asked if someone could come tomorrow at 9"), and never write a day, time or date as settled.
+- jobSummary: what the job is and anything essential, in at most two short lines, written for ${tradespersonName}. Include anything the caller asked to be passed on ("said to tell ${tradespersonName} it's urgent"), and any safety concern they mentioned (a gas smell, a CO alarm, sparks, a burning smell, water that can't be stopped), even in passing: the text ${tradespersonName} gets leads with this summary. No greetings, no padding. Nothing is ever booked on these calls: if the caller asked for a day or time, write it as their request ("asked if someone could come tomorrow at 9"), and never write a day, time or date as settled.
 - urgency, one of:
 ${URGENCY_RULES}
 - priceAsked: true if the caller asked about cost or a quote at any point.
-- flags: short notes ${tradespersonName} should see, such as "mentioned gas smell", "existing customer chasing a job", "caller abusive", "call cut off". Empty if nothing stands out.`;
+- flags: short notes ${tradespersonName} should see, such as "mentioned gas smell", "existing customer chasing a job", "caller abusive" (swearing at or insulting anyone, not just upset), "call cut off". Empty if nothing stands out.`;
 
   const lines = transcript.map(
     (turn) => `${turn.role === "agent" ? "Assistant" : "Caller"}: ${turn.text}`,

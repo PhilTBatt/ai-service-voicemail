@@ -93,9 +93,13 @@ describe("buildExtractionPrompt", () => {
   });
 
   it("calls a silent call 'other', so the judge and the extraction agree", () => {
-    expect(URGENCY_RULES).toContain(
-      '"other" if the call wasn\'t about a job at all, or the caller said nothing',
-    );
+    expect(URGENCY_RULES).toMatch(/"other" if the call [^\n]*, or the caller said nothing/);
+  });
+
+  // A wrong number isn't about a job either, which read as "other" (the eval run of 2026-11-11).
+  it("calls a wrong number spam, and says so in the 'other' rule too", () => {
+    expect(URGENCY_RULES).toContain('wrong numbers (a wrong number is spam, not "other")');
+    expect(URGENCY_RULES).toMatch(/"other" if the call wasn't about a job and isn't spam/);
   });
 });
 

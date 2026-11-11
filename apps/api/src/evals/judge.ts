@@ -9,13 +9,19 @@ import type { TranscriptTurn } from "../providers/voice.ts";
 import type { CostMeter } from "./cost.ts";
 
 export const judgeSchema = z.object({
-  pass: z.boolean(),
   /**
-   * One or two sentences: what's wrong, or "supported" when it passes. The limit is generous:
-   * with the urgency rules to weigh, the judge's reasons outgrew 400 characters and seven
-   * verdicts in the 2026-11-08 run were thrown away as invalid.
+   * The judge's checking, written before its verdict. The limit is generous: with the urgency
+   * rules to weigh, the judge's reasons outgrew 400 characters and seven verdicts in the
+   * 2026-11-08 run were thrown away as invalid.
+   *
+   * First, not second: the structured output is written in the schema's order, and with `pass`
+   * first the judge committed to a verdict before it had checked anything. In the 2026-11-11
+   * run, five of its seven failures ended their reasoning "so this should pass": the evals
+   * undercounted, and the same judge in process-call flagged good summaries as doubted.
    */
   reason: z.string().min(1).max(1500),
+  /** The verdict, which follows from the reasoning above it. */
+  pass: z.boolean(),
 });
 export type JudgeVerdict = z.infer<typeof judgeSchema>;
 
@@ -28,7 +34,8 @@ Return pass: false if any of these hold:
 - the summary leaves out the main reason the caller rang;
 - a field (name, number, postcode) contradicts the transcript, or was filled in when the caller never gave it.
 Return pass: true otherwise. Minor rewording is fine. A null field is never a hallucination.
-Give a short reason either way: one or two sentences.
+Numbers: the system stores UK numbers in international form, so a caller's "07700 900112" and a field of +447700900112 are the same number, and that's a match.
+Write your reason first, checking each point above in a sentence or two, then give pass. The verdict must agree with your reason: if your checking finds nothing wrong, pass is true.
 
 The urgency is set by these rules, which are cautious on purpose, so judge it by them and not by how worried the caller sounded:
 ${URGENCY_RULES}`;

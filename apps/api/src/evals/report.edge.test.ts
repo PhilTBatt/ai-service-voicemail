@@ -79,6 +79,9 @@ describe("judgeSummary", () => {
   });
 
   it("asks for a verdict the schema can check", () => {
+    // The reasoning comes first: structured output is written in the schema's order, and a
+    // verdict written before the checking contradicted it (2026-11-11).
+    expect(Object.keys(judgeSchema.shape)).toEqual(["reason", "pass"]);
     expect(judgeSchema.safeParse({ pass: "yes", reason: "x" }).success).toBe(false);
     expect(judgeSchema.safeParse({ pass: false }).success).toBe(false);
   });
