@@ -12,7 +12,9 @@ import {
 } from "../core/spike.ts";
 import { assignPhoneNumber, createAdminPool, createTenant } from "../db/cross-tenant.ts";
 import { createPool } from "../db/pool.ts";
+import { withTenant } from "../db/tenant.ts";
 import { deliverNotification } from "../jobs/deliver-notification.ts";
+import { runOnboardingJob } from "../jobs/onboarding.ts";
 import { FakeTelephonyProvider } from "../providers/telephony.fake.ts";
 import { FakeVoiceProvider } from "../providers/voice.fake.ts";
 import { TEST_ADMIN_DATABASE_URL, TEST_DATABASE_URL } from "../testing/databases.ts";
@@ -936,6 +938,132 @@ describe("POST /webhooks/twilio/sms-status", () => {
       });
       expect(await row(call.messageSid)).toEqual({ status: "delivered", failure_code: null });
       expect(alertsAbout(call.callId)).toEqual([]);
+    });
+  });
+
+  // The texts that aren't about a call: these were "a text we don't know" until 2026-11-11, so
+  // a failed one told nobody.
+  describe("for the business's other texts", () => {
+    const TO = "+447700900001";
+    const newSid = () => `SM${randomUUID().replace(/-/g, "")}`;
+    const alertsFor = (tenantId: string) =>
+      alert.mock.calls.filter(
+        ([, details]) => (details as { tenantId?: string }).tenantId === tenantId,
+      );
+    const onboardingText = async (messageSid: string) =>
+      (
+        await admin.query<{
+          status: string;
+          delivery_status: string | null;
+          failure_code: string | null;
+        }>(
+          "SELECT status, delivery_status, failure_code FROM onboarding_texts WHERE provider_ref = $1",
+          [messageSid],
+        )
+      ).rows[0];
+
+    it("marks an undelivered onboarding text and alerts once, saying which text", async () => {
+      const { tenantId } = await makeTenant("onboarding");
+      const messageSid = newSid();
+      await withTenant(app, tenantId, (client) =>
+        client.query(
+          "INSERT INTO onboarding_texts (tenant_id, kind, status, provider_ref) VALUES ($1, 'divert_instructions', 'sent', $2)",
+          [tenantId, messageSid],
+        ),
+      );
+      const undelivered = {
+        MessageSid: messageSid,
+        MessageStatus: "undelivered",
+        ErrorCode: "30003",
+      };
+      expect((await post("/webhooks/twilio/sms-status", undelivered)).status).toBe(204);
+      // Twilio's progress arriving late, and the same verdict again: neither changes anything.
+      await post("/webhooks/twilio/sms-status", { MessageSid: messageSid, MessageStatus: "sent" });
+      await post("/webhooks/twilio/sms-status", undelivered);
+
+      // Still 'sent' (the job reads that to send each text once), with the carrier's verdict.
+      expect(await onboardingText(messageSid)).toEqual({
+        status: "sent",
+        delivery_status: "undelivered",
+        failure_code: "30003",
+      });
+      expect(alertsFor(tenantId)).toEqual([
+        [
+          "sms-undelivered",
+          { tenantId, messageKind: "onboarding text: divert instructions", errorCode: "30003" },
+        ],
+      ]);
+    });
+
+    it("names an opt-out on a cancellation text", async () => {
+      const { tenantId } = await makeTenant("cancelling");
+      const messageSid = newSid();
+      await withTenant(app, tenantId, (client) =>
+        client.query(
+          "INSERT INTO offboarding_messages (tenant_id, kind, channel, status, provider_ref) VALUES ($1, 'cancellation', 'sms', 'sent', $2)",
+          [tenantId, messageSid],
+        ),
+      );
+      await post("/webhooks/twilio/sms-status", {
+        MessageSid: messageSid,
+        MessageStatus: "failed",
+        ErrorCode: "21610",
+      });
+      const { rows } = await admin.query(
+        "SELECT delivery_status, failure_code FROM offboarding_messages WHERE provider_ref = $1",
+        [messageSid],
+      );
+      expect(rows).toEqual([{ delivery_status: "undelivered", failure_code: "21610" }]);
+      expect(alertsFor(tenantId)).toEqual([
+        ["recipient-opted-out", { tenantId, messageKind: "cancellation text", errorCode: "21610" }],
+      ]);
+    });
+
+    it("applies a receipt that arrives before the onboarding job has saved the text's ID", async () => {
+      const { tenantId } = await makeTenant("onboarding");
+      const messageSid = newSid();
+      const undelivered = {
+        MessageSid: messageSid,
+        MessageStatus: "undelivered",
+        ErrorCode: "30003",
+      };
+      // Twilio calls back before it has even answered the send.
+      const sms = {
+        send: async () => {
+          expect((await post("/webhooks/twilio/sms-status", undelivered)).status).toBe(204);
+          return { providerRef: messageSid, segments: 1 };
+        },
+        deleteMessage: () => Promise.resolve(),
+      };
+      expect(
+        await runOnboardingJob(
+          {
+            pool: app,
+            sms,
+            outbound: { nodeEnv: "test", allowlist: new Set([TO]) },
+            dashboardOrigin: "https://app.example.com",
+            alert,
+          },
+          { tenantId, action: "send-divert-instructions" },
+        ),
+      ).toBe("sent");
+      expect(await onboardingText(messageSid)).toEqual({
+        status: "sent",
+        delivery_status: "undelivered",
+        failure_code: "30003",
+      });
+      // Twilio sending it again once the ID is saved tells nobody twice.
+      await post("/webhooks/twilio/sms-status", undelivered);
+      expect(alertsFor(tenantId)).toEqual([
+        [
+          "sms-undelivered",
+          { tenantId, messageKind: "onboarding text: divert instructions", errorCode: "30003" },
+        ],
+      ]);
+      expect(
+        (await app.query("SELECT 1 FROM early_receipts WHERE provider_ref = $1", [messageSid]))
+          .rowCount,
+      ).toBe(0);
     });
   });
 });

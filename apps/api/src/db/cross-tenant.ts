@@ -866,23 +866,6 @@ export async function deleteTenantData(
   }
 }
 
-/** Records that the written confirmation of a deletion went out (BUILD_PLAN Step 13). */
-export async function recordDeletionConfirmed(
-  admin: AdminPool,
-  tenantId: string,
-  details:
-    { sentBy: "email" | "sms"; providerRef: string } | { sentBy: null; email: string; sms: string },
-): Promise<void> {
-  await admin.query(
-    "INSERT INTO audit_log (tenant_id, actor_user_id, action, details) VALUES ($1, NULL, $2, $3)",
-    [
-      tenantId,
-      details.sentBy ? "tenant.deletion-confirmed" : "tenant.deletion-confirmation-failed",
-      details,
-    ],
-  );
-}
-
 // ─── People who log in (BUILD_PLAN Step 10) ────────────────────────────────────────────
 // Creating accounts is an admin act (Step 11's onboarding invites owners; Phil and Ant are
 // created once). Reading an account at login time goes through db/accounts.ts.
@@ -1427,7 +1410,11 @@ export async function findTenantIdByPaymentRef(
   return rows[0]?.tenant_id ?? null;
 }
 
-/** The tenant a notification belongs to, from the provider's message ID in a delivery receipt. */
+/**
+ * The tenant a message we sent belongs to, from the provider's message ID in a delivery
+ * receipt: a call's text or email, an onboarding text, a cancellation notice, a billing email,
+ * or a deletion's written confirmation (migration 20261111193000).
+ */
 export async function findTenantIdByProviderRef(
   appPool: pg.Pool,
   providerRef: string,

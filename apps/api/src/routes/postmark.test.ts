@@ -5,6 +5,8 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createApp } from "../app.ts";
 import { createAdminPool, createTenant } from "../db/cross-tenant.ts";
 import { createPool } from "../db/pool.ts";
+import { withTenant } from "../db/tenant.ts";
+import { runBillingEmail } from "../jobs/billing-email.ts";
 import { deliverNotification } from "../jobs/deliver-notification.ts";
 import { TEST_ADMIN_DATABASE_URL, TEST_DATABASE_URL } from "../testing/databases.ts";
 
@@ -136,6 +138,183 @@ describe("POST /webhooks/postmark", () => {
       (await post({ RecordType: "Bounce", Type: "HardBounce", MessageID: "unknown" })).status,
     ).toBe(204);
     expect((await post({ RecordType: "Delivery", MessageID: messageId })).status).toBe(204);
+  });
+
+  // The emails that aren't about a call: these were "an email we don't know" until 2026-11-11,
+  // so a bounce told nobody.
+  describe("for the business's other emails", () => {
+    const ADDRESS = "accounts@example.com";
+    const alertsFor = (tenantId: string) =>
+      alert.mock.calls.filter(
+        ([, details]) => (details as { tenantId?: string }).tenantId === tenantId,
+      );
+    const business = () =>
+      createTenant(admin, {
+        businessName: "Ledger Plumbing",
+        trade: "plumber",
+        notificationEmail: ADDRESS,
+      });
+    const billingEmail = async (messageId: string) =>
+      (
+        await admin.query<{
+          status: string;
+          delivery_status: string | null;
+          failure_code: string | null;
+        }>(
+          "SELECT status, delivery_status, failure_code FROM billing_emails WHERE provider_ref = $1",
+          [messageId],
+        )
+      ).rows[0];
+
+    it("marks a hard-bounced billing email undelivered and alerts once, saying which email", async () => {
+      const tenantId = await business();
+      const messageId = randomUUID();
+      await withTenant(app, tenantId, (client) =>
+        client.query(
+          `INSERT INTO billing_emails (tenant_id, kind, ref, status, provider_ref)
+           VALUES ($1, 'payment_failed', $2, 'sent', $3)`,
+          [tenantId, `charge_${randomUUID()}`, messageId],
+        ),
+      );
+      const bounce = {
+        RecordType: "Bounce",
+        Type: "HardBounce",
+        TypeCode: 1,
+        MessageID: messageId,
+        Email: ADDRESS,
+        Inactive: true,
+      };
+      expect((await post(bounce)).status).toBe(204);
+      // Postmark sends a webhook again when it thinks the first failed.
+      expect((await post(bounce)).status).toBe(204);
+
+      // Still 'sent' (the job reads the row to send each email once), with Postmark's verdict.
+      expect(await billingEmail(messageId)).toEqual({
+        status: "sent",
+        delivery_status: "undelivered",
+        failure_code: "HardBounce",
+      });
+      expect(alertsFor(tenantId)).toEqual([
+        [
+          "email-bounced",
+          {
+            tenantId,
+            messageKind: "billing email: payment failed",
+            type: "HardBounce",
+            addressDeactivated: true,
+          },
+        ],
+      ]);
+    });
+
+    it("applies a bounce that arrives before the billing email's ID is saved, alerting once", async () => {
+      const tenantId = await business();
+      const messageId = randomUUID();
+      const bounce = { RecordType: "Bounce", Type: "HardBounce", MessageID: messageId };
+      // Postmark reports the bounce before our record of the send has its ID.
+      const email = {
+        send: async () => {
+          expect((await post(bounce)).status).toBe(204);
+          return { providerRef: messageId };
+        },
+      };
+      expect(
+        await runBillingEmail(
+          {
+            pool: app,
+            email,
+            outbound: { nodeEnv: "test", allowlist: new Set([ADDRESS]) },
+            dashboardOrigin: "https://app.example.com",
+            alert,
+          },
+          { tenantId, kind: "direct_debit_ended", ref: `MD${randomUUID()}` },
+        ),
+      ).toBe("sent");
+      expect(await billingEmail(messageId)).toEqual({
+        status: "sent",
+        delivery_status: "undelivered",
+        failure_code: "HardBounce",
+      });
+      await post(bounce);
+      expect(alertsFor(tenantId)).toEqual([
+        [
+          "email-bounced",
+          {
+            tenantId,
+            messageKind: "billing email: direct debit ended",
+            type: "HardBounce",
+            addressDeactivated: false,
+          },
+        ],
+      ]);
+    });
+
+    it("records a bounced deletion confirmation beside it in the audit log, and alerts once", async () => {
+      const tenantId = await business();
+      const messageId = randomUUID();
+      // As the deletion leaves the business: the confirmation in the audit log, the rest gone.
+      await withTenant(app, tenantId, (client) =>
+        client.query(
+          "INSERT INTO audit_log (tenant_id, action, details) VALUES ($1, 'tenant.deletion-confirmed', $2)",
+          [tenantId, { sentBy: "email", providerRef: messageId }],
+        ),
+      );
+      await admin.query(
+        `UPDATE tenants SET business_name = 'Deleted business', notification_email = NULL,
+                status = 'cancelled', data_deleted_at = now() WHERE id = $1`,
+        [tenantId],
+      );
+      const bounce = { RecordType: "Bounce", Type: "HardBounce", MessageID: messageId };
+      expect((await post(bounce)).status).toBe(204);
+      expect((await post(bounce)).status).toBe(204);
+
+      const { rows } = await admin.query(
+        `SELECT action, details FROM audit_log
+         WHERE tenant_id = $1 AND action LIKE 'tenant.deletion-confirmation-%'`,
+        [tenantId],
+      );
+      expect(rows).toEqual([
+        {
+          action: "tenant.deletion-confirmation-undelivered",
+          details: { providerRef: messageId, failureCode: "HardBounce" },
+        },
+      ]);
+      expect(alertsFor(tenantId)).toEqual([
+        [
+          "email-bounced",
+          {
+            tenantId,
+            messageKind: "deletion confirmation email",
+            type: "HardBounce",
+            addressDeactivated: false,
+          },
+        ],
+      ]);
+    });
+
+    it("names a spam complaint about a cancellation email", async () => {
+      const tenantId = await business();
+      const messageId = randomUUID();
+      await withTenant(app, tenantId, (client) =>
+        client.query(
+          `INSERT INTO offboarding_messages (tenant_id, kind, channel, status, provider_ref)
+           VALUES ($1, 'cancellation', 'email', 'sent', $2)`,
+          [tenantId, messageId],
+        ),
+      );
+      await post({ RecordType: "SpamComplaint", Type: "SpamComplaint", MessageID: messageId });
+      expect(alertsFor(tenantId)).toEqual([
+        [
+          "email-spam-complaint",
+          {
+            tenantId,
+            messageKind: "cancellation email",
+            type: "SpamComplaint",
+            addressDeactivated: false,
+          },
+        ],
+      ]);
+    });
   });
 
   it("rejects a request without the right Basic auth", async () => {

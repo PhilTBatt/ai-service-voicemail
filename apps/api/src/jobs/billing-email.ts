@@ -12,6 +12,7 @@ import {
   type EmailContent,
 } from "../core/billing-emails.ts";
 import { checkOutbound, type OutboundPolicy } from "../core/outbound-allowlist.ts";
+import { applyEarlyReceipt, raiseReceiptAlert } from "../db/delivery-receipts.ts";
 import { withTenant } from "../db/tenant.ts";
 import { logger } from "../logger.ts";
 import type { EmailProvider } from "../providers/email.ts";
@@ -110,15 +111,13 @@ export async function runBillingEmail(
   if (loaded === null) return "not-found";
   const { tenant, charge } = loaded;
 
-  const record = (
-    status: "sent" | "blocked" | "no_email" | "refused",
-    providerRef: string | null = null,
-  ) =>
+  /** An email that didn't go, and why. One that went is recorded below, with its ID. */
+  const record = (status: "blocked" | "no_email" | "refused") =>
     withTenant(pool, tenantId, (client) =>
       client.query(
-        `INSERT INTO billing_emails (tenant_id, kind, ref, status, provider_ref)
-         VALUES ($1, $2, $3, $4, $5) ON CONFLICT (kind, ref) DO NOTHING`,
-        [tenantId, kind, ref, status, providerRef],
+        `INSERT INTO billing_emails (tenant_id, kind, ref, status)
+         VALUES ($1, $2, $3, $4) ON CONFLICT (kind, ref) DO NOTHING`,
+        [tenantId, kind, ref, status],
       ),
     );
 
@@ -181,7 +180,18 @@ export async function runBillingEmail(
     });
     return "refused";
   }
-  await record("sent", receipt.providerRef);
+  const providerRef = receipt.providerRef;
+  const early = await withTenant(pool, tenantId, async (client) => {
+    await client.query(
+      `INSERT INTO billing_emails (tenant_id, kind, ref, status, provider_ref)
+       VALUES ($1, $2, $3, 'sent', $4) ON CONFLICT (kind, ref) DO NOTHING`,
+      [tenantId, kind, ref, providerRef],
+    );
+    // Postmark may already have reported a bounce, before this saved the email's ID: that
+    // report was kept, and is applied now (db/delivery-receipts.ts).
+    return applyEarlyReceipt(client, "email", providerRef);
+  });
   logger.info("Billing email sent", { tenantId, kind });
+  raiseReceiptAlert(alert, tenantId, early);
   return "sent";
 }

@@ -153,6 +153,22 @@ describe("per-business alerts", () => {
     expect(subjects()).toEqual([`[AnswerMate] ${alert}`]);
   });
 
+  it("counts a failed delivery of a business's own message per business, whatever the alert", async () => {
+    // An onboarding text or a cancellation text that didn't arrive is about that business
+    // (db/delivery-receipts.ts names it in messageKind); call texts stay one window.
+    const { sink, subjects } = emailer();
+    await sink("sms-undelivered", { tenantId: "t1", messageKind: "onboarding text: go live" });
+    await sink("sms-undelivered", { tenantId: "t2", messageKind: "cancellation text" });
+    await sink("sms-undelivered", { tenantId: "t1", messageKind: "onboarding text: go live" });
+    await sink("sms-undelivered", { tenantId: "t3", callId: "c3" });
+    await sink("sms-undelivered", { tenantId: "t4", callId: "c4" });
+    expect(subjects()).toEqual([
+      "[AnswerMate] sms-undelivered",
+      "[AnswerMate] sms-undelivered",
+      "[AnswerMate] sms-undelivered",
+    ]);
+  });
+
   it("falls back to one window for the alert when the business isn't named as a string", async () => {
     const { sink, subjects } = emailer();
     await sink("billing-no-mandate", {});

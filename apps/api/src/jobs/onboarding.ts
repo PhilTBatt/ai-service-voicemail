@@ -7,8 +7,10 @@
 import { divertInstructions, divertInstructionsText, type MobileNetwork } from "@callmate/shared";
 import type { PgBoss } from "pg-boss";
 import type pg from "pg";
+import { raiseAlert, type AlertFn } from "../alerts.ts";
 import { checkOutbound, type OutboundPolicy } from "../core/outbound-allowlist.ts";
 import { toGsm7 } from "../core/sms.ts";
+import { applyEarlyReceipt, raiseReceiptAlert } from "../db/delivery-receipts.ts";
 import { advanceOnboarding } from "../db/onboarding.ts";
 import { withTenant } from "../db/tenant.ts";
 import { logger } from "../logger.ts";
@@ -47,6 +49,8 @@ export interface OnboardingJobDeps {
   dashboardOrigin: string;
   /** Takes the step to live. Tests stand in for an admin doing it at the same moment. */
   advance?: typeof advanceOnboarding;
+  /** For a text Twilio said wasn't delivered before its ID was saved; tests pass a stand-in. */
+  alert?: AlertFn;
 }
 
 export type OnboardingOutcome =
@@ -62,7 +66,7 @@ export function runOnboardingJob(
 }
 
 async function sendText(
-  { pool, sms, outbound }: OnboardingJobDeps,
+  { pool, sms, outbound, alert = raiseAlert }: OnboardingJobDeps,
   tenantId: string,
   kind: "divert_instructions" | "go_live",
   to: string,
@@ -70,12 +74,16 @@ async function sendText(
 ): Promise<"sent" | "blocked"> {
   const decision = checkOutbound(outbound, to);
   const receipt = decision.allowed ? await sms.send({ to, body: toGsm7(body) }) : null;
-  await withTenant(pool, tenantId, (client) =>
-    client.query(
+  const early = await withTenant(pool, tenantId, async (client) => {
+    await client.query(
       "INSERT INTO onboarding_texts (tenant_id, kind, status, provider_ref) VALUES ($1, $2, $3, $4)",
       [tenantId, kind, receipt ? "sent" : "blocked", receipt?.providerRef ?? null],
-    ),
-  );
+    );
+    // Twilio may already have said what became of it, before this saved its ID: that receipt
+    // was kept, and is applied now (db/delivery-receipts.ts).
+    return receipt ? applyEarlyReceipt(client, "sms", receipt.providerRef) : null;
+  });
+  raiseReceiptAlert(alert, tenantId, early);
   if (!decision.allowed) {
     logger.warn("Onboarding text blocked by the outbound allowlist", {
       tenantId,

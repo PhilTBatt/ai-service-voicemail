@@ -114,7 +114,7 @@ const PAYMENT_EVENTS_SQL = `SELECT received_at, resource_type, action, cause
  * Each billing email we sent the business and what became of it. The address is the business's
  * own, already in its details; the references the row keys on are ours.
  */
-const BILLING_EMAILS_SQL = `SELECT created_at, kind, status
+const BILLING_EMAILS_SQL = `SELECT created_at, kind, status, delivery_status, failure_code
   FROM billing_emails WHERE tenant_id = $1 ORDER BY created_at`;
 /** Each time the business was suspended, and when it was resumed (empty while it still is). */
 const SUSPENSIONS_SQL = `SELECT started_at, ended_at
@@ -167,11 +167,13 @@ export async function exportTenant(pool: pg.Pool, tenantId: string) {
       [tenantId],
     );
     const setupTexts = await client.query(
-      "SELECT kind, status, created_at FROM onboarding_texts WHERE tenant_id = $1 ORDER BY created_at",
+      `SELECT kind, status, delivery_status, failure_code, created_at
+       FROM onboarding_texts WHERE tenant_id = $1 ORDER BY created_at`,
       [tenantId],
     );
     const leavingMessages = await client.query(
-      "SELECT kind, channel, status, created_at FROM offboarding_messages WHERE tenant_id = $1 ORDER BY created_at",
+      `SELECT kind, channel, status, delivery_status, failure_code, created_at
+       FROM offboarding_messages WHERE tenant_id = $1 ORDER BY created_at`,
       [tenantId],
     );
     // Billing (Step 12): each month's charge with its lines, and each Direct Debit set up. The
@@ -317,7 +319,10 @@ const CSV_QUERIES: Record<CsvExport, { header: string[]; sql: string }> = {
     header: ["at", "resource", "action", "cause"],
     sql: PAYMENT_EVENTS_SQL,
   },
-  "billing-emails": { header: ["at", "kind", "status"], sql: BILLING_EMAILS_SQL },
+  "billing-emails": {
+    header: ["at", "kind", "status", "delivery", "failure_code"],
+    sql: BILLING_EMAILS_SQL,
+  },
   suspensions: { header: ["started_at", "ended_at"], sql: SUSPENSIONS_SQL },
 };
 

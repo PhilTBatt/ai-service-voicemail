@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { parseAllowlist } from "../core/outbound-allowlist.ts";
 import {
   addMembership,
@@ -8,6 +8,7 @@ import {
   createTenant,
   createUser,
 } from "../db/cross-tenant.ts";
+import { recordReceipt, type DeliveryReceipt } from "../db/delivery-receipts.ts";
 import { createPool } from "../db/pool.ts";
 import { withTenant } from "../db/tenant.ts";
 import { FakeAuthProvider } from "../providers/auth.fake.ts";
@@ -536,6 +537,60 @@ describe("the delete-data action", () => {
       [gone.tenantId],
     );
     expect(confirmed.rows[0]!.details).toMatchObject({ sentBy: "sms" });
+  });
+
+  it("applies a bounce of the confirmation that comes before its ID is saved, alerting once", async () => {
+    const gone = await goneBusiness();
+    const messageId = randomUUID();
+    const bounce: DeliveryReceipt = {
+      medium: "email",
+      providerRef: messageId,
+      status: "undelivered",
+      failureCode: "HardBounce",
+      alert: { name: "email-bounced", details: { type: "HardBounce", addressDeactivated: false } },
+    };
+    const alert = vi.fn();
+    // Postmark's webhook reports the bounce before the job has recorded the email's ID, so the
+    // webhook can only keep it.
+    const email = {
+      send: async () => {
+        expect(await recordReceipt(app, bounce, alert)).toEqual({ tenantId: null });
+        return { providerRef: messageId };
+      },
+    };
+    const { jobDeps } = deletionDeps(new FakeEmailProvider());
+    expect(
+      await runOffboardingJob(
+        { ...jobDeps, email, alert },
+        { tenantId: gone.tenantId, action: "delete-data" },
+      ),
+    ).toMatchObject({ outcome: "deleted", confirmation: "email" });
+
+    const recorded = await admin.query<{ action: string; details: unknown }>(
+      `SELECT action, details FROM audit_log
+       WHERE tenant_id = $1 AND action LIKE 'tenant.deletion-confirm%' ORDER BY action`,
+      [gone.tenantId],
+    );
+    expect(recorded.rows).toEqual([
+      {
+        action: "tenant.deletion-confirmation-undelivered",
+        details: { providerRef: messageId, failureCode: "HardBounce" },
+      },
+      { action: "tenant.deletion-confirmed", details: { sentBy: "email", providerRef: messageId } },
+    ]);
+    // Postmark sending the bounce again, once the business's data has gone, tells nobody twice.
+    expect(await recordReceipt(app, bounce, alert)).toEqual({ tenantId: gone.tenantId });
+    expect(alert.mock.calls).toEqual([
+      [
+        "email-bounced",
+        {
+          tenantId: gone.tenantId,
+          messageKind: "deletion confirmation email",
+          type: "HardBounce",
+          addressDeactivated: false,
+        },
+      ],
+    ]);
   });
 
   it("won't run twice at once for one business", async () => {

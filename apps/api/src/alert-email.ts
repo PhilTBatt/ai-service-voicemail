@@ -56,7 +56,12 @@ const PER_BUSINESS: ReadonlySet<AlertName> = new Set<AlertName>([
 
 function throttleKey(alert: AlertName, details: Record<string, unknown>): string {
   const tenantId = details["tenantId"];
-  return PER_BUSINESS.has(alert) && typeof tenantId === "string" ? `${alert}:${tenantId}` : alert;
+  // A failed delivery of one of the business's own messages (an onboarding text, a billing
+  // email: db/delivery-receipts.ts names it in messageKind) is about that business, whatever
+  // the alert: a carrier's trouble with call texts across many businesses, which sms-undelivered
+  // otherwise means, mustn't hide it inside one email.
+  const perBusiness = PER_BUSINESS.has(alert) || typeof details["messageKind"] === "string";
+  return perBusiness && typeof tenantId === "string" ? `${alert}:${tenantId}` : alert;
 }
 
 interface RaisedAlert {

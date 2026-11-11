@@ -21,11 +21,11 @@ import {
   billingStillOwed,
   deleteTenantData,
   deletionPlan,
-  recordDeletionConfirmed,
   withAdvisoryLock,
   type AdminPool,
   type DeletionPlan,
 } from "../db/cross-tenant.ts";
+import { applyEarlyReceipt, raiseReceiptAlert } from "../db/delivery-receipts.ts";
 import { endMandate } from "../db/direct-debit.ts";
 import { withTenant } from "../db/tenant.ts";
 import { logger } from "../logger.ts";
@@ -152,17 +152,22 @@ async function sendCancellationNotices(
     network: tenant.mobile_network,
     restoreCode: tenant.voicemail_restore_code ?? voicemailRestoreCode(tenant.mobile_network),
   };
-  const record = (
+  const record = async (
     channel: "sms" | "email",
     status: "sent" | "blocked",
     providerRef: string | null,
-  ) =>
-    withTenant(deps.pool, tenantId, (client) =>
-      client.query(
+  ) => {
+    const early = await withTenant(deps.pool, tenantId, async (client) => {
+      await client.query(
         "INSERT INTO offboarding_messages (tenant_id, kind, channel, status, provider_ref) VALUES ($1, 'cancellation', $2, $3, $4)",
         [tenantId, channel, status, providerRef],
-      ),
-    );
+      );
+      // The provider may already have said what became of it, before this saved its ID: that
+      // receipt was kept, and is applied now (db/delivery-receipts.ts).
+      return providerRef === null ? null : applyEarlyReceipt(client, channel, providerRef);
+    });
+    raiseReceiptAlert(deps.alert ?? raiseAlert, tenantId, early);
+  };
 
   const sms = async (): Promise<ChannelOutcome> => {
     if (tenant.sms_sent) return "already-sent";
@@ -317,7 +322,14 @@ async function deleteDataLocked(
   let confirmation: DeletionOutcome["confirmation"] = "already-sent";
   if (!plan.confirmationSent) {
     const sent = await sendDeletionConfirmation(deps, job.tenantId, plan);
-    await recordDeletionConfirmed(admin, job.tenantId, sent);
+    // Recorded in the business's own transaction rather than as the admin: the provider may
+    // already have said what became of it, and that receipt, kept until the ID was saved, is
+    // taken back in the same transaction that saves it (db/delivery-receipts.ts).
+    const early = await withTenant(deps.pool, job.tenantId, async (client) => {
+      await recordDeletionConfirmation(client, job.tenantId, sent);
+      return sent.sentBy ? applyEarlyReceipt(client, sent.sentBy, sent.providerRef) : null;
+    });
+    raiseReceiptAlert(deps.alert ?? raiseAlert, job.tenantId, early);
     confirmation = sent.sentBy ?? "not-sent";
     if (!sent.sentBy) {
       // The name is how Phil will know which business: the row is about to be anonymised.
@@ -342,6 +354,30 @@ async function deleteDataLocked(
 /** Why a channel didn't carry the confirmation. */
 type NotSent = "no-address" | "not-configured" | "blocked" | "failed";
 
+/** How the written confirmation went: by which channel, with the provider's ID, or why neither. */
+type ConfirmationSent =
+  { sentBy: "email" | "sms"; providerRef: string } | { sentBy: null; email: NotSent; sms: NotSent };
+
+/**
+ * Records in the audit log that the written confirmation went (BUILD_PLAN Step 13), or that it
+ * couldn't. The audit log is kept when the rest goes, so a delivery receipt for the confirmation
+ * still finds it by the provider's ID (db/delivery-receipts.ts).
+ */
+async function recordDeletionConfirmation(
+  client: pg.PoolClient,
+  tenantId: string,
+  sent: ConfirmationSent,
+): Promise<void> {
+  await client.query(
+    "INSERT INTO audit_log (tenant_id, actor_user_id, action, details) VALUES ($1, NULL, $2, $3)",
+    [
+      tenantId,
+      sent.sentBy ? "tenant.deletion-confirmed" : "tenant.deletion-confirmation-failed",
+      sent,
+    ],
+  );
+}
+
 /**
  * The written confirmation by email, or by text where the email can't go: no address, one
  * Postmark refuses after a bounce, or the allowlist. Never throws: what happened is the answer.
@@ -350,9 +386,7 @@ async function sendDeletionConfirmation(
   deps: OffboardingJobDeps,
   tenantId: string,
   plan: DeletionPlan,
-): Promise<
-  { sentBy: "email" | "sms"; providerRef: string } | { sentBy: null; email: NotSent; sms: NotSent }
-> {
+): Promise<ConfirmationSent> {
   let email: NotSent;
   const emailTo = plan.notificationEmail;
   if (!emailTo) email = "no-address";

@@ -359,8 +359,9 @@ export function twilioRouter({
     res.send(smsReply(result.reply));
   });
 
-  // Delivery receipts for the texts we send: did the handset get it? Only the final verdicts
-  // change anything; 'queued' and 'sent' are Twilio's own progress, not ours.
+  // Delivery receipts for every text we send (a call's, onboarding, leaving, a deletion's
+  // confirmation): did the handset get it? Only the final verdicts change anything; 'queued'
+  // and 'sent' are Twilio's own progress, not ours.
   router.post("/sms-status", verified, async (req, res) => {
     const parsed = smsStatusSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -398,7 +399,8 @@ export function twilioRouter({
     );
     if (tenantId === null) {
       // Twilio was quicker than the send job saving the ID, and the job applies it (alert and
-      // all) when it does; or it's a text that isn't a notification, and the receipt expires.
+      // all) when it does; or it's a text no business has any longer (its data was deleted),
+      // and the receipt expires.
       logger.info("Delivery receipt kept: no text has its ID yet", { messageSid, status });
     } else {
       logger.info("Delivery receipt handled", { messageSid, tenantId, status: final });

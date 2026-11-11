@@ -2,9 +2,10 @@
 // webhooks; the docs (read 2026-11-07) say to protect the URL with HTTP Basic auth and an IP
 // allowlist, so the webhook URL registered at Postmark carries a username and password that
 // must match POSTMARK_WEBHOOK_SECRET. A bounce or complaint marks the email undelivered
-// with Postmark's reason and raises an alert; a complaint is also Postmark deactivating that
-// address for good. An event that arrives before the send job has saved the email's ID is kept,
-// and the job applies it when it saves the ID (db/delivery-receipts.ts).
+// with Postmark's reason and raises an alert, whichever of our emails it was (a call's, a
+// billing email, a cancellation, a deletion's confirmation); a complaint is also Postmark
+// deactivating that address for good. An event that arrives before the send job has saved the
+// email's ID is kept, and the job applies it when it saves the ID (db/delivery-receipts.ts).
 import { timingSafeEqual } from "node:crypto";
 import { Router, json } from "express";
 import type pg from "pg";
@@ -84,7 +85,7 @@ export function postmarkRouter({ pool, webhookSecret, alert = raiseAlert }: Post
     );
     if (tenantId === null) {
       // Either quicker than the send job saving the ID, which applies it when it does, or an
-      // email that isn't a notification (a billing email, say), whose event expires.
+      // email no business has (an alert email to Phil, say), whose event expires.
       logger.info("Postmark event kept: no email has its ID yet", { record, type });
     } else {
       logger.info("Postmark event handled", { record, type, tenantId });
