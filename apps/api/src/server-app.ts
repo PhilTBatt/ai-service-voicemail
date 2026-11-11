@@ -12,6 +12,7 @@ import { enqueueOnboardingWith } from "./jobs/onboarding.ts";
 import { enqueueSyncAgent, type SyncAgentJobData } from "./jobs/sync-agent.ts";
 import { logger } from "./logger.ts";
 import { ClerkAuthProvider } from "./providers/clerk.ts";
+import { GoCardlessPaymentsProvider } from "./providers/gocardless.ts";
 import { RetellVoiceProvider } from "./providers/retell.ts";
 import { TwilioTelephonyProvider } from "./providers/twilio.ts";
 
@@ -50,6 +51,12 @@ export function buildServerApp(
   }
 
   if (!config.signingSecret) logger.warn("Call pages disabled: SIGNING_SECRET isn't set");
+  // Direct Debit (Step 12): the dashboard starts set-ups, and the webhook hears what happened.
+  const payments = config.payments ? new GoCardlessPaymentsProvider(config.payments) : undefined;
+  if (!payments) logger.warn("Billing disabled: GOCARDLESS_ACCESS_TOKEN isn't set");
+  else if (!config.payments?.webhookSecret) {
+    logger.warn("Payments webhooks refused: GOCARDLESS_WEBHOOK_SECRET isn't set");
+  }
   // The dashboard API (/api) needs Clerk to say who is calling, and the admin pool for the
   // views that span tenants (the tenant list, the admin screens).
   const dashboard =
@@ -75,6 +82,7 @@ export function buildServerApp(
                   purchasesEnabled: config.twilio.purchasesEnabled,
                 }
               : undefined,
+          billing: payments ? { payments, dashboardOrigin: config.dashboardOrigin } : undefined,
         }
       : undefined;
   if (dashboard) logger.info("Dashboard API on", { dashboardOrigin: config.dashboardOrigin });
@@ -88,6 +96,9 @@ export function buildServerApp(
     dashboard,
     postmark: config.postmarkWebhookSecret
       ? { webhookSecret: config.postmarkWebhookSecret }
+      : undefined,
+    payments: payments
+      ? { provider: payments, enqueueOnboarding: enqueueOnboardingWith(boss) }
       : undefined,
     callPages: config.signingSecret
       ? { signingSecret: config.signingSecret, telephony: telephony?.provider, voice: retell }

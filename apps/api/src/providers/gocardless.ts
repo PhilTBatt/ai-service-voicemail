@@ -119,6 +119,8 @@ const webhookSchema = z.object({
           payment: z.string().optional(),
           mandate: z.string().optional(),
           billing_request: z.string().optional(),
+          // On a billing request's event: "the ID of the mandate which has been created".
+          mandate_request_mandate: z.string().optional(),
         })
         .passthrough()
         .optional(),
@@ -279,7 +281,7 @@ export class GoCardlessPaymentsProvider implements PaymentsProvider {
       description: event.details?.description ?? null,
       links: {
         payment: event.links?.payment,
-        mandate: event.links?.mandate,
+        mandate: event.links?.mandate ?? event.links?.mandate_request_mandate,
         billingRequest: event.links?.billing_request,
       },
       createdAt: new Date(event.created_at),

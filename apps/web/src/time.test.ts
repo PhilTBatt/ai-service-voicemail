@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { addDays, formatUkDateTime, startOfUkDay, ukDate, UK_TIME_ZONE } from "./time.ts";
+import {
+  addDays,
+  formatDate,
+  formatUkDateTime,
+  startOfUkDay,
+  ukDate,
+  UK_TIME_ZONE,
+} from "./time.ts";
 
 describe("formatUkDateTime", () => {
   it("shows winter times as they are and summer times an hour on", () => {
@@ -46,6 +53,13 @@ describe("startOfUkDay", () => {
 
   it("refuses something that isn't a date", () => {
     expect(() => startOfUkDay("7/11/2026")).toThrow("Expected a date");
+  });
+});
+
+describe("formatDate", () => {
+  it("writes a date the way people do", () => {
+    expect(formatDate("2026-10-14")).toBe("14 Oct 2026");
+    expect(formatDate("2027-01-01")).toBe("1 Jan 2027");
   });
 });
 

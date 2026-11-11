@@ -185,6 +185,41 @@ export interface HealthView {
   }[];
 }
 
+/** GET /api/tenants/:id/billing: the plan, this month so far, and the Direct Debit (Step 12). */
+export interface BillingView {
+  /** Whether payments are set up on this server at all; without, Direct Debit can't be started. */
+  available: boolean;
+  plan: {
+    name: string;
+    monthlyPence: number;
+    includedMinutes: number;
+    overagePencePerMinute: number;
+  };
+  isPilot: boolean;
+  /**
+   * The current billing month, from the day the business went live, with its fee and the
+   * billable time so far. Null before it goes live: nothing is billed until then.
+   */
+  period: {
+    start: string;
+    end: string;
+    /** 1 for the first month. */
+    month: number;
+    feePence: number;
+    billableSeconds: number;
+  } | null;
+  directDebit: {
+    status: "none" | "pending" | "active" | "ended";
+    since: string | null;
+    endReason: string | null;
+  };
+}
+
+/** POST /api/tenants/:id/billing/direct-debit: where to send the person to set it up. */
+export interface DirectDebitStartView {
+  authorisationUrl: string;
+}
+
 /** PUT /api/admin/kill-switch */
 export interface KillSwitchView {
   killSwitchOn: boolean;

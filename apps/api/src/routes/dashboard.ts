@@ -10,6 +10,8 @@ import {
   URGENCIES,
   acceptDocumentsSchema,
   documentsToAccept,
+  type BillingView,
+  type DirectDebitStartView,
   type DocumentsView,
   type CallListView,
   type AgentProfileInput,
@@ -56,7 +58,10 @@ import {
   updateNotificationSettings,
 } from "../db/tenant-settings.ts";
 import { switchAnswering } from "../db/tenant-switch.ts";
+import { loadBillingView } from "../db/billing.ts";
+import { checkDirectDebit, startDirectDebit } from "../db/direct-debit.ts";
 import type { AuthProvider } from "../providers/auth.ts";
+import type { PaymentsProvider } from "../providers/payments.ts";
 import {
   CALL_VIEW_COLUMNS,
   presentCall,
@@ -81,6 +86,11 @@ export interface DashboardOptions extends RecordingSources {
   boss: PgBoss;
   /** Buying numbers from the admin screens. Absent until Twilio and the public URLs are set. */
   numbers?: NumberProvisioning | undefined;
+  /**
+   * Direct Debit (Step 12), and where the dashboard is, for the provider's page to send the
+   * person back to. Absent until GoCardless is configured.
+   */
+  billing?: { payments: PaymentsProvider; dashboardOrigin: string } | undefined;
   now?: () => Date;
 }
 
@@ -138,6 +148,7 @@ export function dashboardRouter({
   telephony,
   voice,
   numbers,
+  billing,
   now,
 }: DashboardOptions) {
   const router = Router();
@@ -386,6 +397,76 @@ export function dashboardRouter({
       return;
     }
     res.json(result satisfies CancellationView);
+  });
+
+  // The plan, this billing month so far, and the Direct Debit (Step 12). The owner and the
+  // admin: the reseller never reaches a tenant's own routes.
+  tenant.get("/billing", async (_req, res) => {
+    const view = await loadBillingView(pool, tenantIdOf(res), {
+      now: now?.() ?? new Date(),
+      available: billing !== undefined,
+    });
+    if (!view) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    res.json(view satisfies BillingView);
+  });
+
+  // Sends the person to the payments provider's page to set up Direct Debit. The answer is
+  // where to go; the provider sends them back to the Account tab, which then checks.
+  tenant.post("/billing/direct-debit", async (_req, res) => {
+    if (!billing) {
+      res.status(503).json({ error: "Direct Debit isn't set up on this server yet" });
+      return;
+    }
+    const tenantId = tenantIdOf(res);
+    const account = `${billing.dashboardOrigin}/tenants/${tenantId}/settings`;
+    const result = await startDirectDebit(pool, billing.payments, tenantId, {
+      redirectUrl: `${account}?directDebit=done`,
+      exitUrl: account,
+      actorUserId: principalOf(res).userId,
+      now: now?.() ?? new Date(),
+    });
+    switch (result.outcome) {
+      case "started":
+        res.status(201).json({
+          authorisationUrl: result.authorisationUrl,
+        } satisfies DirectDebitStartView);
+        return;
+      case "already-active":
+        res.status(409).json({ error: "This business already has a Direct Debit set up" });
+        return;
+      case "not-allowed":
+        res.status(409).json({
+          error: `The account is ${result.status}, so there's nothing to pay for`,
+          status: result.status,
+        });
+        return;
+      case "not-found":
+        res.status(404).json({ error: "Not found" });
+        return;
+    }
+  });
+
+  // Back from the provider's page: is the Direct Debit set up yet? Asks the provider, records
+  // the answer, and returns the billing view.
+  tenant.post("/billing/direct-debit/check", async (_req, res) => {
+    if (!billing) {
+      res.status(503).json({ error: "Direct Debit isn't set up on this server yet" });
+      return;
+    }
+    const tenantId = tenantIdOf(res);
+    await checkDirectDebit(pool, billing.payments, tenantId, enqueueOnboardingWith(boss));
+    const view = await loadBillingView(pool, tenantId, {
+      now: now?.() ?? new Date(),
+      available: true,
+    });
+    if (!view) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    res.json(view satisfies BillingView);
   });
 
   // One table of the business's data as CSV, for a spreadsheet (BUILD_PLAN Step 13).

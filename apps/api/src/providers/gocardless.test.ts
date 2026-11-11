@@ -359,6 +359,31 @@ describe("GoCardless webhooks", () => {
     );
   });
 
+  it("reports the mandate a fulfilled billing request created", () => {
+    const fulfilled = Buffer.from(
+      JSON.stringify({
+        events: [
+          {
+            id: "EV3",
+            created_at: "2026-11-10T12:00:00.000Z",
+            resource_type: "billing_requests",
+            action: "fulfilled",
+            details: { cause: "billing_request_fulfilled" },
+            links: { billing_request: "BRQ1", mandate_request_mandate: "MD7" },
+          },
+        ],
+      }),
+    );
+    const [event] = provider(stub([]), secret).verifyAndParseWebhook(fulfilled, {
+      "webhook-signature": sign(fulfilled),
+    });
+    expect(event).toMatchObject({
+      resourceType: "billing_requests",
+      action: "fulfilled",
+      links: { billingRequest: "BRQ1", mandate: "MD7" },
+    });
+  });
+
   it("refuses every webhook until a secret is configured", () => {
     expect(() =>
       provider(stub([])).verifyAndParseWebhook(body, { "webhook-signature": sign(body) }),

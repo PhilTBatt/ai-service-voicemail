@@ -10,6 +10,8 @@ import {
   type AvailableNumbersView,
   type CallReviewedView,
   type CancellationsView,
+  type BillingView,
+  type DirectDebitStartView,
   type HealthView,
   type OnboardingView,
   type ProfileView,
@@ -30,6 +32,7 @@ import {
 } from "../db/cross-tenant.ts";
 import { createPool } from "../db/pool.ts";
 import { FakeAuthProvider } from "../providers/auth.fake.ts";
+import { FakePaymentsProvider } from "../providers/payments.fake.ts";
 import { FakeTelephonyProvider } from "../providers/telephony.fake.ts";
 import { ONBOARDING_QUEUE, startQueue } from "../jobs/queue.ts";
 import { FakeVoiceProvider } from "../providers/voice.fake.ts";
@@ -50,6 +53,7 @@ const admin = createAdminPool(TEST_ADMIN_DATABASE_URL);
 const auth = new FakeAuthProvider();
 const voice = new FakeVoiceProvider();
 const telephony = new FakeTelephonyProvider();
+const payments = new FakePaymentsProvider();
 
 let boss: PgBoss;
 let get: (path: string, token?: string) => Promise<Response>;
@@ -108,6 +112,7 @@ beforeAll(async () => {
       voice,
       telephony,
       numbers: { telephony, ...NUMBER_URLS, purchasesEnabled: true },
+      billing: { payments, dashboardOrigin: "https://dash.example" },
       now: () => new Date("2026-11-07T10:00:00Z"),
     },
   }).listen(0);
@@ -304,6 +309,20 @@ describe("authorisation matrix", () => {
       method: "POST",
     },
     { name: "GET /tenants/:id/export.csv", path: `/tenants/${tenantA}/export.csv?table=calls` },
+    { name: "GET /tenants/:id/billing", path: `/tenants/${tenantA}/billing` },
+    // Against the fake provider: a set-up link, and then nothing more (it's reused).
+    {
+      name: "POST /tenants/:id/billing/direct-debit",
+      path: `/tenants/${tenantA}/billing/direct-debit`,
+      body: {},
+      method: "POST",
+    },
+    {
+      name: "POST /tenants/:id/billing/direct-debit/check",
+      path: `/tenants/${tenantA}/billing/direct-debit/check`,
+      body: {},
+      method: "POST",
+    },
     { name: "GET /admin/health", path: "/admin/health" },
     { name: "PUT /admin/kill-switch", path: "/admin/kill-switch", body: {} },
     { name: "GET /admin/review-queue", path: "/admin/review-queue" },
@@ -1155,6 +1174,73 @@ describe("CSV export", () => {
       const response = await get(`/tenants/${tenantA}/export.csv${query}`, tokens.ownerA);
       expect(response.status, query).toBe(400);
     }
+  });
+});
+
+describe("billing (Step 12)", () => {
+  it("shows the plan, the billing month once live, and walks a Direct Debit from start to active", async () => {
+    const tenant = await createTenant(admin, {
+      businessName: "Billed Plumbing",
+      trade: "plumber",
+      notificationEmail: "billed@example.com",
+    });
+    const owner = await personFor(tenant);
+
+    // Not live yet: the plan, no month, no Direct Debit.
+    const before = await json<BillingView>(get(`/tenants/${tenant}/billing`, owner));
+    expect(before).toEqual({
+      available: true,
+      plan: {
+        name: "AI Answering",
+        monthlyPence: 9900,
+        includedMinutes: 200,
+        overagePencePerMinute: 20,
+      },
+      isPilot: false,
+      period: null,
+      directDebit: { status: "none", since: null, endReason: null },
+    });
+
+    // Live since 14 October, with 61 seconds this month (the test clock is 7 November).
+    await admin.query(
+      "UPDATE tenants SET status = 'live', onboarding_state = 'live', billing_start_date = '2026-10-14' WHERE id = $1",
+      [tenant],
+    );
+    await admin.query(
+      "INSERT INTO usage_periods (tenant_id, period_start, period_end, billable_seconds) VALUES ($1, '2026-10-14', '2026-11-14', 61)",
+      [tenant],
+    );
+    expect((await json<BillingView>(get(`/tenants/${tenant}/billing`, owner))).period).toEqual({
+      start: "2026-10-14",
+      end: "2026-11-14",
+      month: 1,
+      feePence: 9900,
+      billableSeconds: 61,
+    });
+
+    // Starting: a link to the provider's page, which sends the person back to the Account tab.
+    const started = await send("POST", `/tenants/${tenant}/billing/direct-debit`, {}, owner);
+    expect(started.status).toBe(201);
+    const { authorisationUrl } = (await started.json()) as DirectDebitStartView;
+    const setup = [...payments.setups.entries()].find(
+      ([, s]) => s.metadata["tenantId"] === tenant,
+    )!;
+    expect(authorisationUrl).toContain(setup[0]);
+    expect(setup[1]).toMatchObject({
+      redirectUrl: `https://dash.example/tenants/${tenant}/settings?directDebit=done`,
+      exitUrl: `https://dash.example/tenants/${tenant}/settings`,
+    });
+
+    // Back from the page, done: the check finds it active.
+    payments.completeSetup(setup[0]);
+    const checked = await send("POST", `/tenants/${tenant}/billing/direct-debit/check`, {}, owner);
+    expect(checked.status).toBe(200);
+    expect(((await checked.json()) as BillingView).directDebit.status).toBe("active");
+
+    // And a second set-up is refused.
+    expect((await send("POST", `/tenants/${tenant}/billing/direct-debit`, {}, owner)).status).toBe(
+      409,
+    );
   });
 });
 

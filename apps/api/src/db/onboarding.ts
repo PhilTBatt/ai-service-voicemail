@@ -27,6 +27,7 @@ interface FactsRow {
   has_mobile: boolean;
   agent_synced: boolean;
   has_call: boolean;
+  payment_ready: boolean;
 }
 
 async function loadFacts(
@@ -55,7 +56,10 @@ async function loadFacts(
                                             WHERE a.tenant_id = t.id
                                               AND a.action = 'onboarding.advanced'
                                               AND a.details->>'to' = 'divert_instructions_sent')
-                     ) AS has_call
+                     ) AS has_call,
+              -- Payment is ready once there's a Direct Debit to collect against (Step 12).
+              EXISTS (SELECT 1 FROM payment_mandates m
+                      WHERE m.tenant_id = t.id AND m.status = 'active') AS payment_ready
        FROM tenants t
        LEFT JOIN LATERAL (SELECT version, synced_at FROM agent_profiles
                           WHERE tenant_id = t.id ORDER BY version DESC LIMIT 1) p ON true
@@ -80,7 +84,7 @@ async function loadFacts(
           !/placeholder/i.test(LEGAL_DOCUMENTS[type].version),
       ),
       isTest: row.is_test,
-      paymentReady: false, // Step 12
+      paymentReady: row.payment_ready,
       isPilot: row.is_pilot,
       hasNumber: row.has_number,
       profileComplete: row.has_profile && row.has_contact_name && row.has_mobile,
@@ -126,7 +130,7 @@ export async function onboardingStatus(
           ok: facts.documentsApproved,
         },
         { label: "Test business (may go live on placeholder documents)", ok: facts.isTest },
-        { label: "Payment set up (billing comes in Step 12)", ok: facts.paymentReady },
+        { label: "Direct Debit set up", ok: facts.paymentReady },
         { label: "Pilot (free, so no payment needed)", ok: facts.isPilot },
         { label: "Has an AnswerMate number", ok: facts.hasNumber },
         { label: "Assistant details, name and mobile", ok: facts.profileComplete },

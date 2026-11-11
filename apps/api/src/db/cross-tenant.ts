@@ -1173,6 +1173,21 @@ export async function activeNumberFor(
   return rows[0] ?? null;
 }
 
+/**
+ * The tenant a payments provider's reference belongs to (a Direct Debit set-up, a mandate, or
+ * a payment), for its webhooks. Runs as the app role through a function that returns only the ID.
+ */
+export async function findTenantIdByPaymentRef(
+  appPool: pg.Pool,
+  ref: string,
+): Promise<string | null> {
+  const { rows } = await appPool.query<{ tenant_id: string | null }>(
+    "SELECT tenant_id_for_payment_ref($1) AS tenant_id",
+    [ref],
+  );
+  return rows[0]?.tenant_id ?? null;
+}
+
 /** The tenant a notification belongs to, from the provider's message ID in a delivery receipt. */
 export async function findTenantIdByProviderRef(
   appPool: pg.Pool,

@@ -3,20 +3,23 @@
 import {
   CSV_EXPORTS,
   CSV_EXPORT_LABELS,
+  PILOT,
   notificationSettingsSchema,
+  type BillingView,
   type CancellationView,
+  type DirectDebitStartView,
   type DocumentsView,
   type MeView,
   type NotificationSettings,
   type TenantView,
 } from "@callmate/shared";
-import { useState } from "react";
-import { useParams } from "react-router";
+import { useEffect, useRef, useState } from "react";
+import { useParams, useSearchParams } from "react-router";
 import { ApiError, asError, useApi, useLoad } from "../api.ts";
-import { formatPhone, toUkMobileE164 } from "../format.ts";
+import { formatPence, formatPhone, humanise, toUkMobileE164 } from "../format.ts";
 import { NumberSection } from "../number-section.tsx";
 import { TenantHeader } from "../tenant-header.tsx";
-import { formatUkDateTime, ukDate } from "../time.ts";
+import { formatDate, formatUkDateTime, ukDate } from "../time.ts";
 import { ErrorNote } from "../ui.tsx";
 
 export function SettingsPage({ me }: { me: MeView }) {
@@ -32,6 +35,7 @@ export function SettingsPage({ me }: { me: MeView }) {
       <TenantHeader me={me} tenant={tenant.data} />
       <NumberSection tenant={tenant.data} isAdmin={me.role === "admin"} onBought={tenant.reload} />
       <Notifications key={`n-${tenant.data.id}`} tenant={tenant.data} />
+      <Billing key={`b-${tenant.data.id}`} tenant={tenant.data} />
       <Documents
         key={`d-${tenant.data.id}`}
         tenant={tenant.data}
@@ -236,6 +240,158 @@ function Notifications({ tenant }: { tenant: TenantView }) {
         {saved && <span className="muted">Saved. The next message goes to these.</span>}
       </div>
     </form>
+  );
+}
+
+/**
+ * The plan, this billing month so far, and Direct Debit (BUILD_PLAN Step 12). Setting one up
+ * sends the person to the payments provider's own page for their bank details; it sends them
+ * back here with ?directDebit=done, and this asks the server whether it's finished.
+ */
+function Billing({ tenant }: { tenant: TenantView }) {
+  const { api } = useApi();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const billing = useLoad(
+    () => api<BillingView>(`/tenants/${tenant.id}/billing`),
+    `billing-${tenant.id}`,
+  );
+  const [checked, setChecked] = useState<BillingView | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+  const returned = searchParams.get("directDebit") === "done";
+  const checking = useRef(false);
+
+  const check = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      setChecked(
+        await api<BillingView>(`/tenants/${tenant.id}/billing/direct-debit/check`, {
+          method: "POST",
+          body: {},
+        }),
+      );
+    } catch (caught) {
+      setError(asError(caught));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!returned || checking.current) return;
+    checking.current = true;
+    void api<BillingView>(`/tenants/${tenant.id}/billing/direct-debit/check`, {
+      method: "POST",
+      body: {},
+    })
+      .then(setChecked, (caught: unknown) => setError(asError(caught)))
+      .finally(() => setSearchParams({}, { replace: true }));
+  }, [returned, api, tenant.id, setSearchParams]);
+
+  if (billing.status === "loading") return <p className="muted">Loading billing…</p>;
+  if (billing.status === "error") return <ErrorNote error={billing.error} retry={billing.reload} />;
+  const view = checked ?? billing.data;
+  const { plan, period, directDebit } = view;
+
+  const start = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const { authorisationUrl } = await api<DirectDebitStartView>(
+        `/tenants/${tenant.id}/billing/direct-debit`,
+        { method: "POST", body: {} },
+      );
+      window.location.assign(authorisationUrl);
+    } catch (caught) {
+      setError(asError(caught));
+      setBusy(false);
+    }
+  };
+
+  const minutesUsed = period ? Math.ceil(period.billableSeconds / 60) : 0;
+  const leaving = tenant.status === "cancelling" || tenant.status === "cancelled";
+
+  return (
+    <section className="card" id="billing">
+      <h2>Plan and payment</h2>
+      <p>
+        <strong>{plan.name}</strong>: {formatPence(plan.monthlyPence)} a month, with{" "}
+        {plan.includedMinutes} minutes of calls included, then {plan.overagePencePerMinute}p a
+        minute. Prices are before VAT.
+      </p>
+      {view.isPilot && (
+        <p className="muted">
+          This business is on the pilot: the first month's fee is waived, then it's{" "}
+          {formatPence(PILOT.reducedMonthlyPence)} a month for {PILOT.reducedMonths} months, then
+          the plan's price.
+        </p>
+      )}
+      {period ? (
+        <p>
+          This billing month ({formatDate(period.start)} to {formatDate(period.end)}, month{" "}
+          {period.month}): {minutesUsed} of {plan.includedMinutes} minutes used so far. This month's
+          fee is {formatPence(period.feePence)}, charged by Direct Debit after the month ends.
+        </p>
+      ) : (
+        <p className="muted">
+          Nothing is charged until AnswerMate is answering this business's calls.
+        </p>
+      )}
+      <h3>Direct Debit</h3>
+      {directDebit.status === "active" && (
+        <p>
+          Set up
+          {directDebit.since ? ` on ${formatUkDateTime(directDebit.since)}` : ""}. Each month's
+          charge is collected from it automatically.
+        </p>
+      )}
+      {directDebit.status === "pending" && (
+        <>
+          <p>
+            Started but not finished. If you've just given your bank details, it can take a moment
+            to show here.
+          </p>
+          {view.available && (
+            <button
+              type="button"
+              className="secondary"
+              disabled={busy}
+              onClick={() => void check()}
+            >
+              Check again
+            </button>
+          )}
+        </>
+      )}
+      {directDebit.status === "ended" && (
+        <p className="field-errors">
+          The Direct Debit ended
+          {directDebit.since ? ` on ${formatUkDateTime(directDebit.since)}` : ""}
+          {directDebit.endReason ? ` (${humanise(directDebit.endReason)})` : ""}, so nothing can be
+          collected. Please set it up again.
+        </p>
+      )}
+      {directDebit.status === "none" && !view.isPilot && (
+        <p>Not set up yet. It's needed before AnswerMate can start answering calls.</p>
+      )}
+      {directDebit.status !== "active" && !leaving && (
+        <>
+          {view.available ? (
+            <button type="button" disabled={busy} onClick={() => void start()}>
+              {busy ? "One moment…" : "Set up Direct Debit"}
+            </button>
+          ) : (
+            <p className="muted">Direct Debit isn't available yet.</p>
+          )}
+          <p className="muted">
+            You'll give your bank details on GoCardless's secure page, then come back here. You can
+            cancel a Direct Debit at your bank at any time.
+          </p>
+        </>
+      )}
+      {error && <ErrorNote error={error} />}
+    </section>
   );
 }
 

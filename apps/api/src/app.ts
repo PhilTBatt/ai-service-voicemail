@@ -12,6 +12,7 @@ import type { TelephonyProvider } from "./providers/telephony.ts";
 import type { CallEndedEvent, FunctionCallEvent, VoiceProvider } from "./providers/voice.ts";
 import { callPageRouter } from "./routes/calls.ts";
 import { dashboardRouter, type DashboardOptions } from "./routes/dashboard.ts";
+import { paymentsWebhookRouter, type PaymentsWebhookOptions } from "./routes/payments-webhook.ts";
 import { postmarkRouter } from "./routes/postmark.ts";
 import { signupRouter } from "./routes/signup.ts";
 import { twilioRouter } from "./routes/twilio.ts";
@@ -23,6 +24,8 @@ export interface AppOptions {
   dashboard?: Omit<DashboardOptions, "pool"> | undefined;
   /** Postmark's bounce and complaint webhook. Absent until POSTMARK_WEBHOOK_SECRET is configured. */
   postmark?: { webhookSecret: string; alert?: AlertFn } | undefined;
+  /** The payments provider's webhook (Step 12). Absent until GoCardless is configured. */
+  payments?: Omit<PaymentsWebhookOptions, "pool"> | undefined;
   /** The signed call pages (/c/:token). Absent until SIGNING_SECRET is configured. */
   callPages?:
     | {
@@ -74,6 +77,7 @@ export function createApp({
   telephony,
   callPages,
   postmark,
+  payments,
   dashboard,
 }: AppOptions) {
   const app = express();
@@ -132,6 +136,9 @@ export function createApp({
   }
 
   if (postmark) app.use("/webhooks/postmark", postmarkRouter({ pool, ...postmark }));
+  if (payments) {
+    app.use("/webhooks/gocardless", paymentsWebhookRouter({ pool, alert, now, ...payments }));
+  }
   if (callPages) app.use("/c", callPageRouter({ pool, ...callPages }));
   if (dashboard) {
     // First: following a signup link needs a login but no account, so it can't sit behind the

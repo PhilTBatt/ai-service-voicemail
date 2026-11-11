@@ -21,6 +21,7 @@ export const ALERTS = [
   "email-spam-complaint",
   "number-bought-not-recorded",
   "deletion-confirmation-not-sent",
+  "payment-mandate-ended",
   "fallback-voicemail-spike",
   "webhook-signature-spike",
   "server-error-spike",

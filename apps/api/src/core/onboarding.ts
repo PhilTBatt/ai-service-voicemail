@@ -16,7 +16,7 @@ export interface OnboardingFacts {
   documentsApproved: boolean;
   /** Signed up from a test link: Phil trying the service out. */
   isTest: boolean;
-  /** A payment method is ready. Billing is Step 12, so nothing sets this yet. */
+  /** A Direct Debit is set up to collect against (Step 12). */
   paymentReady: boolean;
   /** A free pilot: allowed past "payment set up" without one (BUILD_PLAN Step 11). */
   isPilot: boolean;
@@ -50,7 +50,7 @@ export function goLiveVerdict(facts: OnboardingFacts): Verdict {
     };
   }
   if (!facts.paymentReady && !facts.isPilot) {
-    return { ok: false, reason: "No payment is set up, and this isn't a pilot" };
+    return { ok: false, reason: "No Direct Debit is set up, and this isn't a pilot" };
   }
   if (!facts.testCallReceived) return { ok: false, reason: "No test call has been received" };
   return { ok: true };
@@ -70,7 +70,7 @@ function conditionFor(to: OnboardingState, facts: OnboardingFacts): Verdict {
     case "payment_ready":
       return unless(
         facts.paymentReady || facts.isPilot,
-        "No payment is set up, and this isn't a pilot (billing arrives in Step 12)",
+        "No Direct Debit is set up, and this isn't a pilot",
       );
     case "number_provisioned":
       return unless(facts.hasNumber, "There's no AnswerMate number yet");

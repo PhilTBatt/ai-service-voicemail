@@ -74,6 +74,12 @@ function parseDate(date: string): [year: number, month: number, day: number] {
   return [Number(match[1]), Number(match[2]), Number(match[3])];
 }
 
+/** A YYYY-MM-DD date as people write it: "14 Oct 2026". A date has no time, so no zone. */
+export function formatDate(date: string): string {
+  const [year, month, day] = parseDate(date);
+  return `${day} ${MONTHS[month - 1]!} ${year}`;
+}
+
 /** The date `days` after (or before) a YYYY-MM-DD date. */
 export function addDays(date: string, days: number): string {
   const [year, month, day] = parseDate(date);
