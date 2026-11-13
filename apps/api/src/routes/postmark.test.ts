@@ -71,7 +71,7 @@ describe("POST /webhooks/postmark", () => {
       Email: "sam@example.com",
       Inactive: true,
     });
-    expect(response.status).toBe(204);
+    expect(response.status).toBe(200);
     expect(await row(messageId)).toEqual({ status: "undelivered", failure_code: "HardBounce" });
     expect(alert).toHaveBeenCalledWith("email-bounced", {
       tenantId,
@@ -113,7 +113,7 @@ describe("POST /webhooks/postmark", () => {
         to,
         // Postmark reports the bounce before our record of the send has its ID.
         send: async () => {
-          expect((await post(bounce)).status).toBe(204);
+          expect((await post(bounce)).status).toBe(200);
           return { providerRef: messageId };
         },
       },
@@ -132,12 +132,12 @@ describe("POST /webhooks/postmark", () => {
     const { messageId } = await makeSentEmail();
     expect(
       (await post({ RecordType: "Bounce", Type: "Transient", MessageID: messageId })).status,
-    ).toBe(204);
+    ).toBe(200);
     expect((await row(messageId))?.status).toBe("sent");
     expect(
       (await post({ RecordType: "Bounce", Type: "HardBounce", MessageID: "unknown" })).status,
-    ).toBe(204);
-    expect((await post({ RecordType: "Delivery", MessageID: messageId })).status).toBe(204);
+    ).toBe(200);
+    expect((await post({ RecordType: "Delivery", MessageID: messageId })).status).toBe(200);
   });
 
   // The emails that aren't about a call: these were "an email we don't know" until 2026-11-11,
@@ -184,9 +184,9 @@ describe("POST /webhooks/postmark", () => {
         Email: ADDRESS,
         Inactive: true,
       };
-      expect((await post(bounce)).status).toBe(204);
+      expect((await post(bounce)).status).toBe(200);
       // Postmark sends a webhook again when it thinks the first failed.
-      expect((await post(bounce)).status).toBe(204);
+      expect((await post(bounce)).status).toBe(200);
 
       // Still 'sent' (the job reads the row to send each email once), with Postmark's verdict.
       expect(await billingEmail(messageId)).toEqual({
@@ -214,7 +214,7 @@ describe("POST /webhooks/postmark", () => {
       // Postmark reports the bounce before our record of the send has its ID.
       const email = {
         send: async () => {
-          expect((await post(bounce)).status).toBe(204);
+          expect((await post(bounce)).status).toBe(200);
           return { providerRef: messageId };
         },
       };
@@ -265,8 +265,8 @@ describe("POST /webhooks/postmark", () => {
         [tenantId],
       );
       const bounce = { RecordType: "Bounce", Type: "HardBounce", MessageID: messageId };
-      expect((await post(bounce)).status).toBe(204);
-      expect((await post(bounce)).status).toBe(204);
+      expect((await post(bounce)).status).toBe(200);
+      expect((await post(bounce)).status).toBe(200);
 
       const { rows } = await admin.query(
         `SELECT action, details FROM audit_log

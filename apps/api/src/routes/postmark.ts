@@ -6,6 +6,9 @@
 // billing email, a cancellation, a deletion's confirmation); a complaint is also Postmark
 // deactivating that address for good. An event that arrives before the send job has saved the
 // email's ID is kept, and the job applies it when it saves the ID (db/delivery-receipts.ts).
+//
+// Every answer but a refusal is 200, not 204: Postmark's docs (read 2026-11-13) say "any response
+// other than a 200 counts as a failure", and its Verify webhook button checks for a 200.
 import { timingSafeEqual } from "node:crypto";
 import { Router, json } from "express";
 import type pg from "pg";
@@ -53,7 +56,7 @@ export function postmarkRouter({ pool, webhookSecret, alert = raiseAlert }: Post
     const parsed = eventSchema.safeParse(req.body);
     if (!parsed.success) {
       // Other record types (Delivery, Open...) aren't subscribed to; if one arrives, say fine.
-      res.status(204).end();
+      res.status(200).end();
       return;
     }
     const {
@@ -66,7 +69,7 @@ export function postmarkRouter({ pool, webhookSecret, alert = raiseAlert }: Post
     // A transient bounce may still deliver; only the final verdicts change the row.
     const final = record === "SpamComplaint" || type !== "Transient";
     if (!final) {
-      res.status(204).end();
+      res.status(200).end();
       return;
     }
     const { tenantId } = await recordReceipt(
@@ -90,7 +93,7 @@ export function postmarkRouter({ pool, webhookSecret, alert = raiseAlert }: Post
     } else {
       logger.info("Postmark event handled", { record, type, tenantId });
     }
-    res.status(204).end();
+    res.status(200).end();
   });
 
   return router;
