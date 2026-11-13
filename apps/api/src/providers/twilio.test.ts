@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import twilio from "twilio";
 import { TwilioApiStub } from "../testing/twilio-stub.ts";
@@ -25,6 +26,13 @@ function makeHarness() {
     providerWithoutPurchases: make(false),
     sign: (url: string, params: Record<string, string>) =>
       twilio.getExpectedTwilioSignature(AUTH_TOKEN, url, params),
+    // Twilio signs a JSON POST over the URL with a bodySHA256 parameter it adds, and no form
+    // parameters (its SDK's validateRequestWithBody is the check).
+    signJson: (url: string, rawBody: string) => {
+      const hash = createHash("sha256").update(rawBody).digest("hex");
+      const signed = `${url}${url.includes("?") ? "&" : "?"}bodySHA256=${hash}`;
+      return { url: signed, signature: twilio.getExpectedTwilioSignature(AUTH_TOKEN, signed, {}) };
+    },
     seedRecording: (url: string, bytes: Uint8Array<ArrayBuffer>) =>
       stub.recordingAudio.set(url.slice(url.lastIndexOf("/") + 1), bytes),
     seedCallRecord: (record: {

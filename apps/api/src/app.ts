@@ -9,6 +9,8 @@ import { SERVER_ERRORS_PER_WINDOW, Spike } from "./core/spike.ts";
 import { lastHeartbeat, workerState } from "./db/worker-heartbeat.ts";
 import type { EnqueueNotifications } from "./jobs/enqueue-notifications.ts";
 import type { EnqueueOnboarding } from "./jobs/onboarding.ts";
+import type { EnqueueProcessCall } from "./jobs/process-call.ts";
+import type { EnqueueTranscription } from "./jobs/transcribe-voicemail.ts";
 import { logger } from "./logger.ts";
 import type { TelephonyProvider } from "./providers/telephony.ts";
 import type { CallEndedEvent, FunctionCallEvent, VoiceProvider } from "./providers/voice.ts";
@@ -76,6 +78,9 @@ export interface AppOptions {
         enqueueSync: (job: { tenantId: string; profileVersion: number }) => Promise<unknown>;
         enqueueNotifications: EnqueueNotifications;
         enqueueOnboarding?: EnqueueOnboarding;
+        /** Voicemail transcription (decision 022): asking for one, and summarising the result. */
+        enqueueTranscription?: EnqueueTranscription;
+        enqueueProcessCall?: EnqueueProcessCall;
         alert?: AlertFn;
         now?: () => Date;
         /** How long the voice platform gets to take a call, and routing to answer at all. */

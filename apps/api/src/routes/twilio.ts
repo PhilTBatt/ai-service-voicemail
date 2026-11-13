@@ -1,4 +1,4 @@
-import { Router, urlencoded, type Request, type RequestHandler, type Response } from "express";
+import { Router, raw, urlencoded, type Request, type RequestHandler, type Response } from "express";
 import type { EnqueueOnboarding } from "../jobs/onboarding.ts";
 import type pg from "pg";
 import { z } from "zod";
@@ -23,6 +23,9 @@ import { recordReceipt } from "../db/delivery-receipts.ts";
 import { loadInboundCallContext } from "../db/inbound-call.ts";
 import { applySmsCommand } from "../db/tenant-commands.ts";
 import type { EnqueueNotifications } from "../jobs/enqueue-notifications.ts";
+import type { EnqueueProcessCall } from "../jobs/process-call.ts";
+import type { EnqueueTranscription } from "../jobs/transcribe-voicemail.ts";
+import { storeVoicemailTranscript } from "../db/voicemail-transcripts.ts";
 import { storeFallbackVoicemail } from "../db/voicemails.ts";
 import {
   FALLBACK_VOICEMAILS_PER_WINDOW,
@@ -30,7 +33,11 @@ import {
   Spike,
 } from "../core/spike.ts";
 import { logger } from "../logger.ts";
-import type { TelephonyProvider } from "../providers/telephony.ts";
+import {
+  TranscriptionCallbackError,
+  type TelephonyProvider,
+  type TranscriptionResult,
+} from "../providers/telephony.ts";
 import type { VoiceProvider } from "../providers/voice.ts";
 
 export interface TwilioRouteOptions {
@@ -52,6 +59,10 @@ export interface TwilioRouteOptions {
   enqueueNotifications: EnqueueNotifications;
   /** Takes a business live after its test call, which arrives as a voicemail (Step 11). */
   enqueueOnboarding?: EnqueueOnboarding;
+  /** Asks for a stored voicemail's transcript while the switch is on (decision 022). */
+  enqueueTranscription?: EnqueueTranscription;
+  /** Queues the post-call job once a voicemail's transcript has arrived (decision 022). */
+  enqueueProcessCall?: EnqueueProcessCall;
   alert?: AlertFn;
   now?: () => Date;
   /** How long the voice platform gets to take a call before the caller gets the voicemail. */
@@ -133,6 +144,8 @@ export function twilioRouter({
   enqueueSync,
   enqueueNotifications,
   enqueueOnboarding,
+  enqueueTranscription,
+  enqueueProcessCall,
   alert = raiseAlert,
   now = () => new Date(),
   registerTimeoutMs = 6_000,
@@ -151,11 +164,24 @@ export function twilioRouter({
   // each check is the same HMAC with the same auth token.
   const baseUrls = alternateBaseUrl ? [publicBaseUrl, alternateBaseUrl] : [publicBaseUrl];
 
+  /** A webhook whose signature doesn't check out: refused, and counted towards the spike alert. */
+  const refuse = (req: Request, res: Response) => {
+    logger.warn("Rejected Twilio webhook", { path: req.path });
+    if (refusals.record(now())) {
+      alert("webhook-signature-spike", { source: "twilio", inWindow: refusals.count });
+    }
+    res.status(403).json({ error: "Forbidden" });
+  };
+
+  const signatureOf = (req: Request) => {
+    const header = req.headers["x-twilio-signature"];
+    return typeof header === "string" ? header : undefined;
+  };
+
   const verified: RequestHandler = (req, res, next) => {
     // The URL is rebuilt from the configured public origin, never from the request: behind a
     // proxy, req.host would be the internal address, and Twilio signed the public one.
-    const header = req.headers["x-twilio-signature"];
-    const signature = typeof header === "string" ? header : undefined;
+    const signature = signatureOf(req);
     // Express leaves req.body undefined for anything but a form body; a probe with JSON must
     // get a 403, not a crash.
     const params = (req.body ?? {}) as Record<string, string>;
@@ -163,11 +189,7 @@ export function twilioRouter({
       telephony.verifyWebhook({ url: `${base}${req.originalUrl}`, params, signature }),
     );
     if (!ok) {
-      logger.warn("Rejected Twilio webhook", { path: req.path });
-      if (refusals.record(now())) {
-        alert("webhook-signature-spike", { source: "twilio", inWindow: refusals.count });
-      }
-      res.status(403).json({ error: "Forbidden" });
+      refuse(req, res);
       return;
     }
     next();
@@ -317,10 +339,51 @@ export function twilioRouter({
       },
       enqueueNotifications,
       enqueueOnboarding,
+      enqueueTranscription,
     );
     logger.info("Fallback voicemail callback handled", { callSid, ...result });
     res.status(204).end();
   });
+
+  // The transcript of a fallback voicemail, from Twilio's Batch Transcription (decision 022). A
+  // JSON body, not a form, so it's read as raw bytes and checked the way Twilio signs JSON: over
+  // the URL, with the bodySHA256 parameter Twilio adds to it, and the exact bytes. A result that
+  // no voicemail asked for is acknowledged and dropped (a probe, or a business whose data has
+  // gone since); one still in progress is acknowledged and waited for.
+  router.post(
+    "/transcription",
+    raw({ type: "application/json", limit: "2mb" }),
+    async (req, res) => {
+      const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+      const signature = signatureOf(req);
+      const ok = baseUrls.some((base) =>
+        telephony.verifyJsonWebhook({ url: `${base}${req.originalUrl}`, rawBody, signature }),
+      );
+      if (!ok) {
+        refuse(req, res);
+        return;
+      }
+      let result: TranscriptionResult;
+      try {
+        result = telephony.parseTranscriptionCallback(JSON.parse(rawBody.toString("utf8")));
+      } catch (error) {
+        if (error instanceof TranscriptionCallbackError || error instanceof SyntaxError) {
+          // The adapter's message names fields, never the words.
+          logger.warn("Transcription result not understood", { error });
+          res.status(400).json({ error: "Bad request" });
+          return;
+        }
+        throw error;
+      }
+      const stored = await storeVoicemailTranscript(pool, result, { enqueueProcessCall, alert });
+      logger.info("Transcription result handled", {
+        transcriptionRef: result.transcriptionRef,
+        status: result.status,
+        ...stored,
+      });
+      res.status(204).end();
+    },
+  );
 
   // A text to the notification number. Only a tenant's registered mobile gets a reply;
   // anything else is dropped silently, so the number can't be used to probe for tenants.

@@ -170,6 +170,8 @@ describe("estimateCosts", () => {
     await cost(answered, "sms:segments", 2, "segments");
     await cost(voicemail, "mystery:widgets", 3, "widgets");
     await cost(voicemail, "unpriced-model:input_tokens", 500, "tokens");
+    // A 42-second voicemail transcribed (decision 022): one whole minute at $0.024.
+    await cost(voicemail, "twilio:transcription_seconds", 42, "seconds");
     await cost(nextMonth, "retell:llm", 1000, "usd_cents");
 
     const { tenants, unpriced } = await estimateCosts(
@@ -180,6 +182,7 @@ describe("estimateCosts", () => {
         smsSegmentGbp: "0.042325",
         inboundCallPerMinuteGbp: "0.007558",
         sipPerMinuteUsd: "0.004",
+        transcriptionPerMinuteUsd: "0.024",
         localNumberPerMonthGbp: "0.86917",
         models: { "priced-model": { input: 0.1, output: 0.5 } },
       },
@@ -200,7 +203,9 @@ describe("estimateCosts", () => {
         phoneMinutes: 4,
         // £0.86917 a month
         number: 87,
-        total: 148,
+        // 42 seconds counted as 1 minute x $0.024 at 0.8 = 1.92p
+        transcription: 2,
+        total: 150,
       },
     });
     expect(unpriced).toEqual(["mystery:widgets", "unpriced-model:input_tokens"]);

@@ -1,5 +1,6 @@
 // The process-call job (BUILD_PLAN Step 5): turn a stored transcript into the fields the
 // tradesperson needs. Idempotent: a call that's already been extracted is skipped.
+import type { PgBoss } from "pg-boss";
 import type pg from "pg";
 import { phoneFromInput } from "../core/phone.ts";
 import {
@@ -24,11 +25,28 @@ import { withTenant } from "../db/tenant.ts";
 import { logger } from "../logger.ts";
 import type { LlmProvider, LlmUsage } from "../providers/llm.ts";
 import type { TranscriptTurn } from "../providers/voice.ts";
+import { PROCESS_CALL_QUEUE } from "./queue.ts";
 
 export interface ProcessCallJobData {
   tenantId: string;
   callId: string;
   providerCallId: string;
+}
+
+/**
+ * Queues the job through a transaction's client, so it commits or rolls back with whatever made
+ * the call ready (a voicemail's transcript arriving, say). The provider's call ID is the
+ * idempotency key, as when the call itself is stored (db/calls.ts).
+ */
+export type EnqueueProcessCall = (client: pg.ClientBase, data: ProcessCallJobData) => Promise<void>;
+
+export function enqueueProcessCallWith(boss: PgBoss): EnqueueProcessCall {
+  return async (client, data) => {
+    await boss.send(PROCESS_CALL_QUEUE, data, {
+      singletonKey: data.providerCallId,
+      db: { executeSql: (text: string, values?: unknown[]) => client.query(text, values) },
+    });
+  };
 }
 
 export interface ProcessCallDeps {
@@ -110,9 +128,9 @@ export async function runProcessCall(
     logger.info("Call already processed", { tenantId, callId });
     return "already-processed";
   }
-  if (loaded.call.via_fallback) {
-    // Fallback voicemails have a recording, not a transcript (Step 5's retention and Step 6
-    // handle them); there's nothing to extract from.
+  if (loaded.call.via_fallback && loaded.call.transcript === null) {
+    // A fallback voicemail has a recording, not a transcript, unless transcription is on and
+    // the words have come back (decision 022): until then there's nothing to extract from.
     return "no-transcript";
   }
 
@@ -177,6 +195,8 @@ export async function runProcessCall(
     businessName: loaded.tenant.business_name,
     tradespersonName: loaded.tenant.contact_name ?? "the tradesperson",
     callerNumber: loaded.call.caller_number,
+    // A voicemail's words were never read back or confirmed: the prompt says so.
+    kind: loaded.call.via_fallback ? "voicemail" : "call",
   });
 
   // Invalid output gets one retry; a refusal doesn't. An API error is thrown so the queue
@@ -236,8 +256,11 @@ export async function runProcessCall(
   await withTenant(pool, tenantId, async (client) => {
     if (extraction) {
       const { jobSummary, flags, callerName, callbackNumber, postcode, priceAsked } = extraction;
+      // Merged, not replaced: a voicemail's row already holds its recording's length, which its
+      // text and email read (core/notifications.ts voicemailSms).
       await client.query(
-        `UPDATE calls SET summary = $2, urgency = $3, flags = flags || $4::text[], extracted_fields = $5
+        `UPDATE calls SET summary = $2, urgency = $3, flags = flags || $4::text[],
+                          extracted_fields = extracted_fields || $5::jsonb
          WHERE id = $1`,
         [
           callId,

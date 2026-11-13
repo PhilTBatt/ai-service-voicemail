@@ -73,7 +73,51 @@ export interface CallDetails {
   durationSeconds: number;
 }
 
+/** What the provider says became of a transcription it was asked for (decision 022). */
+export interface TranscriptionResult {
+  /** The provider's ID for the transcription, as requestTranscription returned it. */
+  transcriptionRef: string;
+  /** The recording it was of, when the provider says. */
+  recordingSid: string | null;
+  /** "pending": the provider is still working on it, and will say again. */
+  status: "completed" | "failed" | "pending";
+  /** The words, in order, as one string; null when failed or there were none. */
+  text: string | null;
+  /** The provider's confidence, 0 to 1, when it gives one. */
+  confidence: number | null;
+  durationSeconds: number | null;
+  /** Why it failed, in the provider's words, redacted. */
+  error: string | null;
+}
+
+/** A transcription result the provider sent in a shape the adapter can't read. */
+export class TranscriptionCallbackError extends Error {
+  override readonly name = "TranscriptionCallbackError";
+}
+
 export interface TelephonyProvider {
+  /**
+   * Asks the provider to transcribe a recording it holds, with the result to be POSTed to
+   * `callbackUrl` (a JSON webhook, checked with verifyJsonWebhook and read with
+   * parseTranscriptionCallback). Costs money: only called with the voicemail transcription
+   * switch on (decision 022). Must be safe to repeat for the same recording.
+   */
+  requestTranscription(input: {
+    recordingSid: string;
+    callbackUrl: string;
+  }): Promise<{ transcriptionRef: string }>;
+  /** Reads a transcription result webhook's JSON body; throws TranscriptionCallbackError if it can't. */
+  parseTranscriptionCallback(body: unknown): TranscriptionResult;
+  /**
+   * True when a JSON-bodied webhook was signed by the provider for exactly this URL (query
+   * string included) and these bytes. Twilio signs a JSON body through a bodySHA256 query
+   * parameter it adds to the URL it calls.
+   */
+  verifyJsonWebhook(request: {
+    url: string;
+    rawBody: Buffer;
+    signature: string | undefined;
+  }): boolean;
   /** UK geographic (01/02) numbers that can receive calls. */
   searchNumbers(search: NumberSearch): Promise<AvailableNumber[]>;
   /** What UK numbers cost to rent per month, by kind. */

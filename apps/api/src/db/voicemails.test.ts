@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, describe, expect, it, vi } from "vitest";
+import { TRANSCRIPT_WAIT_SECONDS } from "../core/voicemail-transcription.ts";
 import { TEST_ADMIN_DATABASE_URL, TEST_DATABASE_URL } from "../testing/databases.ts";
 import { assignPhoneNumber, createAdminPool, createTenant } from "./cross-tenant.ts";
 import { createPool } from "./pool.ts";
@@ -120,6 +121,54 @@ describe("storeFallbackVoicemail", () => {
     expect(await storeFallbackVoicemail(app, voicemail("+441632960999"))).toEqual({
       outcome: "unknown-number",
       tenantId: null,
+    });
+  });
+});
+
+// Voicemail transcription (decision 022): asked for in the same transaction as the row, and the
+// plain messages held for the transcript when one was asked for.
+describe("storeFallbackVoicemail and transcription", () => {
+  it("asks for the transcript with the row, and holds the messages for it", async () => {
+    const { tenantId, number } = await makeTenant();
+    const v = voicemail(number);
+    const enqueueNotifications = vi.fn(() => Promise.resolve());
+    const enqueueTranscription = vi.fn(
+      async (client: import("pg").ClientBase, call: { callId: string }) => {
+        const { rowCount } = await client.query("SELECT 1 FROM calls WHERE id = $1", [call.callId]);
+        expect(rowCount).toBe(1); // inside the transaction
+        return true;
+      },
+    );
+    await storeFallbackVoicemail(app, v, enqueueNotifications, undefined, enqueueTranscription);
+    expect(enqueueTranscription).toHaveBeenCalledWith(expect.anything(), {
+      tenantId,
+      callId: expect.any(String) as string,
+      durationSeconds: 42,
+      recordingUrl: v.recordingUrl,
+    });
+    expect(enqueueNotifications).toHaveBeenCalledWith(expect.anything(), {
+      tenantId,
+      callId: expect.any(String) as string,
+      urgency: null,
+      startAfterSeconds: TRANSCRIPT_WAIT_SECONDS,
+    });
+  });
+
+  it("sends the messages at once when no transcript was asked for (the switch off, say)", async () => {
+    const { tenantId, number } = await makeTenant();
+    const enqueueNotifications = vi.fn(() => Promise.resolve());
+    const enqueueTranscription = vi.fn(() => Promise.resolve(false));
+    await storeFallbackVoicemail(
+      app,
+      voicemail(number),
+      enqueueNotifications,
+      undefined,
+      enqueueTranscription,
+    );
+    expect(enqueueNotifications).toHaveBeenCalledWith(expect.anything(), {
+      tenantId,
+      callId: expect.any(String) as string,
+      urgency: null,
     });
   });
 });

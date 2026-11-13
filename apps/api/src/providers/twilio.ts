@@ -2,9 +2,11 @@
 // offline, like the Retell adapter); webhook signatures are checked with Twilio's own SDK,
 // which Twilio says to use rather than reimplementing the scheme.
 import twilio from "twilio";
+import { z } from "zod";
 import { redactText } from "../redact.ts";
 import {
   PurchaseNotAllowedError,
+  TranscriptionCallbackError,
   type AvailableNumber,
   type CallDetails,
   type NumberConfiguration,
@@ -14,9 +16,81 @@ import {
   type RecordingAudio,
   type RecordingSummary,
   type TelephonyProvider,
+  type TranscriptionResult,
   type WebhookRequest,
 } from "./telephony.ts";
 import { e164OrNull } from "../core/phone.ts";
+
+/**
+ * Twilio's Batch Transcription API (decision 022; docs read 2026-11-11: the quickstart at
+ * /docs/configurations/batch-transcription-quickstart and the two reference pages it links to).
+ * A different host from the 2010 API, JSON in and out, camelCase fields. Twilio's own examples
+ * authenticate with an API key and secret; the account SID and auth token are Twilio's standard
+ * HTTP Basic credentials and are used here, unverified against this host until the switch is
+ * first turned on (RUNBOOK section 18).
+ */
+const VOICE_API = "https://voice.twilio.com";
+/** One configuration for all our voicemails, found again by this name (Twilio: "no spaces"). */
+export const TRANSCRIPTION_CONFIGURATION_NAME = "answermate_voicemails";
+
+interface TranscriptionConfigurationJson {
+  id: string;
+  unique_name?: string;
+  configuration?: { transcriptionStatusCallback?: { url?: string; method?: string } };
+}
+
+/** What the result webhook POSTs (the Batch Transcription reference's status callback). */
+const transcriptionCallbackSchema = z.object({
+  id: z.string().min(1),
+  status: z.string().min(1),
+  sourceId: z.string().optional(),
+  duration: z.coerce.number().nonnegative().optional(),
+  sentences: z
+    .array(
+      z.object({
+        text: z.string(),
+        confidence: z.coerce.number().min(0).max(1).optional(),
+      }),
+    )
+    .optional(),
+  error: z
+    .object({
+      code: z.union([z.string(), z.number()]).optional(),
+      message: z.string().optional(),
+    })
+    .optional(),
+});
+
+/** The transcription request Twilio's reference documents for a recording it holds. */
+export function transcriptionRequestBody(configurationId: string, recordingSid: string) {
+  return {
+    transcriptionConfigurationId: configurationId,
+    inputSource: "SOURCE_ID",
+    sourceId: recordingSid,
+  };
+}
+
+/** The configuration's body: Deepgram's current model, British English, our webhook. */
+export function transcriptionConfigurationBody(callbackUrl: string) {
+  return {
+    unique_name: TRANSCRIPTION_CONFIGURATION_NAME,
+    description: "Voicemails left when an AnswerMate assistant couldn't answer",
+    configuration: {
+      configurationType: "Transcription",
+      transcriptionEngine: "deepgram",
+      speechModel: "nova-3",
+      language: "en-GB",
+      transcriptionStatusCallback: { url: callbackUrl, method: "POST" },
+      // The reference wants exactly two, one CUSTOMER and one agent, by audio channel. A
+      // voicemail is one caller on one channel; Twilio infers the participants for its own
+      // recordings, so these only stand in.
+      participantDefaults: [
+        { audioChannelIndex: 1, role: "CUSTOMER" },
+        { audioChannelIndex: 2, role: "HUMAN_AGENT" },
+      ],
+    },
+  };
+}
 
 export interface TwilioOptions {
   accountSid: string;
@@ -91,10 +165,137 @@ function startedBefore(call: ListedCall, until: Date | null): boolean {
 export class TwilioTelephonyProvider implements TelephonyProvider {
   private readonly options: TwilioOptions;
   private readonly baseUrl: string;
+  /** The transcription configuration found or made for a callback URL, so it's looked up once. */
+  private transcriptionConfiguration: { callbackUrl: string; id: string } | null = null;
 
   constructor(options: TwilioOptions) {
     this.options = options;
     this.baseUrl = `https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(options.accountSid)}`;
+  }
+
+  async requestTranscription({
+    recordingSid,
+    callbackUrl,
+  }: {
+    recordingSid: string;
+    callbackUrl: string;
+  }): Promise<{ transcriptionRef: string }> {
+    const configurationId = await this.transcriptionConfigurationFor(callbackUrl);
+    const created = await this.requestJson<{ transcription?: { id?: string }; id?: string }>(
+      "POST",
+      "/v3/Transcriptions",
+      transcriptionRequestBody(configurationId, recordingSid),
+    );
+    const transcriptionRef = created.transcription?.id ?? created.id;
+    if (!transcriptionRef) {
+      throw new TwilioApiError(502, "/v3/Transcriptions", "the reply names no transcription id");
+    }
+    return { transcriptionRef };
+  }
+
+  /**
+   * The one configuration our transcriptions use, pointing results at `callbackUrl`: found by
+   * name, made if there isn't one, and updated if it points somewhere else (the API's address
+   * changed with the domain move).
+   */
+  private async transcriptionConfigurationFor(callbackUrl: string): Promise<string> {
+    if (this.transcriptionConfiguration?.callbackUrl === callbackUrl) {
+      return this.transcriptionConfiguration.id;
+    }
+    const listed = await this.requestJson<Record<string, unknown>>(
+      "GET",
+      "/v2/Configurations/Transcription?pageSize=100",
+    );
+    // The reference shows the list's shape only in outline, so the configurations are taken
+    // from whichever top-level field holds the array.
+    const configurations = Object.values(listed).find(Array.isArray) as
+      TranscriptionConfigurationJson[] | undefined;
+    const existing = configurations?.find(
+      (configuration) => configuration.unique_name === TRANSCRIPTION_CONFIGURATION_NAME,
+    );
+    let id: string;
+    if (!existing) {
+      const created = await this.requestJson<TranscriptionConfigurationJson>(
+        "POST",
+        "/v2/Configurations/Transcription",
+        transcriptionConfigurationBody(callbackUrl),
+      );
+      id = created.id;
+    } else {
+      id = existing.id;
+      if (existing.configuration?.transcriptionStatusCallback?.url !== callbackUrl) {
+        await this.requestJson(
+          "PUT",
+          `/v2/Configurations/Transcription/${encodeURIComponent(id)}`,
+          transcriptionConfigurationBody(callbackUrl),
+        );
+      }
+    }
+    this.transcriptionConfiguration = { callbackUrl, id };
+    return id;
+  }
+
+  parseTranscriptionCallback(body: unknown): TranscriptionResult {
+    const parsed = transcriptionCallbackSchema.safeParse(body);
+    if (!parsed.success) {
+      // Field names and codes only: the body holds the transcript, a caller's words.
+      const issues = parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.code}`);
+      throw new TranscriptionCallbackError(
+        `Transcription result not understood: ${issues.join(", ")}`,
+      );
+    }
+    const { id, status, sourceId, duration, sentences, error } = parsed.data;
+    const normalised = status.toLowerCase();
+    const outcome: TranscriptionResult["status"] =
+      normalised === "completed"
+        ? "completed"
+        : ["failed", "error", "canceled", "cancelled"].includes(normalised)
+          ? "failed"
+          : "pending";
+    const texts = (sentences ?? []).map((sentence) => sentence.text.trim()).filter(Boolean);
+    const confidences = (sentences ?? [])
+      .map((sentence) => sentence.confidence)
+      .filter((value): value is number => value !== undefined);
+    return {
+      transcriptionRef: id,
+      recordingSid: sourceId ?? null,
+      status: outcome,
+      text: outcome === "completed" && texts.length > 0 ? texts.join(" ") : null,
+      confidence:
+        confidences.length > 0
+          ? confidences.reduce((sum, value) => sum + value, 0) / confidences.length
+          : null,
+      durationSeconds: duration ?? null,
+      error:
+        outcome === "failed"
+          ? redactText(
+              [error?.code, error?.message].filter((part) => part !== undefined).join(": ") ||
+                normalised,
+            )
+          : null,
+    };
+  }
+
+  verifyJsonWebhook({
+    url,
+    rawBody,
+    signature,
+  }: {
+    url: string;
+    rawBody: Buffer;
+    signature: string | undefined;
+  }): boolean {
+    if (typeof signature !== "string") return false;
+    // Twilio signs a JSON POST over the URL (with the bodySHA256 parameter it adds) and checks the
+    // body against that hash; the SDK does both. Without the parameter there's nothing tying the
+    // signature to these bytes, so it's refused.
+    if (!new URL(url).searchParams.has("bodySHA256")) return false;
+    return twilio.validateRequestWithBody(
+      this.options.authToken,
+      signature,
+      url,
+      rawBody.toString("utf8"),
+    );
   }
 
   async searchNumbers({ contains, limit = 10 }: NumberSearch): Promise<AvailableNumber[]> {
@@ -330,6 +531,27 @@ export class TwilioTelephonyProvider implements TelephonyProvider {
     // HMAC-SHA1 over the exact public URL plus the sorted form parameters, keyed with the
     // auth token. Twilio's SDK keeps up with their parameter changes.
     return twilio.validateRequest(this.options.authToken, signature, url, params);
+  }
+
+  /** The Batch Transcription API: JSON both ways, on its own host. */
+  private async requestJson<T = unknown>(method: string, path: string, body?: object): Promise<T> {
+    const credentials = Buffer.from(
+      `${this.options.accountSid}:${this.options.authToken}`,
+    ).toString("base64");
+    const response = await (this.options.fetch ?? fetch)(`${VOICE_API}${path}`, {
+      method,
+      headers: {
+        Authorization: `Basic ${credentials}`,
+        Accept: "application/json",
+        ...(body && { "Content-Type": "application/json" }),
+      },
+      ...(body && { body: JSON.stringify(body) }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) {
+      throw new TwilioApiError(response.status, path, (await response.text()).slice(0, 300));
+    }
+    return response.status === 204 ? (undefined as T) : ((await response.json()) as T);
   }
 
   private async request<T = unknown>(

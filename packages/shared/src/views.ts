@@ -309,6 +309,33 @@ export interface KillSwitchView {
   killSwitchOn: boolean;
 }
 
+/**
+ * GET and PUT /api/admin/voicemail-transcription (decision 022): the switch, the price, and what
+ * the last 30 days' voicemails would cost (or did cost) to transcribe.
+ */
+export interface VoicemailTranscriptionView {
+  on: boolean;
+  /** The provider's price per minute in US dollars, our pounds-per-dollar rate, and the result in whole pence. */
+  price: { perMinuteUsd: string; gbpPerUsd: string; perMinutePence: number };
+  /** Every fallback voicemail left in the last 30 days, whatever the switch was at the time. */
+  last30Days: {
+    voicemails: number;
+    /** Long enough to transcribe: the provider skips recordings under 2 seconds. */
+    transcribable: number;
+    /** The transcribable ones' length, each rounded up to whole minutes. */
+    minutes: number;
+    /** What transcribing every transcribable one would have cost, in whole pence. */
+    wouldCostPence: number;
+    /** The ones actually asked for (the switch was on), and how they went. */
+    asked: number;
+    waiting: number;
+    transcribed: number;
+    failed: number;
+    /** The estimated cost of the ones asked for, in whole pence. */
+    spentPence: number;
+  };
+}
+
 /** One call in GET /api/admin/review-queue: a call the pipeline flagged, with its business. */
 export interface FlaggedCallView extends CallSummaryView {
   tenant: { id: string; businessName: string };
@@ -354,6 +381,8 @@ export interface CostRowView {
     texts: number;
     phoneMinutes: number;
     number: number;
+    /** Voicemails transcribed while the switch was on (decision 022). */
+    transcription: number;
     total: number;
   };
 }

@@ -1,7 +1,9 @@
 import type pg from "pg";
+import { TRANSCRIPT_WAIT_SECONDS } from "../core/voicemail-transcription.ts";
 import type { EnqueueOnboarding } from "../jobs/onboarding.ts";
 import { noteTestCall } from "./onboarding.ts";
 import type { EnqueueNotifications } from "../jobs/enqueue-notifications.ts";
+import type { EnqueueTranscription } from "../jobs/transcribe-voicemail.ts";
 import { findTenantIdByNumber } from "./cross-tenant.ts";
 import { withTenant } from "./tenant.ts";
 
@@ -31,6 +33,8 @@ export async function storeFallbackVoicemail(
   enqueueNotifications?: EnqueueNotifications,
   /** Takes a business live after its test call (BUILD_PLAN Step 11). */
   enqueueOnboarding?: EnqueueOnboarding,
+  /** Asks for the recording's transcript when the switch is on (decision 022). */
+  enqueueTranscription?: EnqueueTranscription,
 ): Promise<StoreVoicemailResult> {
   const tenantId = await findTenantIdByNumber(pool, voicemail.to);
   if (tenantId === null) return { outcome: "unknown-number", tenantId: null };
@@ -56,8 +60,22 @@ export async function storeFallbackVoicemail(
     );
     const callId = result.rows[0]?.id;
     if (callId === undefined) return false;
+    // With transcription on, the words come back in seconds: the "new voicemail" text and email
+    // wait a little for them, so the tradesperson gets the summary in one message.
+    const transcribing =
+      (await enqueueTranscription?.(client, {
+        tenantId,
+        callId,
+        durationSeconds: voicemail.durationSeconds,
+        recordingUrl: voicemail.recordingUrl,
+      })) ?? false;
     // The "new voicemail" text, committed with the row (BUILD_PLAN Step 6).
-    await enqueueNotifications?.(client, { tenantId, callId, urgency: null });
+    await enqueueNotifications?.(client, {
+      tenantId,
+      callId,
+      urgency: null,
+      ...(transcribing && { startAfterSeconds: TRANSCRIPT_WAIT_SECONDS }),
+    });
     // A business still onboarding gets the fallback voicemail, so this is where its test call lands.
     if (await noteTestCall(client, tenantId)) {
       await enqueueOnboarding?.({ tenantId, action: "go-live" }, client);

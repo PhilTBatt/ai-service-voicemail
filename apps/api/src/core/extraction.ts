@@ -51,13 +51,22 @@ export interface ExtractionContext {
   tradespersonName: string;
   /** The caller ID in E.164, when known: what "this number" means in the transcript. */
   callerNumber?: string | null;
+  /**
+   * A call the assistant answered (the default), or a voicemail left when it couldn't
+   * (decision 022): one speaker, nothing asked, read back or confirmed.
+   */
+  kind?: "call" | "voicemail";
 }
 
 export function buildExtractionPrompt(
   transcript: TranscriptTurn[],
-  { businessName, tradespersonName, callerNumber }: ExtractionContext,
+  { businessName, tradespersonName, callerNumber, kind = "call" }: ExtractionContext,
 ): { system: string; user: string } {
-  const system = `You read transcripts of phone calls answered by an AI assistant on behalf of ${businessName}, a UK trade business run by ${tradespersonName}, and extract what ${tradespersonName} needs in order to call the customer back.
+  const opening =
+    kind === "voicemail"
+      ? `You read transcripts of voicemails left for ${businessName}, a UK trade business run by ${tradespersonName}, when its AI assistant couldn't answer the call, and extract what ${tradespersonName} needs in order to call the customer back. A voicemail is the caller alone: nothing was asked, read back or confirmed, so a name, number or postcode is only what the caller chose to leave, and a half-said one stays null.`
+      : `You read transcripts of phone calls answered by an AI assistant on behalf of ${businessName}, a UK trade business run by ${tradespersonName}, and extract what ${tradespersonName} needs in order to call the customer back.`;
+  const system = `${opening}
 
 Rules:
 - Use only what the caller actually said. Never guess a name, number or postcode; use null when it wasn't given or was unclear.
@@ -78,7 +87,7 @@ ${URGENCY_RULES}
   const lines = transcript.map(
     (turn) => `${turn.role === "agent" ? "Assistant" : "Caller"}: ${turn.text}`,
   );
-  const user = `Transcript:\n\n${lines.join("\n")}`;
+  const user = `${kind === "voicemail" ? "Voicemail transcript" : "Transcript"}:\n\n${lines.join("\n")}`;
   return { system, user };
 }
 

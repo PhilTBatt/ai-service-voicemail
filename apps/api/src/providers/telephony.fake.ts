@@ -1,6 +1,8 @@
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { z } from "zod";
 import {
   PurchaseNotAllowedError,
+  TranscriptionCallbackError,
   type AvailableNumber,
   type CallDetails,
   type NumberConfiguration,
@@ -10,8 +12,19 @@ import {
   type RecordingAudio,
   type RecordingSummary,
   type TelephonyProvider,
+  type TranscriptionResult,
   type WebhookRequest,
 } from "./telephony.ts";
+
+/** The fake's result webhook, in Twilio's field names so route tests read like the real thing. */
+const fakeTranscriptionCallbackSchema = z.object({
+  id: z.string().min(1),
+  status: z.enum(["completed", "failed", "pending"]),
+  sourceId: z.string().optional(),
+  duration: z.number().optional(),
+  sentences: z.array(z.object({ text: z.string(), confidence: z.number().optional() })).optional(),
+  error: z.object({ message: z.string() }).optional(),
+});
 
 /**
  * An in-memory TelephonyProvider for tests. Its stock of numbers is Ofcom's drama range, it
@@ -41,10 +54,70 @@ export class FakeTelephonyProvider implements TelephonyProvider {
   readonly deletedCalls: string[] = [];
   /** Recording URLs whose stream breaks after the first chunk, for robustness tests. */
   readonly brokenRecordings = new Set<string>();
+  /** Every transcription asked for, in order (decision 022). */
+  readonly transcriptionRequests: { recordingSid: string; callbackUrl: string }[] = [];
+  /** When set, requestTranscription fails with this, for retry tests. */
+  transcriptionError: Error | null = null;
   private readonly purchasesEnabled: boolean;
 
   constructor({ purchasesEnabled = true }: { purchasesEnabled?: boolean } = {}) {
     this.purchasesEnabled = purchasesEnabled;
+  }
+
+  requestTranscription(input: { recordingSid: string; callbackUrl: string }) {
+    if (this.transcriptionError) return Promise.reject(this.transcriptionError);
+    this.transcriptionRequests.push(input);
+    return Promise.resolve({
+      transcriptionRef: `fake_transcription_${this.transcriptionRequests.length}`,
+    });
+  }
+
+  parseTranscriptionCallback(body: unknown): TranscriptionResult {
+    const parsed = fakeTranscriptionCallbackSchema.safeParse(body);
+    if (!parsed.success)
+      throw new TranscriptionCallbackError("Transcription result not understood");
+    const { id, status, sourceId, duration, sentences, error } = parsed.data;
+    const texts = (sentences ?? []).map((sentence) => sentence.text.trim()).filter(Boolean);
+    const confidences = (sentences ?? []).flatMap((sentence) =>
+      sentence.confidence === undefined ? [] : [sentence.confidence],
+    );
+    return {
+      transcriptionRef: id,
+      recordingSid: sourceId ?? null,
+      status,
+      text: status === "completed" && texts.length > 0 ? texts.join(" ") : null,
+      confidence:
+        confidences.length > 0
+          ? confidences.reduce((sum, value) => sum + value, 0) / confidences.length
+          : null,
+      durationSeconds: duration ?? null,
+      error: status === "failed" ? (error?.message ?? "failed") : null,
+    };
+  }
+
+  verifyJsonWebhook({
+    url,
+    rawBody,
+    signature,
+  }: {
+    url: string;
+    rawBody: Buffer;
+    signature: string | undefined;
+  }): boolean {
+    if (typeof signature !== "string") return false;
+    const expected = this.signJson(url, rawBody);
+    return (
+      signature.length === expected.length &&
+      timingSafeEqual(Buffer.from(signature), Buffer.from(expected))
+    );
+  }
+
+  /** Signs a JSON webhook as the provider would: a digest over the URL and the exact bytes. */
+  signJson(url: string, rawBody: Buffer | string): string {
+    return createHmac("sha1", this.signingKey)
+      .update(url)
+      .update(typeof rawBody === "string" ? Buffer.from(rawBody) : rawBody)
+      .digest("base64");
   }
 
   numberPrices(): Promise<NumberPrice[]> {

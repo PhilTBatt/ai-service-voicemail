@@ -90,7 +90,7 @@ export async function runNotifySms(
   const parsed = storedFieldsSchema.safeParse(call.extracted_fields);
   const fields = parsed.success ? parsed.data : {};
   let text: { body: string; segments: number };
-  if (call.via_fallback) {
+  if (call.via_fallback && call.summary === null) {
     // A voicemail: the recording's length is stored with the call (voicemails aren't billed).
     text = voicemailSms({
       callbackNumber: call.caller_number,
@@ -98,6 +98,7 @@ export async function runNotifySms(
       callUrl,
     });
   } else {
+    // A call's summary, or a voicemail's once its transcript has been summarised (decision 022).
     text = callSms({
       urgency: call.urgency,
       callerName: fields.callerName ?? null,
@@ -105,6 +106,7 @@ export async function runNotifySms(
       postcode: fields.postcode ?? null,
       summary: call.summary ?? "",
       callUrl,
+      viaVoicemail: call.via_fallback,
     });
   }
 

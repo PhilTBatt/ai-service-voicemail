@@ -30,6 +30,7 @@ export const ALERTS = [
   "server-error-spike",
   "scheduled-job-overdue",
   "voice-webhook-unreadable",
+  "voicemail-transcription-failed",
 ] as const;
 
 export type AlertName = (typeof ALERTS)[number];

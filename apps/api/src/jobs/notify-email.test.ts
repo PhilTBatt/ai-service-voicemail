@@ -152,6 +152,29 @@ describe("runNotifyEmail", () => {
     expect(message!.text).not.toContain("Transcript");
   });
 
+  // Decision 022: a voicemail whose transcript has been summarised gets the call email, marked
+  // as a voicemail, with the transcript and the recording.
+  it("sends the summary email, marked as a voicemail, once a voicemail has been transcribed", async () => {
+    const { tenantId, callId } = await makeCall("voicemail");
+    await admin.query(
+      `UPDATE calls SET transcript = 'caller: It''s Sam, no hot water since this morning.',
+                        summary = 'No hot water since this morning.', urgency = 'urgent',
+                        extracted_fields = extracted_fields || '{"callerName": "Sam", "callbackNumber": "+447700900123", "postcode": "XQ12 3JL"}'
+       WHERE id = $1`,
+      [callId],
+    );
+    const d = deps();
+    expect(await runNotifyEmail(d, { tenantId, callId })).toBe("sent");
+    const [message] = d.email.sent;
+    expect(message!.subject).toBe(
+      "URGENT voicemail: Sam, 07700 900123 - No hot water since this morning.",
+    );
+    expect(message!.text).toContain("the caller left a voicemail");
+    expect(message!.text).toContain("Caller: It's Sam, no hot water since this morning.");
+    expect(message!.text).toContain("Recording: https://callmate.example.com/c/");
+    expect(message!.text).not.toContain("New voicemail");
+  });
+
   it("blocks an address that isn't on the allowlist outside production", async () => {
     const { tenantId, callId } = await makeCall("agent", { email: "someone@else.example" });
     const d = deps();

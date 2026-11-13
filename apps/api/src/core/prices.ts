@@ -20,6 +20,14 @@ export const TWILIO_PRICES_GBP = {
  */
 export const TWILIO_SIP_PER_MINUTE_USD = "0.004";
 
+/**
+ * Twilio's Batch Transcription, per minute, in dollars: "Batch Transcription $0.024 / min" on
+ * https://www.twilio.com/en-us/voice/pricing/us ("current as of October 2026", read 2026-11-11).
+ * The page doesn't say how it rounds, so each voicemail is counted as whole minutes, up
+ * (decision 022). Only spent while the voicemail transcription switch is on.
+ */
+export const TWILIO_TRANSCRIPTION_PER_MINUTE_USD = "0.024";
+
 /** Pounds per US dollar, for the costs billed in dollars. Deliberately on the high side. */
 export const GBP_PER_USD = "0.8";
 
@@ -38,6 +46,8 @@ export interface CostPrices {
   inboundCallPerMinuteGbp: string;
   sipPerMinuteUsd: string;
   localNumberPerMonthGbp: string;
+  /** Transcribing a voicemail, per minute, in dollars (decision 022). */
+  transcriptionPerMinuteUsd: string;
   /** Model name → US dollars per million tokens. */
   models: Record<string, { input: number; output: number }>;
 }
@@ -48,6 +58,7 @@ export const CURRENT_PRICES: CostPrices = {
   inboundCallPerMinuteGbp: TWILIO_PRICES_GBP.inboundCallPerMinute,
   sipPerMinuteUsd: TWILIO_SIP_PER_MINUTE_USD,
   localNumberPerMonthGbp: TWILIO_PRICES_GBP.localNumberPerMonth,
+  transcriptionPerMinuteUsd: TWILIO_TRANSCRIPTION_PER_MINUTE_USD,
   models: MODEL_PRICES_USD_PER_MTOK,
 };
 
@@ -71,6 +82,7 @@ export function describePrices(prices: CostPrices): string[] {
     `Texts: £${prices.smsSegmentGbp} a segment (Twilio, this account, 7 Nov 2026).`,
     `Phone minutes: each call rounded up to whole minutes, at £${prices.inboundCallPerMinuteGbp} a minute for the incoming call, plus $${prices.sipPerMinuteUsd} a minute for the leg to the voice platform when the assistant answered.`,
     `Number: £${prices.localNumberPerMonthGbp} a month for a local number.`,
+    `Transcription: voicemails transcribed while the switch is on (Admin, Overview), each counted as whole minutes, at $${prices.transcriptionPerMinuteUsd} a minute (Twilio's US price page, Oct 2026).`,
     "Email isn't counted: Postmark's free 100 a month covers it for now.",
   ];
 }

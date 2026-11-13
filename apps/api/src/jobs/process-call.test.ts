@@ -383,13 +383,57 @@ describe("runProcessCall", () => {
     expect(llm.requests).toHaveLength(1);
   });
 
-  it("has nothing to extract from a fallback voicemail", async () => {
+  it("has nothing to extract from a fallback voicemail that hasn't been transcribed", async () => {
     const { tenantId, callId } = await makeCall({ transcript: null, viaFallback: true });
     const llm = new FakeLlmProvider();
     expect(
       await runProcessCall({ pool: app, llm }, { tenantId, callId, providerCallId: "x" }),
     ).toBe("no-transcript");
     expect(llm.requests).toHaveLength(0);
+  });
+
+  // Voicemail transcription (decision 022): the words come back as one caller turn, and the
+  // voicemail then gets a summary, an urgency and its messages like a call.
+  it("summarises a transcribed voicemail with the voicemail prompt, keeping the recording's length", async () => {
+    const { tenantId, callId } = await makeCall({
+      transcript: "caller: It's Sam, I can smell gas by the boiler. 07700 900123, XQ12 3JL.",
+      viaFallback: true,
+    });
+    await admin.query(
+      `UPDATE calls SET extracted_fields = '{"recordingSeconds": 42}', outcome = 'voicemail' WHERE id = $1`,
+      [callId],
+    );
+    const queued: { urgency: string | null }[] = [];
+    const llm = new FakeLlmProvider().willReturn(GOOD);
+    expect(
+      await runProcessCall(
+        {
+          pool: app,
+          llm,
+          enqueueNotifications: (_client, call) => {
+            queued.push(call);
+            return Promise.resolve();
+          },
+        },
+        { tenantId, callId, providerCallId: "x" },
+      ),
+    ).toBe("extracted");
+    expect(llm.requests[0]?.system).toContain(
+      "transcripts of voicemails left for Extract Plumbing",
+    );
+    expect(llm.requests[0]?.user).toBe(
+      "Voicemail transcript:\n\nCaller: It's Sam, I can smell gas by the boiler. 07700 900123, XQ12 3JL.",
+    );
+    expect(await callRow(tenantId, callId)).toMatchObject({
+      summary: GOOD.jobSummary,
+      urgency: "emergency",
+      extracted_fields: expect.objectContaining({
+        recordingSeconds: 42,
+        callerName: "Sam",
+      }) as unknown,
+    });
+    // No agent spoke a script, so no early emergency texts: the one enqueue carries the verdict.
+    expect(queued).toEqual([{ tenantId, callId, urgency: "emergency" }]);
   });
 
   // An agent call with no words in it (the caller rang off at once, or the platform sent no

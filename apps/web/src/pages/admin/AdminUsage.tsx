@@ -77,6 +77,7 @@ const COST_COLUMNS: { label: string; pick: (row: CostRowView) => number }[] = [
   { label: "Texts", pick: (row) => row.pence.texts },
   { label: "Phone minutes", pick: (row) => row.pence.phoneMinutes },
   { label: "Number", pick: (row) => row.pence.number },
+  { label: "Transcription", pick: (row) => row.pence.transcription },
   { label: "Total", pick: (row) => row.pence.total },
 ];
 

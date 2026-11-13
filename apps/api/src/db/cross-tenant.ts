@@ -242,6 +242,114 @@ export async function healthSnapshot(
   };
 }
 
+/** The voicemail transcription switch and the figures behind the Admin page's estimate (decision 022). */
+export interface VoicemailTranscriptionSnapshot {
+  on: boolean;
+  /** The provider's per-minute price in whole pence, at our exchange rate. */
+  perMinutePence: number;
+  voicemails: number;
+  transcribable: number;
+  minutes: number;
+  wouldCostPence: number;
+  asked: number;
+  waiting: number;
+  transcribed: number;
+  failed: number;
+  spentPence: number;
+}
+
+/**
+ * The last window's fallback voicemails and what transcribing them costs or would cost: each one
+ * counted as whole minutes, rounded up, at the provider's per-minute dollar price and our
+ * pounds-per-dollar rate, summed exactly in the database and rounded to pence once (CLAUDE.md:
+ * no money in floating point).
+ */
+export async function voicemailTranscriptionSnapshot(
+  admin: AdminPool,
+  { since, minSeconds }: { since: Date; minSeconds: number },
+  prices: Pick<CostPrices, "transcriptionPerMinuteUsd" | "gbpPerUsd">,
+): Promise<VoicemailTranscriptionSnapshot> {
+  const { rows } = await admin.query<{
+    on: boolean;
+    per_minute_pence: number;
+    voicemails: number;
+    transcribable: number;
+    minutes: number;
+    would_cost_pence: number;
+    asked: number;
+    waiting: number;
+    transcribed: number;
+    failed: number;
+    spent_pence: number;
+  }>(
+    `WITH v AS (
+       SELECT transcription_status, transcription_ref,
+              coalesce((extracted_fields ->> 'recordingSeconds')::numeric, 0) AS seconds
+       FROM calls WHERE via_fallback AND started_at >= $1
+     ),
+     m AS (
+       SELECT count(*)::int AS voicemails,
+              count(*) FILTER (WHERE seconds >= $2)::int AS transcribable,
+              coalesce(sum(ceil(seconds / 60)) FILTER (WHERE seconds >= $2), 0) AS minutes,
+              count(*) FILTER (WHERE transcription_ref IS NOT NULL)::int AS asked,
+              count(*) FILTER (WHERE transcription_status = 'requested')::int AS waiting,
+              count(*) FILTER (WHERE transcription_status = 'completed')::int AS transcribed,
+              count(*) FILTER (WHERE transcription_status = 'failed')::int AS failed,
+              coalesce(sum(ceil(seconds / 60)) FILTER (WHERE transcription_ref IS NOT NULL), 0) AS asked_minutes
+       FROM v
+     )
+     SELECT (SELECT voicemail_transcription_on FROM system_settings) AS "on",
+            round($3::numeric * $4::numeric * 100)::int AS per_minute_pence,
+            m.voicemails, m.transcribable, m.minutes::int AS minutes,
+            round(m.minutes * $3::numeric * $4::numeric * 100)::int AS would_cost_pence,
+            m.asked, m.waiting, m.transcribed, m.failed,
+            round(m.asked_minutes * $3::numeric * $4::numeric * 100)::int AS spent_pence
+     FROM m`,
+    [since, minSeconds, prices.transcriptionPerMinuteUsd, prices.gbpPerUsd],
+  );
+  const row = rows[0]!;
+  return {
+    on: row.on,
+    perMinutePence: row.per_minute_pence,
+    voicemails: row.voicemails,
+    transcribable: row.transcribable,
+    minutes: row.minutes,
+    wouldCostPence: row.would_cost_pence,
+    asked: row.asked,
+    waiting: row.waiting,
+    transcribed: row.transcribed,
+    failed: row.failed,
+    spentPence: row.spent_pence,
+  };
+}
+
+/** Flips the voicemail transcription switch (decision 022) and audits who did it. */
+export async function setVoicemailTranscription(
+  admin: AdminPool,
+  on: boolean,
+  actorUserId: string,
+): Promise<void> {
+  const client = await admin.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("UPDATE system_settings SET voicemail_transcription_on = $1", [on]);
+    await client.query(
+      "INSERT INTO audit_log (tenant_id, actor_user_id, action, details) VALUES (NULL, $1, $2, $3)",
+      [
+        actorUserId,
+        on ? "voicemail-transcription.on" : "voicemail-transcription.off",
+        { via: "dashboard" },
+      ],
+    );
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 /** Flips the kill switch (core/routing.ts reads it on every call) and audits who did it. */
 export async function setKillSwitch(
   admin: AdminPool,
@@ -515,6 +623,8 @@ export interface TenantCostEstimate {
     texts: number;
     phoneMinutes: number;
     number: number;
+    /** Voicemails transcribed while the switch was on (decision 022). */
+    transcription: number;
     total: number;
   };
 }
@@ -552,6 +662,7 @@ export async function estimateCosts(
     texts: number;
     phone_minutes: number;
     number: number;
+    transcription: number;
   }>(
     `WITH period_calls AS (
        SELECT id, tenant_id, via_fallback,
@@ -585,7 +696,10 @@ export async function estimateCosts(
                          WHERE pc.tenant_id = t.id AND NOT pc.via_fallback), 0)
                * $6::numeric * $3::numeric * 100)::int AS phone_minutes,
        CASE WHEN EXISTS (SELECT 1 FROM phone_numbers p WHERE p.tenant_id = t.id AND p.status = 'active')
-            THEN round($7::numeric * 100)::int ELSE 0 END AS number
+            THEN round($7::numeric * 100)::int ELSE 0 END AS number,
+       round(coalesce((SELECT sum(ceil(c.units / 60)) FROM costs c
+                       WHERE c.tenant_id = t.id AND c.component = 'twilio:transcription_seconds'), 0)
+             * $11::numeric * $3::numeric * 100)::int AS transcription
      FROM tenants t
      ORDER BY t.business_name`,
     [
@@ -597,6 +711,7 @@ export async function estimateCosts(
       prices.sipPerMinuteUsd,
       prices.localNumberPerMonthGbp,
       ...modelArgs,
+      prices.transcriptionPerMinuteUsd,
     ],
   );
   const unpriced = await admin.query<{ component: string }>(
@@ -621,7 +736,14 @@ export async function estimateCosts(
         texts: row.texts,
         phoneMinutes: row.phone_minutes,
         number: row.number,
-        total: row.voice_platform + row.language_model + row.texts + row.phone_minutes + row.number,
+        transcription: row.transcription,
+        total:
+          row.voice_platform +
+          row.language_model +
+          row.texts +
+          row.phone_minutes +
+          row.number +
+          row.transcription,
       },
     })),
     unpriced: unpriced.rows.map((row) => row.component),

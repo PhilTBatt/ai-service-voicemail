@@ -105,6 +105,8 @@ function expectedQueues(on: ReadonlySet<Group>): string[] {
     ...(has("admin", "payments") ? [queue.CHARGE_PERIODS_QUEUE] : []),
     ...(has("admin") ? [queue.RECONCILE_CALLS_QUEUE] : []),
     ...(has("twilio") ? [queue.RECONCILE_VOICEMAILS_QUEUE] : []),
+    // Voicemail transcription (decision 022): the result webhook needs the API's address.
+    ...(has("twilio", "publicUrl") ? [queue.TRANSCRIBE_VOICEMAIL_QUEUE] : []),
     ...(has("twilio", "admin") ? [queue.RETENTION_QUEUE] : []),
   ].sort();
 }

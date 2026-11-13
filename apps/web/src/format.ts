@@ -15,6 +15,11 @@ export function formatPence(pence: number): string {
   return `${sign}£${Math.floor(whole / 100)}.${String(whole % 100).padStart(2, "0")}`;
 }
 
+/** Small amounts as people say them: "2p", "45p"; a pound or more as formatPence writes it. */
+export function formatPenceWords(pence: number): string {
+  return Math.abs(pence) < 100 ? `${pence}p` : formatPence(pence);
+}
+
 const DIRECT_DEBIT_LABELS: Record<TenantListItem["billing"]["directDebit"], string> = {
   none: "no Direct Debit",
   pending: "Direct Debit started",

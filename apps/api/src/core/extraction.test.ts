@@ -112,6 +112,31 @@ describe("buildExtractionPrompt", () => {
   });
 });
 
+// A transcribed voicemail (decision 022) has one speaker and nothing confirmed.
+describe("buildExtractionPrompt for a voicemail", () => {
+  it("says it's a voicemail, that nothing was asked or read back, and labels the transcript so", () => {
+    const transcript = [{ role: "caller" as const, text: "It's Sam, boiler's gone." }];
+    const { system, user } = buildExtractionPrompt(transcript, {
+      businessName: "Ant's Plumbing",
+      tradespersonName: "Ant",
+      kind: "voicemail",
+    });
+    expect(system).toContain("transcripts of voicemails left for Ant's Plumbing");
+    expect(system).toContain("nothing was asked, read back or confirmed");
+    expect(system).toContain(URGENCY_RULES);
+    expect(user).toBe("Voicemail transcript:\n\nCaller: It's Sam, boiler's gone.");
+  });
+
+  it("is the call prompt by default", () => {
+    const { system, user } = buildExtractionPrompt([], {
+      businessName: "B",
+      tradespersonName: "Ant",
+    });
+    expect(system).toContain("transcripts of phone calls answered by an AI assistant");
+    expect(user).toBe("Transcript:\n\n");
+  });
+});
+
 describe("buildExtractionPrompt with the caller ID", () => {
   it('tells the model what "this number" means, and says nothing when the number was withheld', () => {
     const transcript = [{ role: "caller" as const, text: "Yes, this number's fine." }];

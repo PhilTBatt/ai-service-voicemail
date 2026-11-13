@@ -19,6 +19,7 @@ import {
   type ProvisionedNumberView,
   type ReviewQueueView,
   type TenantView,
+  type VoicemailTranscriptionView,
 } from "@callmate/shared";
 import type { PgBoss } from "pg-boss";
 import { createApp } from "../app.ts";
@@ -333,6 +334,13 @@ describe("authorisation matrix", () => {
     },
     { name: "GET /admin/health", path: "/admin/health" },
     { name: "PUT /admin/kill-switch", path: "/admin/kill-switch", body: {} },
+    { name: "GET /admin/voicemail-transcription", path: "/admin/voicemail-transcription" },
+    // An empty body: refused (400) even for the admin, so the matrix never flips the switch.
+    {
+      name: "PUT /admin/voicemail-transcription",
+      path: "/admin/voicemail-transcription",
+      body: {},
+    },
     { name: "GET /admin/review-queue", path: "/admin/review-queue" },
     // A call that doesn't exist: 404 even for the admin, so the matrix marks nothing reviewed.
     {
@@ -422,6 +430,8 @@ describe("authorisation matrix", () => {
       default: "allowed",
       "GET /admin/health": 403,
       "PUT /admin/kill-switch": 403,
+      "GET /admin/voicemail-transcription": 403,
+      "PUT /admin/voicemail-transcription": 403,
       "GET /admin/review-queue": 403,
       "POST /admin/calls/:id/reviewed": 403,
       "GET /admin/usage": 403,
@@ -1879,6 +1889,69 @@ describe("admin screens", () => {
       overdue: false,
     });
     for (const job of health.scheduledJobs) expect(typeof job.overdue).toBe("boolean");
+  });
+
+  // Voicemail transcription (decision 022): off until the admin turns it on, with the cost shown.
+  it("flips voicemail transcription, says who did it, and shows what the last 30 days would cost", async () => {
+    try {
+      const before = await json<VoicemailTranscriptionView>(
+        get("/admin/voicemail-transcription", tokens.admin),
+      );
+      expect(before.on).toBe(false);
+      // $0.024 a minute at £0.80 to the dollar: 1.92p, shown as 2p.
+      expect(before.price).toEqual({ perMinuteUsd: "0.024", gbpPerUsd: "0.8", perMinutePence: 2 });
+
+      // A 42-second voicemail left today: one whole minute, about 2p; and one too short to count.
+      for (const seconds of [42, 1]) {
+        await admin.query(
+          `INSERT INTO calls (tenant_id, provider_call_id, caller_number, started_at, ended_at,
+                              billable_seconds, outcome, via_fallback, extracted_fields)
+           VALUES ($1, $2, '+447700900123', now() - interval '1 minute', now(), 0, 'voicemail', true, $3)`,
+          [
+            tenantA,
+            `CA${randomUUID().replace(/-/g, "")}`,
+            JSON.stringify({ recordingSeconds: seconds }),
+          ],
+        );
+      }
+      const on = await json<VoicemailTranscriptionView>(
+        send("PUT", "/admin/voicemail-transcription", { on: true }, tokens.admin),
+      );
+      expect(on.on).toBe(true);
+      expect(on.last30Days.voicemails).toBeGreaterThanOrEqual(2);
+      expect(on.last30Days.transcribable).toBeGreaterThanOrEqual(1);
+      expect(on.last30Days.transcribable).toBeLessThan(on.last30Days.voicemails);
+      expect(on.last30Days.minutes).toBeGreaterThanOrEqual(1);
+      expect(on.last30Days.wouldCostPence).toBeGreaterThanOrEqual(2);
+      // Each transcribable voicemail is at least a minute, and the minutes are priced exactly:
+      // $0.024 at £0.80 is 1.92p a minute, rounded to whole pence once at the end.
+      expect(on.last30Days.minutes).toBeGreaterThanOrEqual(on.last30Days.transcribable);
+      expect(on.last30Days.wouldCostPence).toBe(Math.round(on.last30Days.minutes * 1.92));
+      expect(
+        (
+          await app.query<{ on: boolean }>(
+            'SELECT voicemail_transcription_on AS "on" FROM system_settings',
+          )
+        ).rows[0]!.on,
+      ).toBe(true);
+      const audit = await admin.query<{ action: string; actor_user_id: string | null }>(
+        "SELECT action, actor_user_id FROM audit_log WHERE action LIKE 'voicemail-transcription.%' ORDER BY created_at DESC LIMIT 1",
+      );
+      expect(audit.rows[0]).toMatchObject({ action: "voicemail-transcription.on" });
+      expect(audit.rows[0]!.actor_user_id).not.toBeNull();
+      expect(
+        (await send("PUT", "/admin/voicemail-transcription", { on: "yes" }, tokens.admin)).status,
+      ).toBe(400);
+    } finally {
+      await send("PUT", "/admin/voicemail-transcription", { on: false }, tokens.admin);
+    }
+    expect(
+      (
+        await app.query<{ on: boolean }>(
+          'SELECT voicemail_transcription_on AS "on" FROM system_settings',
+        )
+      ).rows[0]!.on,
+    ).toBe(false);
   });
 
   it("flips the kill switch and says who did it", async () => {

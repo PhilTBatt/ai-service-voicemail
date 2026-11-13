@@ -7,6 +7,7 @@ import { logger } from "../logger.ts";
 import type { TelephonyProvider } from "../providers/telephony.ts";
 import type { EnqueueNotifications } from "./enqueue-notifications.ts";
 import type { EnqueueOnboarding } from "./onboarding.ts";
+import type { EnqueueTranscription } from "./transcribe-voicemail.ts";
 
 export interface ReconcileDeps {
   pool: pg.Pool;
@@ -15,6 +16,8 @@ export interface ReconcileDeps {
   enqueueNotifications?: EnqueueNotifications;
   /** Takes a business live after its test call (Step 11). */
   enqueueOnboarding?: EnqueueOnboarding;
+  /** Asks for each stored voicemail's transcript when the switch is on (decision 022). */
+  enqueueTranscription?: EnqueueTranscription;
   now?: () => Date;
   lookbackHours?: number;
 }
@@ -32,6 +35,7 @@ export async function reconcileVoicemails({
   telephony,
   enqueueNotifications,
   enqueueOnboarding,
+  enqueueTranscription,
   now = () => new Date(),
   lookbackHours = 24,
 }: ReconcileDeps): Promise<ReconcileCounts> {
@@ -64,6 +68,7 @@ export async function reconcileVoicemails({
       },
       enqueueNotifications,
       enqueueOnboarding,
+      enqueueTranscription,
     );
     if (outcome === "stored") counts.stored += 1;
     else if (outcome === "duplicate") counts.duplicate += 1;

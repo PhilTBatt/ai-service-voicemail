@@ -17,6 +17,7 @@ import type {
   SuspensionView,
   UndoCancellationView,
   UsageView,
+  VoicemailTranscriptionView,
 } from "@callmate/shared";
 import { ONBOARDING_STATES } from "@callmate/shared";
 import { Router } from "express";
@@ -27,6 +28,7 @@ import type { AlertFn } from "../alerts.ts";
 import { releaseDueAt } from "../core/offboarding.ts";
 import { CURRENT_PRICES, describePrices, poundsToPence } from "../core/prices.ts";
 import { startOfUkDate, usagePeriodFor } from "../core/usage.ts";
+import { TRANSCRIBABLE_MIN_SECONDS } from "../core/voicemail-transcription.ts";
 import { ukDateOf } from "../core/billing.ts";
 import { collectAgain, setSuspended, undoCancellation } from "../db/billing-actions.ts";
 import {
@@ -46,6 +48,8 @@ import {
   markCallReviewed,
   recordNumberReleased,
   setKillSwitch,
+  setVoicemailTranscription,
+  voicemailTranscriptionSnapshot,
   type AdminPool,
 } from "../db/cross-tenant.ts";
 import { advanceOnboarding, onboardingStatus, setPilot } from "../db/onboarding.ts";
@@ -321,6 +325,40 @@ export function adminRouter({
     }
     await setKillSwitch(admin, body.data.on, principalOf(res).userId);
     res.json({ killSwitchOn: body.data.on } satisfies KillSwitchView);
+  });
+
+  // Voicemail transcription (decision 022): the switch, the price, and what the last 30 days'
+  // voicemails would have cost to transcribe, so the cost can be judged before it's spent.
+  const voicemailTranscriptionView = async (): Promise<VoicemailTranscriptionView> => {
+    const snapshot = await voicemailTranscriptionSnapshot(
+      admin,
+      { since: new Date(now().getTime() - 30 * DAY_MS), minSeconds: TRANSCRIBABLE_MIN_SECONDS },
+      CURRENT_PRICES,
+    );
+    const { on, perMinutePence, ...last30Days } = snapshot;
+    return {
+      on,
+      price: {
+        perMinuteUsd: CURRENT_PRICES.transcriptionPerMinuteUsd,
+        gbpPerUsd: CURRENT_PRICES.gbpPerUsd,
+        perMinutePence,
+      },
+      last30Days,
+    };
+  };
+  router.get("/voicemail-transcription", async (_req, res) => {
+    res.json(await voicemailTranscriptionView());
+  });
+  router.put("/voicemail-transcription", async (req, res) => {
+    const body = switchBody.safeParse(req.body);
+    if (!body.success) {
+      res
+        .status(400)
+        .json({ error: "Invalid body", issues: z.flattenError(body.error).fieldErrors });
+      return;
+    }
+    await setVoicemailTranscription(admin, body.data.on, principalOf(res).userId);
+    res.json(await voicemailTranscriptionView());
   });
 
   // Calls the pipeline flagged for a person to check (a price, a time or safety advice in the

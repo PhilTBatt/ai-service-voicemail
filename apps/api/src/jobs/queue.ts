@@ -37,6 +37,8 @@ export const CHARGE_PERIODS_QUEUE = "charge-periods";
 export const CHARGE_PERIODS_CRON = "0 6 * * *";
 /** Receipts, failed payments and ended Direct Debits, by email (BUILD_PLAN Step 12). */
 export const BILLING_EMAIL_QUEUE = "billing-email";
+/** Asks the provider to transcribe a fallback voicemail, when the switch is on (decision 022). */
+export const TRANSCRIBE_VOICEMAIL_QUEUE = "transcribe-voicemail";
 
 /**
  * pg-boss as the app role, not yet started. Its schema was installed by a migration (decision
@@ -211,6 +213,14 @@ async function ensureQueues(boss: PgBoss): Promise<void> {
     retryLimit: 2,
     retryDelay: 60,
     expireInSeconds: 300,
+    deadLetter: DEAD_LETTER_QUEUE,
+  });
+  await ensureQueue(boss, TRANSCRIBE_VOICEMAIL_QUEUE, {
+    policy: "exclusive", // one request per voicemail queued or running
+    retryLimit: 5,
+    retryDelay: 30,
+    retryBackoff: true,
+    expireInSeconds: 60,
     deadLetter: DEAD_LETTER_QUEUE,
   });
 }

@@ -15,6 +15,11 @@ export interface CallNotificationInput {
   summary: string;
   /** Signed link to the call page (core/signed-links.ts). */
   callUrl: string;
+  /**
+   * The summary is of a voicemail the caller left when the assistant couldn't answer, transcribed
+   * (decision 022): the message says so, since nothing in it was asked or confirmed.
+   */
+  viaVoicemail?: boolean;
 }
 
 export const URGENCY_LABEL: Record<NonNullable<CallNotificationInput["urgency"]>, string> = {
@@ -60,10 +65,11 @@ export function callSms(input: CallNotificationInput): { body: string; segments:
   let postcode = smsField(input.postcode);
   const number = input.callbackNumber ? nationalNumber(input.callbackNumber) : "number withheld";
   let summary = input.summary.split("\n").slice(0, 2).join(" ").trim();
+  const label = `${URGENCY_LABEL[input.urgency ?? "other"]}${input.viaVoicemail ? " (voicemail)" : ""}`;
   const compose = () =>
     toGsm7(
       [
-        `${URGENCY_LABEL[input.urgency ?? "other"]}: ${[name, number, postcode].filter((part) => part !== "").join(", ")}`,
+        `${label}: ${[name, number, postcode].filter((part) => part !== "").join(", ")}`,
         summary,
         ...(input.callbackNumber ? [`Call back: tel:${input.callbackNumber}`] : []),
         `Details: ${input.callUrl}`,
@@ -258,7 +264,9 @@ function link(url: string, label = url): string {
 
 /** The email for an agent-answered call: the text's details, plus the transcript. */
 export function callEmail(input: CallEmailInput): EmailContent {
-  const label = URGENCY_LABEL[input.urgency ?? "other"];
+  const urgencyLabel = URGENCY_LABEL[input.urgency ?? "other"];
+  const label = input.viaVoicemail ? `${urgencyLabel} voicemail` : urgencyLabel;
+  const what = input.viaVoicemail ? "voicemail for" : "call to";
   // One line each, so a line break in what the caller said can't reach the subject, or fake a
   // "Number:" line of its own in the text.
   const callerName = oneLine(input.callerName ?? "") || null;
@@ -273,10 +281,13 @@ export function callEmail(input: CallEmailInput): EmailContent {
   const subject = oneLine(`${label}: ${who}${firstLine ? ` - ${firstLine}` : ""}`).slice(0, 150);
   const when = formatUkDateTime(input.startedAt);
   const speaker = (turn: TranscriptTurn) => (turn.role === "agent" ? "Assistant" : "Caller");
+  const voicemailNote =
+    "The assistant wasn't available, so the caller left a voicemail. This is its transcript, summarised; nothing in it was asked or confirmed.";
 
   const text = [
-    `${label} call to ${input.businessName}`,
+    `${urgencyLabel} ${what} ${input.businessName}`,
     when,
+    ...(input.viaVoicemail ? ["", voicemailNote] : []),
     "",
     `Caller: ${callerName ?? "not given"}`,
     `Number: ${input.callbackNumber ? `${nationalNumber(input.callbackNumber)} (tel:${input.callbackNumber})` : "withheld"}`,
@@ -306,8 +317,9 @@ export function callEmail(input: CallEmailInput): EmailContent {
   const html = htmlDocument(
     subject,
     [
-      `<h1 style="font-size: 20px; margin: 0 0 4px;">${escapeHtml(label)} call to ${escapeHtml(input.businessName)}</h1>`,
+      `<h1 style="font-size: 20px; margin: 0 0 4px;">${escapeHtml(urgencyLabel)} ${what} ${escapeHtml(input.businessName)}</h1>`,
       `<p style="margin: 0; color: #555;">${escapeHtml(when)}</p>`,
+      ...(input.viaVoicemail ? [`<p>${escapeHtml(voicemailNote)}</p>`] : []),
       detailsTable([
         ["Caller", escapeHtml(callerName ?? "not given")],
         [

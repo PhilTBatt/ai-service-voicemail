@@ -37,6 +37,9 @@ const telephony = new FakeTelephonyProvider();
 const voice = new FakeVoiceProvider();
 const enqueueSync = vi.fn(() => Promise.resolve());
 const enqueueNotifications = vi.fn(() => Promise.resolve());
+// Voicemail transcription (decision 022): off unless a test says otherwise.
+const enqueueTranscription = vi.fn(() => Promise.resolve(false));
+const enqueueProcessCall = vi.fn(() => Promise.resolve());
 const alert = vi.fn();
 // Replies only go to mobiles added here; everyone else is blocked by the allowlist.
 const allowlist = parseAllowlist(undefined);
@@ -69,6 +72,8 @@ beforeAll(async () => {
       outbound,
       enqueueSync,
       enqueueNotifications,
+      enqueueTranscription,
+      enqueueProcessCall,
       alert,
       now: NOW,
       // Short, so the test for a voice platform that never answers is quick.
@@ -601,6 +606,153 @@ describe("POST /webhooks/twilio/recording", () => {
       "http://localhost:3000/webhooks/twilio/recording",
     );
     expect(response.status).toBe(403);
+  });
+
+  // Voicemail transcription (decision 022): asked for with the row, and the messages held for it.
+  it("asks for the transcript, and holds the text and email for it when one was asked for", async () => {
+    const { tenantId, number } = await makeTenant("paused");
+    const callSid = "CA" + randomUUID().replace(/-/g, "");
+    telephony.callDetails.set(callSid, {
+      callSid,
+      from: "+447700900123",
+      to: number,
+      startedAt: new Date("2026-11-06T18:00:00Z"),
+      endedAt: new Date("2026-11-06T18:01:00Z"),
+      durationSeconds: 60,
+    });
+    enqueueTranscription.mockResolvedValueOnce(true);
+    expect((await post("/webhooks/twilio/recording", callback(callSid))).status).toBe(204);
+    expect(enqueueTranscription).toHaveBeenCalledWith(expect.anything(), {
+      tenantId,
+      callId: expect.any(String) as string,
+      durationSeconds: 35,
+      recordingUrl: "https://api.twilio.com/2010-04-01/Accounts/AC0/Recordings/RE1",
+    });
+    expect(enqueueNotifications).toHaveBeenLastCalledWith(expect.anything(), {
+      tenantId,
+      callId: expect.any(String) as string,
+      urgency: null,
+      startAfterSeconds: 45,
+    });
+  });
+});
+
+// The transcript coming back (decision 022): a JSON webhook, signed over the URL and the bytes.
+describe("POST /webhooks/twilio/transcription", () => {
+  const PATH = "/webhooks/twilio/transcription";
+  const postJson = (body: string, signatureFor = `${PUBLIC_BASE_URL}${PATH}`) =>
+    fetch(`${baseUrl}${PATH}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-twilio-signature": telephony.signJson(signatureFor, body),
+      },
+      body,
+    });
+
+  /** A paused business's voicemail whose transcription has been asked for. */
+  async function requestedVoicemail() {
+    const { tenantId } = await makeTenant("paused");
+    const transcriptionRef = `voice_transcription_${randomUUID()}`;
+    const providerCallId = `CA${randomUUID().replace(/-/g, "")}`;
+    const { rows } = await admin.query<{ id: string }>(
+      `INSERT INTO calls (tenant_id, provider_call_id, caller_number, started_at, ended_at,
+                          billable_seconds, outcome, recording_ref, via_fallback, extracted_fields,
+                          transcription_ref, transcription_status, transcription_requested_at)
+       VALUES ($1, $2, '+447700900123', now() - interval '1 minute', now(), 0, 'voicemail',
+               'https://api.twilio.com/2010-04-01/Accounts/AC0/Recordings/RE1', true,
+               '{"recordingSeconds": 42}', $3, 'requested', now())
+       RETURNING id`,
+      [tenantId, providerCallId, transcriptionRef],
+    );
+    return { tenantId, callId: rows[0]!.id, providerCallId, transcriptionRef };
+  }
+
+  it("stores the words and queues the post-call job, then acknowledges a redelivery", async () => {
+    const { tenantId, callId, providerCallId, transcriptionRef } = await requestedVoicemail();
+    const body = JSON.stringify({
+      id: transcriptionRef,
+      status: "completed",
+      sourceId: "RE1",
+      duration: 42,
+      sentences: [
+        { text: "Hi, it's Sam.", confidence: 0.9 },
+        { text: "Boiler's gone.", confidence: 0.8 },
+      ],
+    });
+    expect((await postJson(body)).status).toBe(204);
+    expect(enqueueProcessCall).toHaveBeenCalledWith(expect.anything(), {
+      tenantId,
+      callId,
+      providerCallId,
+    });
+    const { rows } = await admin.query(
+      "SELECT transcript, transcription_status FROM calls WHERE id = $1",
+      [callId],
+    );
+    expect(rows[0]).toEqual({
+      transcript: "caller: Hi, it's Sam. Boiler's gone.",
+      transcription_status: "completed",
+    });
+    enqueueProcessCall.mockClear();
+    expect((await postJson(body)).status).toBe(204);
+    expect(enqueueProcessCall).not.toHaveBeenCalled();
+  });
+
+  it("records a failure and raises the alert", async () => {
+    const { tenantId, callId, transcriptionRef } = await requestedVoicemail();
+    const body = JSON.stringify({
+      id: transcriptionRef,
+      status: "failed",
+      error: { message: "media too short" },
+    });
+    expect((await postJson(body)).status).toBe(204);
+    expect(alert).toHaveBeenCalledWith("voicemail-transcription-failed", {
+      tenantId,
+      callId,
+      error: "media too short",
+    });
+  });
+
+  it("acknowledges a result no voicemail asked for, touching nothing", async () => {
+    const before = enqueueProcessCall.mock.calls.length;
+    const body = JSON.stringify({
+      id: "voice_transcription_nobody",
+      status: "completed",
+      sentences: [],
+    });
+    expect((await postJson(body)).status).toBe(204);
+    expect(enqueueProcessCall.mock.calls).toHaveLength(before);
+  });
+
+  it("refuses a body that isn't signed for these bytes and this address", async () => {
+    const { transcriptionRef } = await requestedVoicemail();
+    const body = JSON.stringify({ id: transcriptionRef, status: "completed", sentences: [] });
+    expect((await postJson(body, `http://localhost:3000${PATH}`)).status).toBe(403);
+    const tampered = await fetch(`${baseUrl}${PATH}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-twilio-signature": telephony.signJson(`${PUBLIC_BASE_URL}${PATH}`, body),
+      },
+      body: body.replace("completed", "failed"),
+    });
+    expect(tampered.status).toBe(403);
+    const unsigned = await fetch(`${baseUrl}${PATH}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body,
+    });
+    expect(unsigned.status).toBe(403);
+    expect(enqueueProcessCall).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ providerCallId: expect.stringContaining("nobody") as unknown }),
+    );
+  });
+
+  it("refuses a signed body it can't read", async () => {
+    expect((await postJson(JSON.stringify({ nonsense: true }))).status).toBe(400);
+    expect((await postJson("not json")).status).toBe(400);
   });
 });
 

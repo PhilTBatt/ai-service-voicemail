@@ -71,6 +71,33 @@ describe("callSms", () => {
   });
 });
 
+// A voicemail's transcript, summarised (decision 022): the messages say what they're about.
+describe("a transcribed voicemail's messages", () => {
+  it("marks the text as a voicemail's, and keeps it GSM-7", () => {
+    const { body } = callSms({ ...INPUT, viaVoicemail: true });
+    expect(body.split("\n")[0]).toBe("URGENT (voicemail): Sam, 07700 900123, XQ12 3JL");
+    expect(isGsm7(body)).toBe(true);
+  });
+
+  it("says so in the email's subject and heading, with a note that nothing was confirmed", () => {
+    const { subject, text, html } = callEmail({
+      ...EMAIL_INPUT,
+      viaVoicemail: true,
+      transcript: [{ role: "caller", text: "It's Sam, the boiler's leaking." }],
+    });
+    expect(subject).toBe(
+      "URGENT voicemail: Sam, 07700 900123 - Boiler leaking under the kitchen sink; no hot water.",
+    );
+    expect(text).toContain("URGENT voicemail for ");
+    expect(text).toContain("the caller left a voicemail");
+    expect(text).toContain("Caller: It's Sam, the boiler's leaking.");
+    expect(html).toContain("URGENT voicemail for ");
+    expect(html).toContain("left a voicemail");
+    // The call email is unchanged for a call.
+    expect(callEmail(EMAIL_INPUT).text).not.toContain("voicemail");
+  });
+});
+
 describe("nationalNumber", () => {
   it("formats UK mobiles and leaves others alone", () => {
     expect(nationalNumber("+447700900123")).toBe("07700 900123");

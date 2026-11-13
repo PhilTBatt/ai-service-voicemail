@@ -254,6 +254,38 @@ describe("runNotifySms for a fallback voicemail", () => {
   });
 });
 
+describe("runNotifySms for a transcribed voicemail", () => {
+  // Decision 022: once the voicemail's transcript has been summarised, the text carries the
+  // summary like a call's, and says it was a voicemail.
+  it("texts the summary, marked as a voicemail, with the call link", async () => {
+    const tenantId = await createTenant(admin, {
+      businessName: "Voicemail Plumbing",
+      trade: "plumber",
+      notificationMobile: MOBILE,
+    });
+    const { rows } = await admin.query<{ id: string }>(
+      `INSERT INTO calls (tenant_id, provider_call_id, caller_number, started_at, ended_at,
+                          billable_seconds, outcome, recording_ref, via_fallback, transcript,
+                          summary, urgency, extracted_fields)
+       VALUES ($1, $2, '+447700900123', now() - interval '2 minutes', now(), 0, 'voicemail',
+               'https://api.twilio.com/2010-04-01/Accounts/AC0/Recordings/RE1', true,
+               'caller: It''s Sam, no hot water since this morning.',
+               'No hot water since this morning.', 'urgent',
+               '{"recordingSeconds": 42, "callerName": "Sam", "callbackNumber": "+447700900123", "postcode": "XQ12 3JL"}')
+       RETURNING id`,
+      [tenantId, `CA${randomUUID().replace(/-/g, "")}`],
+    );
+    const callId = rows[0]!.id;
+    const d = deps();
+    expect(await runNotifySms(d, { tenantId, callId })).toBe("sent");
+    const body = d.sms.sent[0]!.body;
+    expect(body).toMatch(/^URGENT \(voicemail\): Sam, 07700 900123, XQ12 3JL\n/);
+    expect(body).toContain("No hot water since this morning.");
+    expect(body).toContain("Details: https://callmate.example.com/c/");
+    expect(body).not.toContain("New voicemail");
+  });
+});
+
 describe("runNotifySms after a delivery receipt", () => {
   it("never resends a text the carrier already reported on, delivered or not", async () => {
     const { tenantId, callId } = await makeProcessedCall();

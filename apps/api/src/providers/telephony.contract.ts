@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { PurchaseNotAllowedError, type TelephonyProvider } from "./telephony.ts";
+import {
+  PurchaseNotAllowedError,
+  TranscriptionCallbackError,
+  type TelephonyProvider,
+} from "./telephony.ts";
 
 export interface TelephonyHarness {
   /** A provider that is allowed to buy numbers. */
@@ -8,6 +12,11 @@ export interface TelephonyHarness {
   providerWithoutPurchases: TelephonyProvider;
   /** Signs a request as the provider would, for the webhook tests. */
   sign: (url: string, params: Record<string, string>) => string;
+  /**
+   * Signs a JSON webhook as the provider would, giving back the URL it would actually call
+   * (Twilio adds a bodySHA256 parameter) and the signature.
+   */
+  signJson: (url: string, rawBody: string) => { url: string; signature: string };
   /** Puts a recording's audio at the "provider" under this URL. */
   seedRecording: (recordingUrl: string, bytes: Uint8Array<ArrayBuffer>) => void;
   /** Puts a call record at the "provider". */
@@ -167,6 +176,89 @@ export function describeTelephonyProviderContract(
         const { provider, sign } = makeHarness();
         const signature = sign("http://localhost:3000/webhooks/twilio/voice", params);
         expect(provider.verifyWebhook({ url, params, signature })).toBe(false);
+      });
+    });
+
+    // Voicemail transcription (decision 022): asked for, and the result read and checked.
+    describe("transcription", () => {
+      const RECORDING_SID = "RE" + "a".repeat(32);
+      const CALLBACK_URL = "https://example.com/webhooks/twilio/transcription";
+
+      it("asks for a recording's transcription and gives back a reference to match the result by", async () => {
+        const { provider } = makeHarness();
+        const first = await provider.requestTranscription({
+          recordingSid: RECORDING_SID,
+          callbackUrl: CALLBACK_URL,
+        });
+        expect(first.transcriptionRef).toMatch(/\S/);
+        // Safe to repeat for the same recording: a reference again, and nothing thrown.
+        const again = await provider.requestTranscription({
+          recordingSid: RECORDING_SID,
+          callbackUrl: CALLBACK_URL,
+        });
+        expect(again.transcriptionRef).toMatch(/\S/);
+      });
+
+      it("reads a completed result's words in order, a failed one's reason, and refuses one it can't read", () => {
+        const { provider } = makeHarness();
+        const done = provider.parseTranscriptionCallback({
+          id: "tr_1",
+          status: "completed",
+          sourceId: RECORDING_SID,
+          duration: 42,
+          sentences: [
+            { text: "Hi, it's Sam.", confidence: 0.9 },
+            { text: "The boiler's gone.", confidence: 0.8 },
+          ],
+        });
+        expect(done).toMatchObject({
+          transcriptionRef: "tr_1",
+          recordingSid: RECORDING_SID,
+          status: "completed",
+          text: "Hi, it's Sam. The boiler's gone.",
+          durationSeconds: 42,
+          error: null,
+        });
+        expect(done.confidence).toBeCloseTo(0.85);
+
+        const failed = provider.parseTranscriptionCallback({
+          id: "tr_2",
+          status: "failed",
+          error: { message: "media too short" },
+        });
+        expect(failed).toMatchObject({ transcriptionRef: "tr_2", status: "failed", text: null });
+        expect(failed.error).toContain("media too short");
+
+        expect(() => provider.parseTranscriptionCallback({ nonsense: true })).toThrow(
+          TranscriptionCallbackError,
+        );
+        expect(() => provider.parseTranscriptionCallback("words")).toThrow(
+          TranscriptionCallbackError,
+        );
+      });
+
+      it("accepts a JSON webhook signed for exactly these bytes and this URL, and refuses any other", () => {
+        const { provider, signJson } = makeHarness();
+        const body = JSON.stringify({ id: "tr_1", status: "completed", sentences: [] });
+        const { url, signature } = signJson(CALLBACK_URL, body);
+        const rawBody = Buffer.from(body);
+        expect(provider.verifyJsonWebhook({ url, rawBody, signature })).toBe(true);
+        expect(
+          provider.verifyJsonWebhook({
+            url,
+            rawBody: Buffer.from(body.replace("completed", "failed")),
+            signature,
+          }),
+        ).toBe(false);
+        expect(
+          provider.verifyJsonWebhook({
+            url: url.replace("example.com", "evil.example"),
+            rawBody,
+            signature,
+          }),
+        ).toBe(false);
+        expect(provider.verifyJsonWebhook({ url, rawBody, signature: undefined })).toBe(false);
+        expect(provider.verifyJsonWebhook({ url, rawBody, signature: "nope" })).toBe(false);
       });
     });
   });

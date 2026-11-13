@@ -352,7 +352,7 @@ test.describe("leaving", () => {
 });
 
 test.describe("the admin's switches", () => {
-  // Both put back after each test, whatever happened: resumed if suspended, kill switch off.
+  // All put back after each test, whatever happened: resumed if suspended, both switches off.
   test.afterEach(async ({ request }) => {
     const fern = await tenantIdOf(request, FERN_LANE);
     const business = await apiAs<TenantView>(request, ADMIN, "GET", `/tenants/${fern}`);
@@ -360,6 +360,35 @@ test.describe("the admin's switches", () => {
       await apiAs(request, ADMIN, "POST", `/admin/tenants/${fern}/resume`, {});
     }
     await apiAs(request, ADMIN, "PUT", "/admin/kill-switch", { on: false });
+    await apiAs(request, ADMIN, "PUT", "/admin/voicemail-transcription", { on: false });
+  });
+
+  // Decision 022: off until Phil turns it on, with what it would cost shown first.
+  test("voicemail transcription is off, shows the cost, asks before turning on, and turns back off", async ({
+    page,
+  }) => {
+    await openAs(page, ADMIN, "/admin");
+    const card = page.getByRole("region", { name: "Voicemail transcription" });
+    const dialog = page.getByRole("dialog");
+    await expect(card.getByText("Off", { exact: true })).toBeVisible();
+    await expect(card.getByTestId("transcription-estimate")).toContainText("Last 30 days:");
+    await expect(card).toContainText("$0.024 a minute");
+
+    await card.getByRole("button", { name: "Turn on" }).click();
+    await expect(
+      dialog.getByRole("heading", { name: "Turn voicemail transcription on?" }),
+    ).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+    await expect(card.getByText("Off", { exact: true })).toBeVisible();
+
+    await card.getByRole("button", { name: "Turn on" }).click();
+    await dialog.getByRole("button", { name: "Turn on" }).click();
+    await expect(card.getByText("On", { exact: true })).toBeVisible();
+
+    await card.getByRole("button", { name: "Turn off" }).click();
+    await dialog.getByRole("button", { name: "Turn off" }).click();
+    await expect(card.getByText("Off", { exact: true })).toBeVisible();
   });
 
   test("suspending a business asks first, stops its switch, and resuming puts it back", async ({

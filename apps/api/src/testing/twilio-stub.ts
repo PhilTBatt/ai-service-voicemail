@@ -6,9 +6,23 @@ interface Captured {
   path: string;
   query: Record<string, string>;
   form: Record<string, string>;
+  /** A JSON body (the Batch Transcription API), when the request had one. */
+  json?: unknown;
+}
+
+/** A transcription configuration as voice.twilio.com lists it (the fields the adapter reads). */
+interface StubTranscriptionConfiguration {
+  id: string;
+  unique_name: string;
+  configuration: Record<string, unknown>;
 }
 
 export class TwilioApiStub {
+  /** The Batch Transcription API's configurations and the transcriptions asked for (decision 022). */
+  readonly transcriptionConfigurations: StubTranscriptionConfiguration[] = [];
+  readonly transcriptions: { id: string; body: Record<string, unknown> }[] = [];
+  /** The field the configurations list comes under; Twilio's reference doesn't say, so tests vary it. */
+  configurationsListKey = "configurations";
   readonly numbers = new Map<string, { phone_number: string; form: Record<string, string> }>();
   readonly requests: Captured[] = [];
   /** Tests fill these in, in Twilio's JSON shapes. */
@@ -36,15 +50,23 @@ export class TwilioApiStub {
       typeof input === "string" ? input : input instanceof URL ? input.href : input.url,
     );
     const method = init?.method ?? "GET";
+    const headers = new Headers(init?.headers);
+    const isJson = headers.get("content-type")?.includes("application/json") ?? false;
     const form = Object.fromEntries(
-      new URLSearchParams(typeof init?.body === "string" ? init.body : ""),
+      new URLSearchParams(!isJson && typeof init?.body === "string" ? init.body : ""),
     );
+    const json =
+      isJson && typeof init?.body === "string" ? (JSON.parse(init.body) as unknown) : undefined;
     this.requests.push({
       method,
       path: url.pathname,
       query: Object.fromEntries(url.searchParams),
       form,
+      ...(json !== undefined && { json }),
     });
+    if (url.hostname === "voice.twilio.com") {
+      return Promise.resolve(this.handleVoiceApi(method, url.pathname, json));
+    }
     if (url.hostname === "pricing.twilio.com") {
       return Promise.resolve(
         Response.json({
@@ -62,6 +84,55 @@ export class TwilioApiStub {
     }
     return Promise.resolve(this.handle(method, url.pathname, form, url.searchParams));
   };
+
+  /** voice.twilio.com: the transcription configurations and the transcriptions (JSON in and out). */
+  private handleVoiceApi(method: string, path: string, body: unknown): Response {
+    const json = (status: number, data: unknown) => Response.json(data, { status });
+    const asRecord = (body ?? {}) as Record<string, unknown>;
+    if (path === "/v2/Configurations/Transcription") {
+      if (method === "GET") {
+        return json(200, {
+          [this.configurationsListKey]: this.transcriptionConfigurations,
+          meta: { nextToken: null },
+        });
+      }
+      if (method === "POST") {
+        const created = {
+          id: `voice_transcriptionconfiguration_stub${this.transcriptionConfigurations.length + 1}`,
+          unique_name: typeof asRecord.unique_name === "string" ? asRecord.unique_name : "",
+          configuration: (asRecord.configuration ?? {}) as Record<string, unknown>,
+        };
+        this.transcriptionConfigurations.push(created);
+        return json(201, created);
+      }
+    }
+    const configurationMatch = /^\/v2\/Configurations\/Transcription\/([^/]+)$/.exec(path);
+    if (method === "PUT" && configurationMatch) {
+      const existing = this.transcriptionConfigurations.find(
+        (configuration) => configuration.id === decodeURIComponent(configurationMatch[1]!),
+      );
+      if (!existing) return json(404, { message: "not found" });
+      existing.configuration = (asRecord.configuration ?? {}) as Record<string, unknown>;
+      return json(200, existing);
+    }
+    if (method === "POST" && path === "/v3/Transcriptions") {
+      if (
+        !this.transcriptionConfigurations.some(
+          (configuration) => configuration.id === asRecord.transcriptionConfigurationId,
+        )
+      ) {
+        return json(400, { code: 20001, message: "unknown transcriptionConfigurationId" });
+      }
+      const id = `voice_transcription_stub${this.transcriptions.length + 1}`;
+      this.transcriptions.push({ id, body: asRecord });
+      return json(201, {
+        status: "PENDING",
+        statusUrl: `https://voice.twilio.com/v3/Transcriptions/${id}`,
+        transcription: { id, status: "PENDING", sourceId: asRecord.sourceId },
+      });
+    }
+    return json(404, { message: `stub has no route for ${method} ${path}` });
+  }
 
   private handle(
     method: string,

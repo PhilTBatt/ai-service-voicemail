@@ -10,7 +10,9 @@ import type { AdminPool } from "./db/cross-tenant.ts";
 import { enqueueBillingEmailWith } from "./jobs/billing-email.ts";
 import { enqueueNotificationsWith } from "./jobs/enqueue-notifications.ts";
 import { enqueueOnboardingWith } from "./jobs/onboarding.ts";
+import { enqueueProcessCallWith } from "./jobs/process-call.ts";
 import { enqueueSyncAgent, type SyncAgentJobData } from "./jobs/sync-agent.ts";
+import { enqueueVoicemailTranscriptionWith } from "./jobs/transcribe-voicemail.ts";
 import { logger } from "./logger.ts";
 import { ClerkAuthProvider } from "./providers/clerk.ts";
 import { GoCardlessPaymentsProvider } from "./providers/gocardless.ts";
@@ -55,6 +57,8 @@ export function buildServerApp(
           enqueueSync: (job: SyncAgentJobData) => enqueueSyncAgent(boss, job),
           enqueueNotifications: enqueueNotificationsWith(boss),
           enqueueOnboarding: enqueueOnboardingWith(boss),
+          enqueueTranscription: enqueueVoicemailTranscriptionWith(boss),
+          enqueueProcessCall: enqueueProcessCallWith(boss),
         }
       : undefined;
   if (!telephony) {

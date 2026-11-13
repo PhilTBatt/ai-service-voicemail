@@ -23,12 +23,20 @@ export interface NotifiableCall {
    * only writes after the LLM: without it, the early job found no emergency and sent nothing.
    */
   emergencyKind?: "gas" | "danger";
+  /**
+   * Hold the text and the email this long (seconds) before sending: a voicemail waiting for its
+   * transcript (decision 022), so one message carries the summary. Emergency texts never wait.
+   */
+  startAfterSeconds?: number;
 }
 
 export type EnqueueNotifications = (client: pg.ClientBase, call: NotifiableCall) => Promise<void>;
 
 export function enqueueNotificationsWith(boss: PgBoss): EnqueueNotifications {
-  return async (client, { tenantId, callId, urgency, emergencyOnly = false, emergencyKind }) => {
+  return async (
+    client,
+    { tenantId, callId, urgency, emergencyOnly = false, emergencyKind, startAfterSeconds },
+  ) => {
     const db = { executeSql: (text: string, values?: unknown[]) => client.query(text, values) };
     if (urgency === "emergency") {
       await boss.send(
@@ -38,7 +46,12 @@ export function enqueueNotificationsWith(boss: PgBoss): EnqueueNotifications {
       );
     }
     if (emergencyOnly) return;
-    await boss.send(NOTIFY_SMS_QUEUE, { tenantId, callId }, { singletonKey: callId, db });
-    await boss.send(NOTIFY_EMAIL_QUEUE, { tenantId, callId }, { singletonKey: callId, db });
+    const held = startAfterSeconds === undefined ? {} : { startAfter: startAfterSeconds };
+    await boss.send(NOTIFY_SMS_QUEUE, { tenantId, callId }, { singletonKey: callId, db, ...held });
+    await boss.send(
+      NOTIFY_EMAIL_QUEUE,
+      { tenantId, callId },
+      { singletonKey: callId, db, ...held },
+    );
   };
 }

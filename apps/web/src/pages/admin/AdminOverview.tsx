@@ -5,6 +5,7 @@ import type {
   HealthView,
   KillSwitchView,
   ReviewQueueView,
+  VoicemailTranscriptionView,
 } from "@callmate/shared";
 import { useState } from "react";
 import { Link } from "react-router";
@@ -26,12 +27,14 @@ import {
   Check,
   CircleCheck,
   Clock,
+  FileText,
   Mail,
   Power,
   TriangleAlert,
   Voicemail,
 } from "../../design/icons.ts";
 import { useToast } from "../../design/toast.tsx";
+import { formatPenceWords } from "../../format.ts";
 import { formatUkDateTime } from "../../time.ts";
 import { UrgencyBadge } from "../../ui.tsx";
 
@@ -119,6 +122,8 @@ function Health() {
       </section>
 
       <Worker worker={data.worker} />
+
+      <VoicemailTranscription />
 
       <div className="grid grid-stats">
         {/* Voicemails left, not plays: a caller who hangs up at the greeting isn't counted (the
@@ -225,6 +230,110 @@ function Health() {
           </ul>
         </Card>
       )}
+    </section>
+  );
+}
+
+/**
+ * The voicemail transcription switch (decision 022), with what it costs: off until Phil turns it
+ * on, since every transcription is paid for. The last 30 days' voicemails show what it would have
+ * cost, so the figure can be judged before a penny goes.
+ */
+function VoicemailTranscription() {
+  const { api } = useApi();
+  const confirm = useConfirm();
+  const toast = useToast();
+  const view = useLoad(
+    () => api<VoicemailTranscriptionView>("/admin/voicemail-transcription"),
+    "voicemail-transcription",
+  );
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+
+  if (view.status === "loading")
+    return <Loading label="Loading voicemail transcription…" lines={3} />;
+  if (view.status === "error") return <ErrorNote error={view.error} retry={view.reload} />;
+
+  const data = view.data;
+  const { last30Days: month, price } = data;
+  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+  const flip = async () => {
+    const yes = await confirm(
+      data.on
+        ? {
+            title: "Turn voicemail transcription off?",
+            body: "Voicemails go back to a plain text and email with the recording. Transcriptions already asked for still arrive.",
+            confirmLabel: "Turn off",
+          }
+        : {
+            title: "Turn voicemail transcription on?",
+            body: `Every voicemail left from now on is sent to Twilio for transcription, at about ${formatPenceWords(price.perMinutePence)} a minute (each voicemail counted as whole minutes). The tradesperson's text and email then wait up to 45 seconds for the summary, and an emergency in the words sends the emergency text at once.`,
+            confirmLabel: "Turn on",
+          },
+    );
+    if (!yes) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api<VoicemailTranscriptionView>("/admin/voicemail-transcription", {
+        method: "PUT",
+        body: { on: !data.on },
+      });
+      toast({ title: data.on ? "Voicemail transcription off" : "Voicemail transcription on" });
+      view.reload();
+    } catch (caught) {
+      setError(asError(caught));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="card" aria-label="Voicemail transcription">
+      <div className="card-body stack">
+        <div className="cluster cluster-between">
+          <div className="cluster">
+            <FileText aria-hidden="true" />
+            <h2 className="card-title">Voicemail transcription</h2>
+            <Badge tone={data.on ? "success" : "neutral"}>{data.on ? "On" : "Off"}</Badge>
+          </div>
+          <Button
+            variant={data.on ? "secondary" : "primary"}
+            loading={busy}
+            onClick={() => void flip()}
+          >
+            {data.on ? "Turn off" : "Turn on"}
+          </Button>
+        </div>
+        <p className="muted text-sm">
+          {data.on
+            ? "Each voicemail left when the assistant can't answer is transcribed, summarised and given an urgency like a call, so a gas smell left on one gets the emergency text."
+            : "A voicemail left when the assistant can't answer arrives as a recording and a plain text, which nobody reads: a gas smell left on one isn't treated as an emergency. On, each voicemail is transcribed, summarised and given an urgency like a call."}{" "}
+          Price: ${price.perMinuteUsd} a minute, about {formatPenceWords(price.perMinutePence)} at £
+          {price.gbpPerUsd} to the dollar, each voicemail counted as whole minutes.
+        </p>
+        <p data-testid="transcription-estimate">
+          <strong>Last 30 days:</strong> {plural(month.voicemails, "voicemail")}
+          {month.voicemails > 0 && (
+            <>
+              , {month.transcribable} long enough to transcribe, {plural(month.minutes, "minute")}{" "}
+              in all. Transcribing them all would cost about{" "}
+              <strong>{formatPenceWords(month.wouldCostPence)}</strong>
+              {month.transcribable > 0 &&
+                ` (${formatPenceWords(Math.round(month.wouldCostPence / month.transcribable))} a voicemail on average)`}
+            </>
+          )}
+          .
+        </p>
+        {month.asked > 0 && (
+          <p data-testid="transcription-spent">
+            <strong>Asked for:</strong> {plural(month.asked, "transcription")} ({month.transcribed}{" "}
+            done, {month.failed} failed, {month.waiting} waiting), about{" "}
+            <strong>{formatPenceWords(month.spentPence)}</strong>.
+          </p>
+        )}
+        {error && <ErrorNote error={error} />}
+      </div>
     </section>
   );
 }

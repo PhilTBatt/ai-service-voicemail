@@ -42,11 +42,17 @@ import {
   RETENTION_CRON,
   RETENTION_QUEUE,
   SYNC_AGENT_QUEUE,
+  TRANSCRIBE_VOICEMAIL_QUEUE,
 } from "./jobs/queue.ts";
 import { reconcileCalls } from "./jobs/reconcile-calls.ts";
 import { reconcileVoicemails } from "./jobs/reconcile-voicemails.ts";
 import { runRetention } from "./jobs/retention.ts";
 import { runSyncAgent, type SyncAgentJobData } from "./jobs/sync-agent.ts";
+import {
+  enqueueVoicemailTranscriptionWith,
+  runTranscribeVoicemail,
+  type TranscribeVoicemailJobData,
+} from "./jobs/transcribe-voicemail.ts";
 import { logger } from "./logger.ts";
 import { AnthropicLlmProvider } from "./providers/anthropic.ts";
 import type { AuthProvider } from "./providers/auth.ts";
@@ -295,9 +301,16 @@ export async function registerJobs(
   if (config.twilio) {
     const telephony = providers.telephony ?? new TwilioTelephonyProvider(config.twilio);
     const enqueueOnboarding = enqueueOnboardingWith(boss);
+    const enqueueTranscription = enqueueVoicemailTranscriptionWith(boss);
     await boss.work(RECONCILE_VOICEMAILS_QUEUE, () =>
       trackRun(pool, RECONCILE_VOICEMAILS_QUEUE, () =>
-        reconcileVoicemails({ pool, telephony, enqueueNotifications, enqueueOnboarding }),
+        reconcileVoicemails({
+          pool,
+          telephony,
+          enqueueNotifications,
+          enqueueOnboarding,
+          enqueueTranscription,
+        }),
       ),
     );
     await boss.schedule(
@@ -307,6 +320,22 @@ export async function registerJobs(
       SCHEDULE_OPTIONS,
     );
     queues.push(RECONCILE_VOICEMAILS_QUEUE);
+
+    // Voicemail transcription (decision 022): jobs are only queued while the Admin switch is on,
+    // and the result comes back to the API's address.
+    if (config.publicBaseUrl) {
+      const publicBaseUrl = config.publicBaseUrl;
+      await boss.work<TranscribeVoicemailJobData>(TRANSCRIBE_VOICEMAIL_QUEUE, async (jobs) => {
+        for (const job of jobs) {
+          await runTranscribeVoicemail({ pool, telephony, publicBaseUrl }, job.data);
+        }
+      });
+      queues.push(TRANSCRIBE_VOICEMAIL_QUEUE);
+    } else {
+      logger.warn(
+        "Voicemail transcription disabled: PUBLIC_BASE_URL isn't set (the result needs it)",
+      );
+    }
 
     if (admin) {
       await boss.work(RETENTION_QUEUE, () =>

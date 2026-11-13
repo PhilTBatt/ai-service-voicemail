@@ -93,17 +93,19 @@ export async function runNotifyEmail(
 
   const parsed = storedFieldsSchema.safeParse(call.extracted_fields);
   const fields = parsed.success ? parsed.data : {};
-  const message = call.via_fallback
-    ? voicemailEmail({
-        businessName: tenant.business_name,
-        startedAt: call.started_at,
-        callbackNumber: call.caller_number,
-        durationSeconds: fields.recordingSeconds ?? 0,
-        callUrl,
-        recordingUrl,
-      })
-    : (() => {
-        return callEmail({
+  // A voicemail with no summary gets the "new voicemail" email; one whose transcript has been
+  // summarised (decision 022) gets the call email, saying it was a voicemail.
+  const message =
+    call.via_fallback && call.summary === null
+      ? voicemailEmail({
+          businessName: tenant.business_name,
+          startedAt: call.started_at,
+          callbackNumber: call.caller_number,
+          durationSeconds: fields.recordingSeconds ?? 0,
+          callUrl,
+          recordingUrl,
+        })
+      : callEmail({
           businessName: tenant.business_name,
           startedAt: call.started_at,
           urgency: call.urgency,
@@ -121,8 +123,8 @@ export async function runNotifyEmail(
               : parseTranscript(call.transcript).filter((turn) => turn.text.trim() !== ""),
           callUrl,
           recordingUrl,
+          viaVoicemail: call.via_fallback,
         });
-      })();
 
   return deliverNotification(
     { pool, outbound, alert },
