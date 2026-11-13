@@ -36,9 +36,11 @@ What that gives, for 100 businesses: 2.4 Erlangs, about 7 lines, so:
 
 ## 4. What runs against what
 
-The real app, routes and database code, against the test database, with the fakes for every outside service: Twilio, the voice platform, the login provider. The fakes check webhook signatures with fixed test keys, and the k6 script signs with the same keys, so signature checking is part of what's measured. Nothing leaves the machine. The worker isn't running, so jobs queue up unprocessed, as they would for a minute in a busy hour.
+The real app, routes and database code, against the test database, with the fakes for every outside service: Twilio, the voice platform, the login provider. The fakes check webhook signatures with fixed test keys, and the k6 script signs with the same keys, so signature checking is part of what's measured. Nothing leaves the machine.
 
-The worker's side is tested on its own (2026-11-11): `worker-jobs.concurrency.test.ts` runs the worker's real job registration against the test database with fakes, eight calls at once with an LLM that takes 2 s, and checks they run four at a time with every message sent once. Its concurrency (`WORK_OPTIONS` in `worker-jobs.ts`) takes process-call from about 5 to 12 calls a minute to 20 to 48, against about 12 in the busy hour of 1,000 businesses. Not yet measured: the worker under k6's traffic, and the real LLM's time per call.
+**The worker runs too (2026-11-13),** in its own process as in production (`testing/load-worker.ts`): the real job handlers at production's concurrency (`WORK_OPTIONS`) and pool sizes, with fakes that take about as long as the real services. The model takes 2 s a call (`LOAD_LLM_MS`; our estimate of a short extraction on the small model, not measured), Twilio and Postmark 300 ms a send. Each business's texts and emails go through the whole send path, outbound allowlist included, to the fakes. When k6 finishes, the runner waits up to three minutes for the worker to text every call the run made, then gives the time from each call being stored to its text being sent, and **fails the run if any text took over 60 seconds** (BUILD_PLAN Step 6) or never went (`LOAD_TEXT_SECONDS` overrides the limit). The run's start is taken from the database's clock, which stamps the calls: Docker's clock had drifted minutes from the PC's after a sleep, and the seeded history counted as the run's calls until it was.
+
+The worker's side is also tested on its own: `worker-jobs.concurrency.test.ts` runs the worker's real job registration against the test database with fakes, eight calls at once, and checks they run four at a time with every message sent once. Still not measured: the real LLM's time per call.
 
 ## 5. The limits (thresholds)
 
@@ -64,6 +66,8 @@ They're loose enough not to fail on a slower CI machine, and tight enough to cat
 | Dashboard: who am I / calls / one call | 18 / 29 / 23 ms |
 
 A first run, with k6's image still cold, gave 408 ms for the voice webhook across both scenarios.
+
+**With the worker running (2026-11-13, the same PC):** 977 requests, none failed, every check passed. The API's p95s rose a little with the worker sharing the database: the voice webhook 66 ms steady and 309 ms in the burst, call ended 34 ms and 352 ms, the dashboard 22 to 34 ms. **Every one of the run's 94 calls was texted: median 15.0 s after the call ended, p95 36.2 s, slowest 38.0 s, none over 60.** A second run the same morning: 95 calls, median 17.4 s, p95 38.2 s, slowest 41.2 s. So about 20 s of margin under the 60, not more. The burst of 70 calls at once sets those numbers: four calls processed at a time, at 2 s each, take about 35 s to clear 70. The steady calls alone come in at a few seconds. A slower model, or a burst much bigger than 70, is what would push the slowest past 60 s; raising process-call's concurrency (`WORK_OPTIONS`) is the lever, within the database connections it has (each call holds one only for its short transactions).
 
 ## 7. Confidence and the case against
 

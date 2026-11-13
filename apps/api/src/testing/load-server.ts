@@ -30,17 +30,18 @@ import { sampleAgentDefinition } from "./agent-fixture.ts";
 import { TEST_ADMIN_DATABASE_URL, TEST_DATABASE_URL } from "./databases.ts";
 import { E2eAuthProvider } from "./e2e-auth.ts";
 import prepareTestDatabase from "./global-setup.ts";
-import { LOAD_API_PORT, LOAD_PUBLIC_BASE_URL } from "./load-config.ts";
+import {
+  LOAD_API_PORT,
+  LOAD_PUBLIC_BASE_URL,
+  loadCustomers,
+  loadMobile,
+  loadNotifyEmail,
+  pad,
+} from "./load-config.ts";
 
-const customers = Number(process.env.LOAD_CUSTOMERS ?? "100");
-if (!Number.isInteger(customers) || customers < 1 || customers > 1000) {
-  throw new Error("LOAD_CUSTOMERS must be a whole number from 1 to 1000");
-}
+const customers = loadCustomers();
 // The runner turns this down to "warn": a line per request would drown the k6 report.
 logger.level = process.env.LOG_LEVEL ?? "info";
-
-/** Business i's numbers, as the k6 script works them out too. */
-const pad = (i: number) => String(i).padStart(3, "0");
 
 async function seed(admin: AdminPool, voice: FakeVoiceProvider): Promise<void> {
   for (let i = 0; i < customers; i++) {
@@ -48,7 +49,9 @@ async function seed(admin: AdminPool, voice: FakeVoiceProvider): Promise<void> {
       businessName: `Load Test Plumbing ${pad(i)}`,
       trade: "plumber",
       contactName: "Sam",
-      notificationMobile: `+447700900${pad(i)}`,
+      notificationMobile: loadMobile(i),
+      // The worker (load-worker.ts) emails each call too, as production does.
+      notificationEmail: loadNotifyEmail(i),
     });
     await admin.query(
       "UPDATE tenants SET status = 'live', onboarding_state = 'live' WHERE id = $1",
