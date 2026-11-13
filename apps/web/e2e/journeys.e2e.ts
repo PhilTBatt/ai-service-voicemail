@@ -711,7 +711,16 @@ test.describe("the Admin pages", () => {
     await tab(page, "Leaving");
     await tab(page, "Usage and costs");
     await expect(page.getByRole("heading", { name: "Usage this period" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Estimated costs this month" })).toBeVisible();
+    for (const part of [
+      "Costs at a glance",
+      "Tier changes on the way",
+      "How fast use is growing",
+      "Suppliers",
+      "Every supplier, its plan and its tiers",
+      "Each business: its costs and its bill so far",
+    ]) {
+      await expect(page.getByRole("heading", { name: part, exact: true })).toBeVisible();
+    }
 
     await tab(page, "Components");
     for (const section of [

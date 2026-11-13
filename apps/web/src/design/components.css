@@ -761,6 +761,177 @@ fieldset.choices legend {
   transition: width var(--duration-normal) var(--ease-out);
 }
 
+/* ---------- Charts ----------
+   Two series colours, always in this order (tokens.css). Bars have 4px rounded ends and a 2px
+   gap of the surface between parts; figures are in the text colours, never the series'. */
+
+[data-series="1"] {
+  --series: var(--color-chart-1);
+}
+[data-series="2"] {
+  --series: var(--color-chart-2);
+}
+
+.split-bar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.split-bar-track {
+  display: flex;
+  gap: 2px;
+  height: 1.5rem;
+  border-radius: 4px;
+  background: var(--color-surface-sunken);
+  overflow: hidden;
+}
+.split-bar[data-size="thin"] .split-bar-track {
+  height: 0.5rem;
+}
+.split-bar-part {
+  /* A sliver of a part is still a part: never thinner than can be seen. */
+  min-width: 4px;
+  border-radius: 4px;
+  background: var(--series);
+  transition: width var(--duration-normal) var(--ease-out);
+}
+
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+.chart-legend li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.chart-legend strong {
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+}
+.chart-swatch {
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 3px;
+  background: var(--series);
+}
+
+.bar-list {
+  display: grid;
+  grid-template-columns: max-content minmax(4rem, 1fr) max-content;
+  gap: var(--space-2) var(--space-3);
+  align-items: center;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--text-sm);
+}
+.bar-list li {
+  display: contents;
+}
+.bar-list-track {
+  height: 0.75rem;
+}
+.bar-list-fill {
+  display: block;
+  height: 100%;
+  border-radius: 4px;
+  background: var(--color-chart-1);
+}
+.bar-list-value {
+  text-align: right;
+}
+
+.day-chart {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.day-chart-plot {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-bottom: 1px solid var(--color-border);
+}
+.day-chart-plot li {
+  /* The whole column is the target, not just the bar: a quiet day is still hoverable. */
+  display: flex;
+  flex: 1 1 0;
+  align-items: flex-end;
+  justify-content: center;
+  height: 100%;
+  border-radius: 4px 4px 0 0;
+}
+.day-chart-plot li:hover,
+.day-chart-plot li:focus-visible {
+  background: var(--color-surface-sunken);
+  outline: none;
+}
+.day-chart-plot li:focus-visible {
+  box-shadow: 0 0 0 2px var(--color-focus);
+}
+.day-chart-bar {
+  /* Columns share the width, so the dates under them line up; a bar is never thicker than 24px. */
+  width: 100%;
+  max-width: 1.5rem;
+  border-radius: 4px 4px 0 0;
+  background: var(--color-chart-1);
+}
+.day-chart-axis {
+  display: flex;
+  justify-content: space-between;
+}
+
+.chart-table summary {
+  width: fit-content;
+  color: var(--color-link);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+.chart-table[open] summary {
+  margin-bottom: var(--space-2);
+}
+
+/* A figure that leads a card: the month's bill so far. */
+.hero-figure {
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-bold);
+  letter-spacing: -0.02em;
+}
+
+/* A supplier's tiers, opened from its row. */
+.tier-list {
+  display: grid;
+  gap: var(--space-1);
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--text-sm);
+}
+.tier-list li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  justify-content: space-between;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+.tier-list li[data-current="true"] {
+  border-color: var(--color-brand-border);
+  background: var(--color-brand-soft);
+}
+
 /* ---------- Avatar ---------- */
 
 .avatar {

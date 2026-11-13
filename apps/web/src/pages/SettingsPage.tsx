@@ -19,6 +19,7 @@ import {
 import { useEffect, useRef, useState } from "react";
 import { useLocation, useSearchParams } from "react-router";
 import { ApiError, asError, useApi, useLoad } from "../api.ts";
+import { billParts, dayColumns, minuteParts, projectionText } from "../costs.ts";
 import {
   Alert,
   Badge,
@@ -28,7 +29,8 @@ import {
   DescriptionList,
   ErrorNote,
   Loading,
-  Meter,
+  DayChart,
+  SplitBar,
   SectionHeader,
   TextField,
 } from "../design/components.tsx";
@@ -521,7 +523,10 @@ function Billing({ tenant }: { tenant: TenantView }) {
     }
   };
 
-  const minutesUsed = period ? Math.ceil(period.billableSeconds / 60) : 0;
+  const bill = period ? billParts(period) : null;
+  const used = period ? minuteParts(period, plan) : null;
+  const heading = period ? projectionText(period) : null;
+  const days = period ? dayColumns(period.days) : [];
   const leaving = tenant.status === "cancelling" || tenant.status === "cancelled";
   const directDebitBadge = {
     active: (
@@ -556,24 +561,42 @@ function Billing({ tenant }: { tenant: TenantView }) {
         )}
       </div>
 
-      {period ? (
-        <div className="stack stack-sm">
-          <div className="cluster cluster-between">
-            <span className="text-sm">
-              <strong>This month</strong>{" "}
-              <span className="muted">
+      {period && bill && used ? (
+        <div className="stack">
+          <div className="stack stack-xs">
+            <div className="cluster cluster-between">
+              <h3>This month so far</h3>
+              <span className="muted text-sm">
                 {formatDate(period.start)} to {formatDate(addDays(period.end, -1))} (month{" "}
                 {period.month})
               </span>
-            </span>
-            <span className="text-sm num">
-              {minutesUsed} of {plan.includedMinutes} minutes
-            </span>
+            </div>
+            <p className="hero-figure num">{bill.total}</p>
+            <p className="text-sm">{bill.summary}</p>
           </div>
-          <Meter value={minutesUsed} max={plan.includedMinutes} label="Minutes used this month" />
+          <SplitBar parts={bill.parts} label="This month's bill so far" />
+
+          <div className="stack stack-xs">
+            <div className="cluster cluster-between">
+              <span className="text-sm">
+                <strong>{used.label}</strong>
+              </span>
+              <span className="muted text-sm">{used.left}</span>
+            </div>
+            <SplitBar parts={used.parts} label="Minutes used this month" size="thin" />
+          </div>
+
+          {heading && <p className="text-sm">{heading}</p>}
+
+          {days.length > 1 && (
+            <div className="stack stack-xs">
+              <h4 className="text-sm">Call minutes each day</h4>
+              <DayChart columns={days} label="Call minutes each day this month" unit="Minutes" />
+            </div>
+          )}
           <p className="muted text-sm">
-            This month's fee is {formatPence(period.feePence)}, charged by Direct Debit after the
-            month ends.
+            Charged by Direct Debit after the month ends, for the minutes used by then. Minutes are
+            added up over the month and rounded up once.
           </p>
         </div>
       ) : view.leftOn ? (

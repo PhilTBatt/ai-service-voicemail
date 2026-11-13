@@ -92,6 +92,20 @@ async function seed(admin: AdminPool): Promise<void> {
     plumbing,
   ]);
   await assignPhoneNumber(admin, plumbing, "+441134960150", "PNe2eFernLane");
+  // Live for ten days, and already over the month's included minutes: 12,630 seconds is 211
+  // minutes, 11 over the 200. So the Account page has a bill in two parts, a projection and
+  // days to draw, and the Admin page a paying business (e2e/pages.e2e.ts).
+  await admin.query(
+    `UPDATE tenants SET billing_start_date = (now() AT TIME ZONE 'Europe/London')::date - 9
+     WHERE id = $1`,
+    [plumbing],
+  );
+  await admin.query(
+    `INSERT INTO usage_periods (tenant_id, period_start, period_end, billable_seconds)
+     SELECT id, billing_start_date, (billing_start_date + interval '1 month')::date, 12630
+     FROM tenants WHERE id = $1`,
+    [plumbing],
+  );
   await admin.query(
     `INSERT INTO calls (tenant_id, provider_call_id, caller_number, started_at, ended_at,
                         billable_seconds, transcript, summary, urgency, extracted_fields)

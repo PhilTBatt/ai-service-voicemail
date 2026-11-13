@@ -11,6 +11,7 @@ import {
   listTenants,
 } from "./cross-tenant.ts";
 import { createPool } from "./pool.ts";
+import { withTenant } from "./tenant.ts";
 import { seedDevelopmentData } from "./seed.ts";
 
 const app = createPool(TEST_DATABASE_URL);
@@ -173,6 +174,30 @@ describe("estimateCosts", () => {
     // A 42-second voicemail transcribed (decision 022): one whole minute at $0.024.
     await cost(voicemail, "twilio:transcription_seconds", 42, "seconds");
     await cost(nextMonth, "retell:llm", 1000, "usd_cents");
+    // Account texts in March: a 2-segment set-up text, an older one with no count (one), a
+    // blocked one (never sent, so nothing), a cancellation text of 3 and a mobile code (1); an
+    // email (not a text) and April's text aren't counted.
+    await withTenant(app, tenantId, async (client) => {
+      await client.query(
+        `INSERT INTO onboarding_texts (tenant_id, kind, status, segments, created_at) VALUES
+           ($1, 'divert_instructions', 'sent', 2, '2031-03-05T10:00:00Z'),
+           ($1, 'go_live', 'sent', NULL, '2031-03-06T10:00:00Z'),
+           ($1, 'go_live', 'blocked', NULL, '2031-03-06T11:00:00Z'),
+           ($1, 'go_live', 'sent', 5, '2031-04-06T10:00:00Z')`,
+        [tenantId],
+      );
+      await client.query(
+        `INSERT INTO offboarding_messages (tenant_id, kind, channel, status, segments, created_at) VALUES
+           ($1, 'cancellation', 'sms', 'sent', 3, '2031-03-20T10:00:00Z'),
+           ($1, 'cancellation', 'email', 'sent', NULL, '2031-03-20T10:00:00Z')`,
+        [tenantId],
+      );
+      await client.query(
+        `INSERT INTO mobile_confirmations (tenant_id, mobile, code_hash, expires_at, created_at)
+         VALUES ($1, '+447700900123', 'hash', '2031-03-07T10:10:00Z', '2031-03-07T10:00:00Z')`,
+        [tenantId],
+      );
+    });
 
     const { tenants, unpriced } = await estimateCosts(
       admin,
@@ -192,6 +217,8 @@ describe("estimateCosts", () => {
       businessName: "Costly Plumbing",
       status: "onboarding",
       calls: 2,
+      // 2:05 and 0:42.
+      callSeconds: 167,
       pence: {
         // (33.28 + 7.8) US cents at 0.8 = 32.864p
         voicePlatform: 33,
@@ -199,13 +226,15 @@ describe("estimateCosts", () => {
         languageModel: 16,
         // 2 x £0.042325 = 8.465p
         texts: 8,
+        // (2 + 1 + 3 + 1) segments x £0.042325 = 29.6275p
+        accountTexts: 30,
         // 4 incoming minutes x £0.007558 + 3 SIP minutes x $0.004 at 0.8 = 3.9832p
         phoneMinutes: 4,
         // £0.86917 a month
         number: 87,
         // 42 seconds counted as 1 minute x $0.024 at 0.8 = 1.92p
         transcription: 2,
-        total: 150,
+        total: 180,
       },
     });
     expect(unpriced).toEqual(["mystery:widgets", "unpriced-model:input_tokens"]);

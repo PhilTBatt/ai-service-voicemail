@@ -436,6 +436,136 @@ export function Meter({ value, max, label }: { value: number; max: number; label
   );
 }
 
+/** One part of a SplitBar: a share of the whole, in one of the two chart colours. */
+export interface SplitBarPart {
+  key: string;
+  label: string;
+  value: string;
+  percent: number;
+  series: 1 | 2;
+}
+
+/**
+ * One whole split into its parts: the month's bill into plan and extra minutes, say. The
+ * legend under it carries every figure in words, so the colours never have to; hovering a
+ * part names it too. Parts of nothing aren't drawn, and still appear in the legend.
+ */
+export function SplitBar({
+  parts,
+  label,
+  size = "tall",
+}: {
+  parts: SplitBarPart[];
+  label: string;
+  size?: "tall" | "thin";
+}) {
+  const described = parts.map((part) => `${part.label} ${part.value}`).join(", ");
+  return (
+    <div className="split-bar" data-size={size}>
+      <div className="split-bar-track" role="img" aria-label={`${label}: ${described}`}>
+        {parts
+          .filter((part) => part.percent > 0)
+          .map((part) => (
+            <span
+              key={part.key}
+              className="split-bar-part"
+              data-series={part.series}
+              title={`${part.label}: ${part.value}`}
+              style={{ width: `${part.percent}%` }}
+            />
+          ))}
+      </div>
+      <ul className="chart-legend">
+        {parts.map((part) => (
+          <li key={part.key}>
+            <span className="chart-swatch" data-series={part.series} aria-hidden="true" />
+            {part.label} <strong>{part.value}</strong>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** Things ranked by size, largest first: each a name, a bar against the largest, and its figure. */
+export function BarList({
+  items,
+  label,
+}: {
+  items: { id: string; name: string; value: string; percent: number }[];
+  label: string;
+}) {
+  return (
+    <ol className="bar-list" aria-label={label}>
+      {items.map((item) => (
+        <li key={item.id} title={`${item.name}: ${item.value}`}>
+          <span className="bar-list-name">{item.name}</span>
+          <span className="bar-list-track" aria-hidden="true">
+            <span className="bar-list-fill" style={{ width: `${item.percent}%` }} />
+          </span>
+          <span className="bar-list-value num">{item.value}</span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+/**
+ * A column for each day: the month's calls, day by day. Hovering or tabbing to a column names
+ * its day and figure, and the same figures are in a table underneath for anyone who'd rather
+ * read them.
+ */
+export function DayChart({
+  columns,
+  label,
+  unit,
+}: {
+  columns: { date: string; day: string; label: string; minutes: number; percent: number }[];
+  label: string;
+  unit: string;
+}) {
+  const first = columns[0];
+  const last = columns[columns.length - 1];
+  return (
+    <div className="day-chart">
+      <ol className="day-chart-plot" aria-label={label}>
+        {columns.map((column) => (
+          <li key={column.date} tabIndex={0} title={column.label} aria-label={column.label}>
+            <span className="day-chart-bar" style={{ height: `${column.percent}%` }} />
+          </li>
+        ))}
+      </ol>
+      {first && last && (
+        <div className="day-chart-axis muted text-xs" aria-hidden="true">
+          <span>{first.day}</span>
+          {last !== first && <span>{last.day}</span>}
+        </div>
+      )}
+      <details className="chart-table">
+        <summary>Show as a table</summary>
+        <div className="table-wrap">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Day</th>
+                <th className="num">{unit}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {columns.map((column) => (
+                <tr key={column.date}>
+                  <td>{column.day}</td>
+                  <td className="num">{column.minutes}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </details>
+    </div>
+  );
+}
+
 /** Label-value pairs: a call's details, a plan's terms. Pairs with no value are left out. */
 export function DescriptionList({
   items,

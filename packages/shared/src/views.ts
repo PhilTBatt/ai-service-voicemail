@@ -242,6 +242,18 @@ export interface BillingView {
     month: number;
     feePence: number;
     billableSeconds: number;
+    /**
+     * The month so far, worked out as the month-end charge would be today: the fee, plus the
+     * minutes over the included ones rounded up once. Before VAT.
+     */
+    soFar: { overageMinutes: number; overagePence: number; totalPence: number };
+    /**
+     * Where the month is heading if calls carry on at the rate so far: a straight line, an
+     * estimate. Null for the first 6 days, when one busy day would swing it wildly.
+     */
+    projected: { minutes: number; overagePence: number; totalPence: number } | null;
+    /** Billable seconds on each UK day of the month so far, the first day to today. */
+    days: { date: string; billableSeconds: number }[];
   } | null;
   directDebit: {
     status: "none" | "pending" | "active" | "ended";
@@ -407,24 +419,43 @@ export interface CostRowView {
   tenantId: string;
   businessName: string;
   status: string;
+  /**
+   * The window its figures cover, UK dates, [start, end): its billing month so far once it's
+   * live, so its costs and its bill cover the same days; otherwise the calendar month.
+   */
+  windowStart: string;
+  windowEnd: string;
   calls: number;
+  /** Its calls' length, added up: what the cost per minute is worked out over. */
+  callSeconds: number;
   pence: {
     voicePlatform: number;
     languageModel: number;
+    /** The texts about calls: summaries and emergency texts. */
     texts: number;
+    /** The texts about the account: set-up, going live, codes, leaving. */
+    accountTexts: number;
     phoneMinutes: number;
     number: number;
     /** Voicemails transcribed while the switch was on (decision 022). */
     transcription: number;
     total: number;
   };
+  /**
+   * What its billing month comes to so far (fee plus extra minutes, before VAT), or null for a
+   * business that doesn't pay: the demo line, a test business, one not live yet or that has left.
+   */
+  billPence: number | null;
 }
 
-/** GET /api/admin/costs: estimated supplier costs for the UK calendar month containing today. */
+/** GET /api/admin/costs: each business's estimated supplier costs, and its bill so far. */
 export interface CostsView {
+  /** The UK calendar month containing today: the window for businesses with no billing month. */
   periodStart: string;
   periodEnd: string;
   tenants: CostRowView[];
+  /** Every supplier: its plan and tiers, the last 30 days, the next 30, and tier warnings. */
+  suppliers: ServiceCostsView;
   /** The prices and assumptions behind the figures, in words. */
   assumptions: string[];
   /** Cost lines the price list doesn't cover, so they're missing from the figures. */
@@ -471,4 +502,65 @@ export interface DataDeletionView {
 export interface ReleasedNumberView {
   released: string | null;
   status: "cancelled";
+}
+
+/** One tier of a supplier's pricing. */
+export interface ServiceTierView {
+  name: string;
+  /** The one we're on now. */
+  current: boolean;
+  /** Its fixed monthly price in pence; 0 for free or pay-as-you-go, null when it's by agreement. */
+  monthlyPence: number | null;
+  /** What it allows, in words. */
+  limit: string;
+}
+
+/** A count over the last 30 days, the 30 before, and where a straight line puts the next 30. */
+export interface TrendView {
+  last: number;
+  previous: number;
+  next: number;
+  /** The change from the window before, in percent; null when that window had none. */
+  ratePercent: number | null;
+}
+
+/** One supplier on the Admin page's Costs tab. Whole pence; every figure an estimate. */
+export interface ServiceCostView {
+  id: string;
+  name: string;
+  /** What we use it for. */
+  purpose: string;
+  /** The plan we're on. */
+  plan: string;
+  /** How it charges, in words. */
+  pricing: string;
+  /** What's used against the plan's limit (`limit` null when there's none); null for no measure. */
+  usage: { label: string; used: number; limit: number | null; unit: string } | null;
+  tiers: ServiceTierView[];
+  /** The last 30 days, and the next 30 if use carries on changing as it has. */
+  pence: { now: number; next: number };
+  /** What its cost moves with. */
+  drivenBy: string;
+  /** A tier about to change: "up" costs more or hits a limit, "down" is a saving. */
+  warnings: { direction: "up" | "down"; text: string }[];
+}
+
+export interface ServiceCostsView {
+  windowDays: number;
+  /** The last window, UK dates, [from, to). */
+  from: string;
+  to: string;
+  services: ServiceCostView[];
+  growth: { calls: TrendView; minutes: TrendView; emails: TrendView; textSegments: TrendView };
+  totals: {
+    nowPence: number;
+    nextPence: number;
+    /** The paying businesses' billing months so far, before VAT. */
+    incomePence: number;
+    /** Income less the last 30 days' costs. */
+    marginPence: number;
+    payingBusinesses: number;
+    /** The metered cost of a minute of call, in hundredths of a penny; null with no calls. */
+    perMinuteHundredths: number | null;
+  };
 }

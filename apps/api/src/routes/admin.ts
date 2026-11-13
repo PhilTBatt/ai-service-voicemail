@@ -27,9 +27,10 @@ import { buyNumberForTenant, searchNumbers } from "../admin/test-number.ts";
 import type { AlertFn } from "../alerts.ts";
 import { releaseDueAt } from "../core/offboarding.ts";
 import { CURRENT_PRICES, describePrices, poundsToPence } from "../core/prices.ts";
-import { startOfUkDate, usagePeriodFor } from "../core/usage.ts";
+import { startOfUkDate } from "../core/usage.ts";
 import { TRANSCRIBABLE_MIN_SECONDS } from "../core/voicemail-transcription.ts";
 import { ukDateOf } from "../core/billing.ts";
+import { serviceCosts } from "../core/service-costs.ts";
 import { collectAgain, setSuspended, undoCancellation } from "../db/billing-actions.ts";
 import {
   activeNumberFor,
@@ -39,7 +40,8 @@ import {
   tenantIdForCharge,
   tenantExists,
   withAdvisoryLock,
-  estimateCosts,
+  estimateMonthCosts,
+  readServiceUsage,
   healthSnapshot,
   recentFailedNotifications,
   listCurrentUsage,
@@ -404,16 +406,25 @@ export function adminRouter({
 
   // What each business cost us this month, estimated from the recorded costs and the price list.
   router.get("/costs", async (_req, res) => {
-    const { periodStart, periodEnd } = usagePeriodFor(now());
-    const { tenants, unpriced } = await estimateCosts(
-      admin,
-      { from: startOfUkDate(periodStart), to: startOfUkDate(periodEnd) },
-      CURRENT_PRICES,
-    );
+    const { calendar, tenants, unpriced } = await estimateMonthCosts(admin, now(), CURRENT_PRICES);
+    const usage = await readServiceUsage(admin, now(), CURRENT_PRICES);
+    const paying = tenants.filter((tenant) => tenant.billPence !== null);
     res.json({
-      periodStart,
-      periodEnd,
+      periodStart: calendar.periodStart,
+      periodEnd: calendar.periodEnd,
       tenants,
+      suppliers: {
+        from: ukDateOf(usage.from),
+        to: ukDateOf(now()),
+        ...serviceCosts({
+          last: usage.last,
+          previous: usage.previous,
+          activeNumbers: usage.activeNumbers,
+          logins: usage.logins,
+          payingBusinesses: paying.length,
+          incomePence: paying.reduce((total, tenant) => total + (tenant.billPence ?? 0), 0),
+        }),
+      },
       assumptions: describePrices(CURRENT_PRICES),
       unpriced,
     } satisfies CostsView);

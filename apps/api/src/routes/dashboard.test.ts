@@ -1768,6 +1768,15 @@ describe("billing (Step 12)", () => {
       month: 1,
       feePence: 9900,
       billableSeconds: 61,
+      soFar: { overageMinutes: 0, overagePence: 0, totalPence: 9900 },
+      // Day 25 of 31 (the test's clock is 7 November): 61 s x 31 / 25 is 76 s, 2 minutes.
+      projected: { minutes: 2, overagePence: 0, totalPence: 9900 },
+      // No calls are stored for this business, so each of the 25 days so far is empty.
+      days: Array.from({ length: 25 }, (_, index) => ({
+        date:
+          index < 18 ? `2026-10-${14 + index}` : `2026-11-${String(index - 17).padStart(2, "0")}`,
+        billableSeconds: 0,
+      })),
     });
 
     // Starting: a link to the provider's page, which sends the person back to the Account tab.

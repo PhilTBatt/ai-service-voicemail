@@ -4,14 +4,24 @@
 // └──────────────────────────────────────────────────────────────────────────────────────┘
 import { createHash, randomBytes } from "node:crypto";
 import {
+  AI_ANSWERING_PLAN,
   LEGAL_DOCUMENT_TYPES,
   LEGAL_DOCUMENTS,
+  MOBILE_CODE_LENGTH,
   type SignupInput,
   type Trade,
 } from "@callmate/shared";
 import type pg from "pg";
-import { endedPeriods, ukDateOf } from "../core/billing.ts";
+import {
+  chargeFor,
+  currentBillingPeriod,
+  endedPeriods,
+  ukDateOf,
+  type BillingPeriod,
+} from "../core/billing.ts";
+import { mobileCodeSms } from "../core/mobile-confirmation.ts";
 import type { CostPrices } from "../core/prices.ts";
+import { SERVICE_WINDOW_DAYS, type WindowUsage } from "../core/service-costs.ts";
 import { REVIEW_FLAGS } from "../core/review.ts";
 import { startOfUkDate, usagePeriodFor } from "../core/usage.ts";
 import { ADMIN_POOL_MAX, createPool } from "./pool.ts";
@@ -615,10 +625,15 @@ export interface TenantCostEstimate {
   businessName: string;
   status: string;
   calls: number;
+  /** The calls' length added up, from start to end. */
+  callSeconds: number;
   pence: {
     voicePlatform: number;
     languageModel: number;
+    /** The texts about calls (call_costs' segments). */
     texts: number;
+    /** The texts about the account: set-up, going live, mobile codes, the cancellation notice. */
+    accountTexts: number;
     phoneMinutes: number;
     number: number;
     /** Voicemails transcribed while the switch was on (decision 022). */
@@ -627,23 +642,44 @@ export interface TenantCostEstimate {
   };
 }
 
+/** A window of time, [from, to). */
+export interface CostWindow {
+  from: Date;
+  to: Date;
+}
+
+/** What one mobile confirmation code costs in segments: every code is the same length. */
+const MOBILE_CODE_SEGMENTS = mobileCodeSms("0".repeat(MOBILE_CODE_LENGTH)).segments;
+
 /**
  * What each tenant's calls cost us in a window, estimated (BUILD_PLAN Step 10's admin screen).
  * - Voice platform: the cost Retell reports for each call, in US cents.
  * - Language model: the extraction's tokens at list price.
- * - Texts: the segments sent.
+ * - Texts: the segments sent about calls.
+ * - Account texts: the onboarding texts, the cancellation text and mobile confirmation codes,
+ *   each by its segments (rows from before 13 Nov 2026 have none recorded and count as one; a
+ *   code counts whether or not it reached the phone). Text-command replies and the deletion
+ *   confirmation aren't recorded anywhere, so aren't counted.
  * - Phone minutes: each call's length rounded up to whole minutes (an assumption about how
  *   Twilio rounds), for the incoming call, plus the SIP leg to the voice platform when the
  *   assistant answered. Fallback voicemails have no SIP leg.
  * - Number: one month's rental if the tenant has a number now.
+ * Each tenant's window is `window`, or its own from `tenantWindows` when it has one there.
  * Everything is summed as exact decimals and rounded to whole pence at the end. Cost lines the
  * price list doesn't cover come back in `unpriced`, so a gap is visible rather than silent.
  */
 export async function estimateCosts(
   admin: AdminPool,
-  window: { from: Date; to: Date },
+  window: CostWindow,
   prices: CostPrices,
+  tenantWindows: ReadonlyMap<string, CostWindow> = new Map(),
 ): Promise<{ tenants: TenantCostEstimate[]; unpriced: string[] }> {
+  const own = [...tenantWindows.entries()];
+  const windowArgs = [
+    own.map(([tenantId]) => tenantId),
+    own.map(([, each]) => each.from),
+    own.map(([, each]) => each.to),
+  ];
   const models = Object.entries(prices.models);
   const modelArgs = [
     models.map(([name]) => name),
@@ -655,17 +691,41 @@ export async function estimateCosts(
     business_name: string;
     status: string;
     calls: number;
+    call_seconds: number;
     voice_platform: number;
     language_model: number;
     texts: number;
+    account_texts: number;
     phone_minutes: number;
     number: number;
     transcription: number;
   }>(
-    `WITH period_calls AS (
-       SELECT id, tenant_id, via_fallback,
-              ceil(extract(epoch FROM ended_at - started_at) / 60) AS minutes
-       FROM calls WHERE started_at >= $1 AND started_at < $2
+    `WITH windows AS (
+       SELECT t.id AS tenant_id, coalesce(w.from_ts, $1) AS from_ts, coalesce(w.to_ts, $2) AS to_ts
+       FROM tenants t
+       LEFT JOIN unnest($12::uuid[], $13::timestamptz[], $14::timestamptz[])
+         AS w(tenant_id, from_ts, to_ts) ON w.tenant_id = t.id
+     ),
+     period_calls AS (
+       SELECT c.id, c.tenant_id, c.via_fallback,
+              coalesce(extract(epoch FROM c.ended_at - c.started_at), 0) AS seconds,
+              ceil(extract(epoch FROM c.ended_at - c.started_at) / 60) AS minutes
+       FROM calls c JOIN windows w ON w.tenant_id = c.tenant_id
+       WHERE c.started_at >= w.from_ts AND c.started_at < w.to_ts
+     ),
+     account_texts AS (
+       SELECT a.tenant_id, a.segments
+       FROM (
+         SELECT tenant_id, coalesce(segments, 1) AS segments, created_at
+         FROM onboarding_texts WHERE status = 'sent'
+         UNION ALL
+         SELECT tenant_id, coalesce(segments, 1), created_at
+         FROM offboarding_messages WHERE channel = 'sms' AND status = 'sent'
+         UNION ALL
+         SELECT tenant_id, $15::int, created_at FROM mobile_confirmations
+       ) a
+       JOIN windows w ON w.tenant_id = a.tenant_id
+       WHERE a.created_at >= w.from_ts AND a.created_at < w.to_ts
      ),
      costs AS (
        SELECT cc.tenant_id, cc.component, cc.unit_type, cc.units
@@ -676,6 +736,8 @@ export async function estimateCosts(
      )
      SELECT t.id AS tenant_id, t.business_name, t.status,
        (SELECT count(*) FROM period_calls pc WHERE pc.tenant_id = t.id)::int AS calls,
+       round(coalesce((SELECT sum(seconds) FROM period_calls pc WHERE pc.tenant_id = t.id), 0))::int
+         AS call_seconds,
        round(coalesce((SELECT sum(units) FROM costs c
                        WHERE c.tenant_id = t.id AND c.unit_type = 'usd_cents'), 0)
              * $3::numeric)::int AS voice_platform,
@@ -688,6 +750,8 @@ export async function estimateCosts(
        round(coalesce((SELECT sum(units) FROM costs c
                        WHERE c.tenant_id = t.id AND c.unit_type = 'segments'), 0)
              * $4::numeric * 100)::int AS texts,
+       round(coalesce((SELECT sum(segments) FROM account_texts a WHERE a.tenant_id = t.id), 0)
+             * $4::numeric * 100)::int AS account_texts,
        round(coalesce((SELECT sum(minutes) FROM period_calls pc WHERE pc.tenant_id = t.id), 0)
                * $5::numeric * 100
              + coalesce((SELECT sum(minutes) FROM period_calls pc
@@ -710,17 +774,27 @@ export async function estimateCosts(
       prices.localNumberPerMonthGbp,
       ...modelArgs,
       prices.transcriptionPerMinuteUsd,
+      ...windowArgs,
+      MOBILE_CODE_SEGMENTS,
     ],
   );
   const unpriced = await admin.query<{ component: string }>(
-    `SELECT DISTINCT cc.component
-     FROM call_costs cc JOIN calls c ON c.id = cc.call_id
-     WHERE c.started_at >= $1 AND c.started_at < $2
+    `WITH windows AS (
+       SELECT t.id AS tenant_id, coalesce(w.from_ts, $1) AS from_ts, coalesce(w.to_ts, $2) AS to_ts
+       FROM tenants t
+       LEFT JOIN unnest($4::uuid[], $5::timestamptz[], $6::timestamptz[])
+         AS w(tenant_id, from_ts, to_ts) ON w.tenant_id = t.id
+     )
+     SELECT DISTINCT cc.component
+     FROM call_costs cc
+     JOIN calls c ON c.id = cc.call_id
+     JOIN windows w ON w.tenant_id = c.tenant_id
+     WHERE c.started_at >= w.from_ts AND c.started_at < w.to_ts
        AND cc.unit_type NOT IN ('usd_cents', 'segments', 'seconds')
        AND NOT (cc.unit_type = 'tokens'
                 AND regexp_replace(cc.component, ':(input|output)_tokens$', '') = ANY($3::text[]))
      ORDER BY 1`,
-    [window.from, window.to, modelArgs[0]],
+    [window.from, window.to, modelArgs[0], ...windowArgs],
   );
   return {
     tenants: rows.map((row) => ({
@@ -728,10 +802,12 @@ export async function estimateCosts(
       businessName: row.business_name,
       status: row.status,
       calls: row.calls,
+      callSeconds: row.call_seconds,
       pence: {
         voicePlatform: row.voice_platform,
         languageModel: row.language_model,
         texts: row.texts,
+        accountTexts: row.account_texts,
         phoneMinutes: row.phone_minutes,
         number: row.number,
         transcription: row.transcription,
@@ -739,6 +815,7 @@ export async function estimateCosts(
           row.voice_platform +
           row.language_model +
           row.texts +
+          row.account_texts +
           row.phone_minutes +
           row.number +
           row.transcription,
@@ -746,6 +823,196 @@ export async function estimateCosts(
     })),
     unpriced: unpriced.rows.map((row) => row.component),
   };
+}
+
+/** A tenant's estimated costs over its billing month so far, and what that month comes to. */
+export interface TenantMonthCosts extends TenantCostEstimate {
+  /** The window the figures cover, UK dates, [start, end). */
+  windowStart: string;
+  windowEnd: string;
+  /** The fee plus extra minutes so far, before VAT; null for a tenant that doesn't pay. */
+  billPence: number | null;
+}
+
+/**
+ * The Admin page's costs (BUILD_PLAN Step 10). Each tenant's estimated costs over its current
+ * billing month, which runs from the day it went live, so its costs and its bill so far cover
+ * the same days. A tenant with no billing month (the demo line, one not live yet) is costed over
+ * the UK calendar month containing `now`. The bill is the month-end charge worked out today, as
+ * the Account page shows it, for the tenants that pay: live at some point, not the demo line,
+ * not a test business (listBillableTenants' rule), and not in a month that began after it left.
+ */
+export async function estimateMonthCosts(
+  admin: AdminPool,
+  now: Date,
+  prices: CostPrices,
+): Promise<{
+  calendar: { periodStart: string; periodEnd: string };
+  tenants: TenantMonthCosts[];
+  unpriced: string[];
+}> {
+  const calendar = usagePeriodFor(now);
+  const { rows: tenantRows } = await admin.query<{
+    id: string;
+    status: string;
+    is_test: boolean;
+    is_pilot: boolean;
+    billing_start_date: string | null;
+    left_on: string | null;
+  }>(
+    `SELECT id, status, is_test, is_pilot, billing_start_date::text,
+            to_char(cancellation_requested_at AT TIME ZONE 'Europe/London', 'YYYY-MM-DD') AS left_on
+     FROM tenants`,
+  );
+  const periods = new Map<string, BillingPeriod>();
+  for (const tenant of tenantRows) {
+    if (tenant.billing_start_date !== null && tenant.status !== "demo") {
+      periods.set(tenant.id, currentBillingPeriod(tenant.billing_start_date, now));
+    }
+  }
+  const { rows: usageRows } = await admin.query<{ tenant_id: string; billable_seconds: number }>(
+    `SELECT u.tenant_id, u.billable_seconds::int
+     FROM usage_periods u
+     JOIN unnest($1::uuid[], $2::date[]) AS p(tenant_id, period_start)
+       ON p.tenant_id = u.tenant_id AND p.period_start = u.period_start`,
+    [[...periods.keys()], [...periods.values()].map((period) => period.periodStart)],
+  );
+  const billableSeconds = new Map(usageRows.map((row) => [row.tenant_id, row.billable_seconds]));
+  const { tenants, unpriced } = await estimateCosts(
+    admin,
+    { from: startOfUkDate(calendar.periodStart), to: startOfUkDate(calendar.periodEnd) },
+    prices,
+    new Map(
+      [...periods].map(([tenantId, period]) => [
+        tenantId,
+        { from: startOfUkDate(period.periodStart), to: startOfUkDate(period.periodEnd) },
+      ]),
+    ),
+  );
+  const byId = new Map(tenantRows.map((tenant) => [tenant.id, tenant]));
+  return {
+    calendar,
+    unpriced,
+    tenants: tenants.map((estimate) => {
+      const tenant = byId.get(estimate.tenantId);
+      const period = periods.get(estimate.tenantId);
+      let billPence: number | null = null;
+      if (
+        tenant !== undefined &&
+        period !== undefined &&
+        !tenant.is_test &&
+        (tenant.left_on === null || period.periodStart < tenant.left_on)
+      ) {
+        billPence = chargeFor({
+          plan: AI_ANSWERING_PLAN,
+          period,
+          isPilot: tenant.is_pilot,
+          billableSeconds: billableSeconds.get(estimate.tenantId) ?? 0,
+          vat: null,
+        }).subtotalPence;
+      }
+      return {
+        ...estimate,
+        windowStart: period?.periodStart ?? calendar.periodStart,
+        windowEnd: period?.periodEnd ?? calendar.periodEnd,
+        billPence,
+      };
+    }),
+  };
+}
+
+/** What one window of days used, across every tenant: what core/service-costs.ts prices. */
+async function windowUsage(
+  admin: AdminPool,
+  window: CostWindow,
+  prices: CostPrices,
+): Promise<WindowUsage> {
+  const { tenants } = await estimateCosts(admin, window, prices);
+  const sum = (pick: (pence: TenantCostEstimate["pence"]) => number) =>
+    tenants.reduce((total, tenant) => total + pick(tenant.pence), 0);
+  const { rows } = await admin.query<{
+    peak: number;
+    emails: number;
+    call_segments: number;
+    account_segments: number;
+    payments: number[];
+  }>(
+    `SELECT
+       -- The most answered calls in progress at any call's start.
+       coalesce((SELECT max(n) FROM (
+          SELECT (SELECT count(*) FROM calls b
+                  WHERE NOT b.via_fallback AND b.started_at <= a.started_at
+                    AND coalesce(b.ended_at, b.started_at) > a.started_at) AS n
+          FROM calls a
+          WHERE NOT a.via_fallback AND a.started_at >= $1 AND a.started_at < $2) c), 0)::int AS peak,
+       ((SELECT count(*) FROM notifications
+          WHERE channel = 'email' AND status IN ('sent', 'delivered', 'undelivered')
+            AND created_at >= $1 AND created_at < $2)
+        + (SELECT count(*) FROM billing_emails
+            WHERE status = 'sent' AND created_at >= $1 AND created_at < $2)
+        + (SELECT count(*) FROM offboarding_messages
+            WHERE channel = 'email' AND status = 'sent'
+              AND created_at >= $1 AND created_at < $2))::int AS emails,
+       coalesce((SELECT sum(cc.units) FROM call_costs cc JOIN calls c ON c.id = cc.call_id
+                 WHERE cc.unit_type = 'segments'
+                   AND c.started_at >= $1 AND c.started_at < $2), 0)::int AS call_segments,
+       (coalesce((SELECT sum(coalesce(segments, 1)) FROM onboarding_texts
+                  WHERE status = 'sent' AND created_at >= $1 AND created_at < $2), 0)
+        + coalesce((SELECT sum(coalesce(segments, 1)) FROM offboarding_messages
+                    WHERE channel = 'sms' AND status = 'sent'
+                      AND created_at >= $1 AND created_at < $2), 0)
+        + (SELECT count(*) FROM mobile_confirmations
+            WHERE created_at >= $1 AND created_at < $2) * $3::int)::int AS account_segments,
+       coalesce((SELECT array_agg(total_pence ORDER BY created_at) FROM billing_charges
+                 WHERE payment_ref IS NOT NULL
+                   AND created_at >= $1 AND created_at < $2), '{}') AS payments`,
+    [window.from, window.to, MOBILE_CODE_SEGMENTS],
+  );
+  const row = rows[0]!;
+  return {
+    calls: tenants.reduce((total, tenant) => total + tenant.calls, 0),
+    callSeconds: tenants.reduce((total, tenant) => total + tenant.callSeconds, 0),
+    peakConcurrentCalls: row.peak,
+    emails: row.emails,
+    textSegments: row.call_segments + row.account_segments,
+    pence: {
+      voicePlatform: sum((pence) => pence.voicePlatform),
+      languageModel: sum((pence) => pence.languageModel),
+      texts: sum((pence) => pence.texts + pence.accountTexts),
+      phoneMinutes: sum((pence) => pence.phoneMinutes),
+      numbers: sum((pence) => pence.number),
+      transcription: sum((pence) => pence.transcription),
+    },
+    payments: row.payments,
+  };
+}
+
+/**
+ * The last 30 days' use of every supplier and the 30 before, for the Admin page's Costs tab.
+ * Counted from our own records: a supplier's own count can differ (Postmark's includes alert
+ * emails, which aren't recorded here).
+ */
+export async function readServiceUsage(
+  admin: AdminPool,
+  now: Date,
+  prices: CostPrices,
+): Promise<{
+  from: Date;
+  last: WindowUsage;
+  previous: WindowUsage;
+  activeNumbers: number;
+  logins: number;
+}> {
+  const day = 24 * 60 * 60 * 1000;
+  const from = new Date(now.getTime() - SERVICE_WINDOW_DAYS * day);
+  const before = new Date(from.getTime() - SERVICE_WINDOW_DAYS * day);
+  const last = await windowUsage(admin, { from, to: now }, prices);
+  const previous = await windowUsage(admin, { from: before, to: from }, prices);
+  const { rows } = await admin.query<{ numbers: number; logins: number }>(
+    `SELECT (SELECT count(*) FROM phone_numbers WHERE status = 'active')::int AS numbers,
+            (SELECT count(*) FROM users)::int AS logins`,
+  );
+  return { from, last, previous, activeNumbers: rows[0]!.numbers, logins: rows[0]!.logins };
 }
 
 // ─── Leaving (BUILD_PLAN Step 13) ──────────────────────────────────────────────────────

@@ -4,7 +4,7 @@
 // period is the month's fee (the pilot's shape or the plan's), plus overage on the period's
 // billable seconds rounded up to whole minutes once, plus VAT when a registration is in force.
 import { monthlyFeePence, VAT_RATE_PERCENT, type Plan } from "@callmate/shared";
-import { anniversaryPeriod, overagePence } from "./usage.ts";
+import { anniversaryPeriod, overagePence, startOfUkDate } from "./usage.ts";
 
 export interface BillingPeriod {
   /** YYYY-MM-DD, UK dates. The period is [periodStart, periodEnd). */
@@ -34,6 +34,81 @@ export function billingPeriodFor(anchor: string, at: Date): BillingPeriod {
     periodEnd: period.end.toString(),
     index: period.index,
   };
+}
+
+/**
+ * The billing month a business is in at `now`. As billingPeriodFor, except on go-live day:
+ * the billing start date is the database's UK date when the business went live, and `now` is
+ * this server's clock, so a moment behind the database's it's still the day before here. That's
+ * the first month, not an error.
+ */
+export function currentBillingPeriod(anchor: string, now: Date): BillingPeriod {
+  return billingPeriodFor(anchor, ukDateOf(now) < anchor ? startOfUkDate(anchor) : now);
+}
+
+/** How long a billing month is in UK days, and how many of them have begun by `today` (a UK date). */
+export interface MonthProgress {
+  days: number;
+  /** Today included; 0 before the month starts. */
+  daysSoFar: number;
+}
+
+export function monthProgress(
+  period: Pick<BillingPeriod, "periodStart" | "periodEnd">,
+  today: string,
+): MonthProgress {
+  const start = Temporal.PlainDate.from(period.periodStart);
+  const days = start.until(Temporal.PlainDate.from(period.periodEnd), { largestUnit: "days" }).days;
+  const begun = start.until(Temporal.PlainDate.from(today), { largestUnit: "days" }).days + 1;
+  return { days, daysSoFar: Math.min(days, Math.max(0, begun)) };
+}
+
+/**
+ * The day of the month from which the Account page says where the month is heading. Before it,
+ * one busy day swings the estimate wildly: a single 10-minute call on day 1 "projects" 300
+ * minutes and a bill over the plan.
+ */
+export const PROJECTION_FROM_DAY = 7;
+
+/**
+ * The month's billable seconds if calls carry on at the rate so far, or null before
+ * PROJECTION_FROM_DAY. A straight line: an estimate, never what's charged.
+ */
+export function projectedSeconds(billableSeconds: number, progress: MonthProgress): number | null {
+  if (progress.daysSoFar < PROJECTION_FROM_DAY) return null;
+  return Math.round((billableSeconds * progress.days) / progress.daysSoFar);
+}
+
+/**
+ * Billable seconds on each UK day of a billing month, from its first day to `today`, from the
+ * calls stored on each day (`stored`, by date). Only calls from the moment a business went live
+ * are billed, so on go-live day the calls before that moment (its test call) are stored but not
+ * counted: the days then add up to more than the month's usage (`billedSeconds`). The excess is
+ * taken off the earliest days, where those calls are, so the days always add up to what's billed.
+ */
+export function daysOfMonth(
+  periodStart: string,
+  today: string,
+  stored: ReadonlyMap<string, number>,
+  billedSeconds: number,
+): { date: string; billableSeconds: number }[] {
+  let excess = [...stored.values()].reduce((total, seconds) => total + seconds, 0) - billedSeconds;
+  const days: { date: string; billableSeconds: number }[] = [];
+  const last = Temporal.PlainDate.from(today);
+  for (
+    let day = Temporal.PlainDate.from(periodStart);
+    Temporal.PlainDate.compare(day, last) <= 0;
+    day = day.add({ days: 1 })
+  ) {
+    let seconds = stored.get(day.toString()) ?? 0;
+    if (excess > 0) {
+      const cut = Math.min(excess, seconds);
+      seconds -= cut;
+      excess -= cut;
+    }
+    days.push({ date: day.toString(), billableSeconds: seconds });
+  }
+  return days;
 }
 
 /**

@@ -169,6 +169,8 @@ our automatic replies, which we don't keep Twilio's references for; copies in Tw
 
 Anything named `live-*` touches a paid service and asks for `--confirm`. Day to day the only money that moves is per call (Retell and Twilio per minute, Anthropic per extraction, Twilio per text segment). Evals (`npm run evals`) cost a few pence per run under their cap.
 
+**Where the money goes: Admin, Usage and costs.** Every supplier with its plan, tiers, the last 30 days' cost and where the next 30 are heading, and a warning when that would cross a limit or fit a cheaper plan. All of it is an estimate from our own records and each supplier's published prices (dated in `apps/api/src/core/service-costs.ts`): the supplier's own bill is the truth. When you change a plan at a supplier (Postmark's, the database's size), change it in `CURRENT_PLANS` in that file too, or the page keeps warning about the old one. When a supplier changes its prices, the constants beside it.
+
 ## 11. Alerts
 
 An alert is an error line in the API's or the worker's log that starts `ALERT` and names it,

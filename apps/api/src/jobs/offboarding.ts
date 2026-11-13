@@ -16,7 +16,7 @@ import {
 } from "../core/offboarding.ts";
 import { ukDateOf } from "../core/billing.ts";
 import { checkOutbound, type OutboundPolicy } from "../core/outbound-allowlist.ts";
-import { toGsm7 } from "../core/sms.ts";
+import { smsEncoding, toGsm7 } from "../core/sms.ts";
 import {
   billingStillOwed,
   deleteTenantData,
@@ -156,11 +156,12 @@ async function sendCancellationNotices(
     channel: "sms" | "email",
     status: "sent" | "blocked",
     providerRef: string | null,
+    segments: number | null = null,
   ) => {
     const early = await withTenant(deps.pool, tenantId, async (client) => {
       await client.query(
-        "INSERT INTO offboarding_messages (tenant_id, kind, channel, status, provider_ref) VALUES ($1, 'cancellation', $2, $3, $4)",
-        [tenantId, channel, status, providerRef],
+        "INSERT INTO offboarding_messages (tenant_id, kind, channel, status, provider_ref, segments) VALUES ($1, 'cancellation', $2, $3, $4, $5)",
+        [tenantId, channel, status, providerRef, segments],
       );
       // The provider may already have said what became of it, before this saved its ID: that
       // receipt was kept, and is applied now (db/delivery-receipts.ts).
@@ -177,8 +178,15 @@ async function sendCancellationNotices(
       await record("sms", "blocked", null);
       return "blocked";
     }
-    const receipt = await deps.sms.send({ to, body: toGsm7(cancellationText(notice)) });
-    await record("sms", "sent", receipt.providerRef);
+    const body = toGsm7(cancellationText(notice));
+    const receipt = await deps.sms.send({ to, body });
+    // What the cost estimate counts it at: the provider's count, or ours when it gives none.
+    await record(
+      "sms",
+      "sent",
+      receipt.providerRef,
+      receipt.segments ?? smsEncoding(body).segments,
+    );
     return "sent";
   };
 

@@ -9,7 +9,7 @@ import type { PgBoss } from "pg-boss";
 import type pg from "pg";
 import { raiseAlert, type AlertFn } from "../alerts.ts";
 import { checkOutbound, type OutboundPolicy } from "../core/outbound-allowlist.ts";
-import { toGsm7 } from "../core/sms.ts";
+import { smsEncoding, toGsm7 } from "../core/sms.ts";
 import { applyEarlyReceipt, raiseReceiptAlert } from "../db/delivery-receipts.ts";
 import { advanceOnboarding } from "../db/onboarding.ts";
 import { withTenant } from "../db/tenant.ts";
@@ -73,11 +73,14 @@ async function sendText(
   body: string,
 ): Promise<"sent" | "blocked"> {
   const decision = checkOutbound(outbound, to);
-  const receipt = decision.allowed ? await sms.send({ to, body: toGsm7(body) }) : null;
+  const text = toGsm7(body);
+  const receipt = decision.allowed ? await sms.send({ to, body: text }) : null;
+  // What the cost estimate counts it at: the provider's count, or ours when it gives none.
+  const segments = receipt ? (receipt.segments ?? smsEncoding(text).segments) : null;
   const early = await withTenant(pool, tenantId, async (client) => {
     await client.query(
-      "INSERT INTO onboarding_texts (tenant_id, kind, status, provider_ref) VALUES ($1, $2, $3, $4)",
-      [tenantId, kind, receipt ? "sent" : "blocked", receipt?.providerRef ?? null],
+      "INSERT INTO onboarding_texts (tenant_id, kind, status, provider_ref, segments) VALUES ($1, $2, $3, $4, $5)",
+      [tenantId, kind, receipt ? "sent" : "blocked", receipt?.providerRef ?? null, segments],
     );
     // Twilio may already have said what became of it, before this saved its ID: that receipt
     // was kept, and is applied now (db/delivery-receipts.ts).

@@ -29,6 +29,10 @@
      selected item, "link" is for links and focus. */
   --color-brand-solid: #2952cc;
   --color-brand-solid-hover: #2045b3;
+  /* Chart series, in this fixed order: 1 is the plan or the main measure, 2 what's over it.
+     Checked for colour-blind separation and contrast against the surface in both themes. */
+  --color-chart-1: #2a78d6;
+  --color-chart-2: #eb6834;
   --color-brand-soft: #ebf0ff;
   --color-brand-soft-text: #1d3f9f;
   --color-brand-border: #b9c9fb;
@@ -138,6 +142,8 @@
   --color-text-subtle: #6a768e;
   --color-brand-solid: #3a62e0;
   --color-brand-solid-hover: #4c72ec;
+  --color-chart-1: #3987e5;
+  --color-chart-2: #d95926;
   --color-brand-soft: rgb(99 135 255 / 0.15);
   --color-brand-soft-text: #a8bcff;
   --color-brand-border: rgb(99 135 255 / 0.4);
@@ -187,6 +193,8 @@
     --color-text-subtle: #6a768e;
     --color-brand-solid: #3a62e0;
     --color-brand-solid-hover: #4c72ec;
+    --color-chart-1: #3987e5;
+    --color-chart-2: #d95926;
     --color-brand-soft: rgb(99 135 255 / 0.15);
     --color-brand-soft-text: #a8bcff;
     --color-brand-border: rgb(99 135 255 / 0.4);

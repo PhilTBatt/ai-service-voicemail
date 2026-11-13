@@ -79,10 +79,12 @@ export function describePrices(prices: CostPrices): string[] {
   return [
     `Voice platform: Retell's own cost for each call, in dollars at £${prices.gbpPerUsd} per $1.`,
     `AI summaries: tokens at the model's list price, at £${prices.gbpPerUsd} per $1.`,
-    `Texts: £${prices.smsSegmentGbp} a segment (Twilio, this account, 7 Nov 2026).`,
+    "Each live business is costed over its own billing month so far, the same days as its bill; the rest over this calendar month.",
+    `Texts: £${prices.smsSegmentGbp} a segment (Twilio, this account, 7 Nov 2026). Call texts are the summaries and emergency texts; account texts are set-up, going live, mobile codes and the cancellation text, by their segments (counted from 13 Nov 2026; earlier ones as one each). Replies to text commands and the deletion confirmation aren't recorded, so aren't counted.`,
     `Phone minutes: each call rounded up to whole minutes, at £${prices.inboundCallPerMinuteGbp} a minute for the incoming call, plus $${prices.sipPerMinuteUsd} a minute for the leg to the voice platform when the assistant answered.`,
     `Number: £${prices.localNumberPerMonthGbp} a month for a local number.`,
     `Transcription: voicemails transcribed while the switch is on (Admin, Overview), each counted as whole minutes, at $${prices.transcriptionPerMinuteUsd} a minute (Twilio's US price page, Oct 2026).`,
     "Email isn't counted: Postmark's free 100 a month covers it for now.",
+    "Bill so far: the fee plus extra minutes the month-end charge would come to today, before VAT. Hosting (Azure), the domain and any paid plans aren't in these figures: they don't change with calls.",
   ];
 }

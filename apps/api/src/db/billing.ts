@@ -1,9 +1,17 @@
 // What a business sees of its billing (BUILD_PLAN Step 12; decision 019): the plan, the
-// current billing month and its billable time so far, and its Direct Debit. Read inside the
-// business's own transaction.
-import { AI_ANSWERING_PLAN, monthlyFeePence, type BillingView } from "@callmate/shared";
+// current billing month so far (its bill as the month-end charge would work it out today, where
+// it's heading, and its minutes day by day), and its Direct Debit. Read inside the business's
+// own transaction.
+import { AI_ANSWERING_PLAN, type BillingView } from "@callmate/shared";
 import type pg from "pg";
-import { billingPeriodFor, ukDateOf } from "../core/billing.ts";
+import {
+  chargeFor,
+  currentBillingPeriod,
+  daysOfMonth,
+  monthProgress,
+  projectedSeconds,
+  ukDateOf,
+} from "../core/billing.ts";
 import { startOfUkDate } from "../core/usage.ts";
 import { directDebitState } from "./direct-debit.ts";
 import { withTenant } from "./tenant.ts";
@@ -33,13 +41,8 @@ export async function loadBillingView(
     const leftOn =
       tenant.cancellation_requested_at === null ? null : ukDateOf(tenant.cancellation_requested_at);
     const anchor = tenant.billing_start_date;
-    // The billing start date is the database's UK date when the business went live, and `now`
-    // is this server's clock. A moment behind the database's on go-live day, it's still the
-    // day before: that's the first month, not an error (billingPeriodFor throws before it).
     const current =
-      anchor !== null && tenant.status !== "demo"
-        ? billingPeriodFor(anchor, ukDateOf(now) < anchor ? startOfUkDate(anchor) : now)
-        : null;
+      anchor !== null && tenant.status !== "demo" ? currentBillingPeriod(anchor, now) : null;
     if (current && (leftOn === null || current.periodStart < leftOn)) {
       const usage = (
         await client.query<{ billable_seconds: number }>(
@@ -47,12 +50,55 @@ export async function loadBillingView(
           [tenantId, current.periodStart],
         )
       ).rows[0];
+      const billableSeconds = usage?.billable_seconds ?? 0;
+      // VAT isn't added: the Account page shows prices before VAT, as the plan is sold.
+      const charge = (seconds: number) =>
+        chargeFor({
+          plan,
+          period: current,
+          isPilot: tenant.is_pilot,
+          billableSeconds: seconds,
+          vat: null,
+        });
+      const soFar = charge(billableSeconds);
+      const today = ukDateOf(now);
+      const heading = projectedSeconds(billableSeconds, monthProgress(current, today));
+      const projected = heading === null ? null : charge(heading);
+      // Each day's calls, by UK date. Only the month's own: the go-live day's test call is
+      // taken back off by daysOfMonth, so the days add up to the usage above.
+      const stored = await client.query<{ day: string; seconds: number }>(
+        `SELECT to_char(started_at AT TIME ZONE 'Europe/London', 'YYYY-MM-DD') AS day,
+                sum(billable_seconds)::int AS seconds
+         FROM calls
+         WHERE tenant_id = $1 AND started_at >= $2 AND started_at < $3 AND billable_seconds > 0
+         GROUP BY 1`,
+        [tenantId, startOfUkDate(current.periodStart), startOfUkDate(current.periodEnd)],
+      );
       period = {
         start: current.periodStart,
         end: current.periodEnd,
         month: current.index + 1,
-        feePence: monthlyFeePence(plan, current.index, tenant.is_pilot),
-        billableSeconds: usage?.billable_seconds ?? 0,
+        feePence: soFar.feePence,
+        billableSeconds,
+        soFar: {
+          overageMinutes: soFar.overageMinutes,
+          overagePence: soFar.overagePence,
+          totalPence: soFar.subtotalPence,
+        },
+        projected:
+          heading === null || projected === null
+            ? null
+            : {
+                minutes: Math.ceil(heading / 60),
+                overagePence: projected.overagePence,
+                totalPence: projected.subtotalPence,
+              },
+        days: daysOfMonth(
+          current.periodStart,
+          today,
+          new Map(stored.rows.map((row) => [row.day, row.seconds])),
+          billableSeconds,
+        ),
       };
     }
     const directDebit = await directDebitState(client, tenantId);

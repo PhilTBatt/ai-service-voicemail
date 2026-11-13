@@ -67,7 +67,66 @@ describe("the month a business is in", () => {
       month: 3,
       feePence: 9900,
       billableSeconds: 4321,
+      // 73 minutes of the 200 included: just the fee.
+      soFar: { overageMinutes: 0, overagePence: 0, totalPence: 9900 },
+      // Day 7 of 30: 4,321 s x 30 / 7 = 18,519 s, 309 minutes, 109 over at 20p.
+      projected: { minutes: 309, overagePence: 2180, totalPence: 12080 },
+      days: [14, 15, 16, 17, 18, 19, 20].map((day) => ({
+        date: `2026-11-${day}`,
+        billableSeconds: 0,
+      })),
     });
+  });
+
+  it("shows the bill so far with extra minutes, where it's heading, and each day's minutes", async () => {
+    const tenantId = await business();
+    const call = (startedAt: string, seconds: number) =>
+      admin.query(
+        `INSERT INTO calls (tenant_id, provider_call_id, started_at, ended_at, billable_seconds)
+         VALUES ($1, $2, $3, $3::timestamptz + make_interval(secs => $4), $4)`,
+        [tenantId, `call_${randomUUID()}`, startedAt, seconds],
+      );
+    // One call the night before the month starts (not this month's), two on the 14th and one
+    // on the 16th. November is winter, so UK time is UTC.
+    await call("2026-11-13T23:59:00Z", 500);
+    await call("2026-11-14T00:30:00Z", 6000);
+    await call("2026-11-14T15:00:00Z", 3000);
+    await call("2026-11-16T09:00:00Z", 3630);
+    await admin.query(
+      `INSERT INTO usage_periods (tenant_id, period_start, period_end, billable_seconds)
+       VALUES ($1, '2026-11-14', '2026-12-14', 12630)`,
+      [tenantId],
+    );
+    const period = (await view(tenantId, "2026-11-16T12:00:00Z"))?.period;
+    // 12,630 s is 210.5 minutes: rounded up once to 211, 11 over the 200, at 20p.
+    expect(period?.soFar).toEqual({ overageMinutes: 11, overagePence: 220, totalPence: 10120 });
+    // Day 3: too early to say where the month is heading.
+    expect(period?.projected).toBeNull();
+    expect(period?.days).toEqual([
+      { date: "2026-11-14", billableSeconds: 9000 },
+      { date: "2026-11-15", billableSeconds: 0 },
+      { date: "2026-11-16", billableSeconds: 3630 },
+    ]);
+    expect(period?.days.reduce((total, day) => total + day.billableSeconds, 0)).toBe(12630);
+  });
+
+  it("leaves the go-live day's test call out of the days, as it's left out of the bill", async () => {
+    const tenantId = await business({ anchor: "2026-11-14" });
+    // A 90-second test call before going live that day (stored, never billed), then a real one.
+    await admin.query(
+      `INSERT INTO calls (tenant_id, provider_call_id, started_at, ended_at, billable_seconds)
+       VALUES ($1, $2, '2026-11-14T09:00:00Z', '2026-11-14T09:01:30Z', 90),
+              ($1, $3, '2026-11-14T16:00:00Z', '2026-11-14T16:02:00Z', 120)`,
+      [tenantId, `call_${randomUUID()}`, `call_${randomUUID()}`],
+    );
+    await admin.query(
+      `INSERT INTO usage_periods (tenant_id, period_start, period_end, billable_seconds)
+       VALUES ($1, '2026-11-14', '2026-12-14', 120)`,
+      [tenantId],
+    );
+    expect((await view(tenantId, "2026-11-14T18:00:00Z"))?.period?.days).toEqual([
+      { date: "2026-11-14", billableSeconds: 120 },
+    ]);
   });
 
   it("shows the first month when this server's clock is a moment behind the database's on go-live day", async () => {
@@ -80,6 +139,10 @@ describe("the month a business is in", () => {
       month: 1,
       feePence: 9900,
       billableSeconds: 0,
+      soFar: { overageMinutes: 0, overagePence: 0, totalPence: 9900 },
+      projected: null,
+      // This server's "today" is the day before the month starts: no days yet.
+      days: [],
     });
   });
 
