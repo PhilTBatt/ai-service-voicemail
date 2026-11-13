@@ -598,6 +598,27 @@ describe("tenant isolation through the API", () => {
     const detail = await json<object>(get(`/tenants/${tenantB}`, tokens.admin));
     expect(detail).toMatchObject({ businessName: "Other Sparks", trade: "electrician" });
   });
+
+  it("leaves businesses whose data was deleted out of the admin's and reseller's lists, and says how many", async () => {
+    const before = await json<{ deletedHidden: number }>(get("/tenants", tokens.admin));
+    const gone = await createTenant(admin, { businessName: "Gone Plumbing", trade: "plumber" });
+    // What deleting its data leaves (db/cross-tenant.ts deleteTenantData).
+    await admin.query(
+      "UPDATE tenants SET business_name = 'Deleted business', status = 'cancelled', data_deleted_at = now() WHERE id = $1",
+      [gone],
+    );
+    for (const token of [tokens.admin, tokens.reseller]) {
+      const list = await json<{ tenants: { id: string }[]; deletedHidden: number }>(
+        get("/tenants", token),
+      );
+      expect(list.tenants.map((tenant) => tenant.id)).not.toContain(gone);
+      expect(list.deletedHidden).toBe(before.deletedHidden + 1);
+    }
+    // An owner's list never had it, and isn't told about anyone else's.
+    expect(await json<{ deletedHidden: number }>(get("/tenants", tokens.ownerA))).toMatchObject({
+      deletedHidden: 0,
+    });
+  });
 });
 
 describe("legal documents (Step 11)", () => {

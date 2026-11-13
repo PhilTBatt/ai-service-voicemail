@@ -153,6 +153,14 @@ async function seed(admin: AdminPool): Promise<void> {
     [plumbing],
   );
 
+  // A business whose data was deleted, as db/cross-tenant.ts deleteTenantData leaves it: the
+  // business list leaves it out and says so (e2e/journeys.e2e.ts, "the business list").
+  const gone = await createTenant(admin, { businessName: "Deleted business", trade: "plumber" });
+  await admin.query(
+    "UPDATE tenants SET status = 'cancelled', data_deleted_at = now() WHERE id = $1",
+    [gone],
+  );
+
   const sparks = await createTenant(admin, { businessName: "Other Sparks", trade: "electrician" });
   // Flagged as if the agent had named a price, so the admin's review queue has a call in it,
   // with a note from the summary too: the call page shows the note and not the review flag.

@@ -42,6 +42,7 @@ import { enqueueOnboardingWith } from "../jobs/onboarding.ts";
 import { adminRouter, type NumberProvisioning, type SupplierReadingProviders } from "./admin.ts";
 import {
   createSignupLink,
+  countDeletedTenants,
   listTenantsWithCallCounts,
   type AdminPool,
   type TenantWithCallCounts,
@@ -206,11 +207,16 @@ export function dashboardRouter({
   // is this list and nothing below it: counts, never content.
   router.get("/tenants", requireRole("owner", "admin", "reseller"), async (_req, res) => {
     const principal = principalOf(res);
-    const visible =
-      principal.role === "owner"
-        ? await listOwnTenants(pool, principal.tenantIds)
-        : await listTenantsWithCallCounts(admin);
-    res.json({ tenants: visible.map(presentTenantSummary) } satisfies TenantListView);
+    const owner = principal.role === "owner";
+    const visible = owner
+      ? await listOwnTenants(pool, principal.tenantIds)
+      : await listTenantsWithCallCounts(admin);
+    // An owner's deleted business has no membership left, so never reaches their list anyway.
+    const deletedHidden = owner ? 0 : await countDeletedTenants(admin);
+    res.json({
+      tenants: visible.map(presentTenantSummary),
+      deletedHidden,
+    } satisfies TenantListView);
   });
 
   router.use(

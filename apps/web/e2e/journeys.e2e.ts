@@ -884,3 +884,14 @@ test.describe("what nobody else may see", () => {
     await expect(page.getByRole("heading", { level: 1, name: FERN_LANE })).toBeVisible();
   });
 });
+
+test.describe("the business list", () => {
+  test("leaves out a business whose data was deleted, and says how many", async ({ page }) => {
+    await openAs(page, ADMIN, "/");
+    await settled(page);
+    await expect(page.getByRole("link", { name: FERN_LANE })).toBeVisible();
+    // The seeded one (e2e-server.ts): a row with no details and nothing to open.
+    await expect(page.getByText("Deleted business", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("1 business whose data was deleted isn't listed.")).toBeVisible();
+  });
+});

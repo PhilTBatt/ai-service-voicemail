@@ -167,7 +167,11 @@ export const TENANT_BILLING_COLUMNS = `t.is_pilot AS "isPilot",
   (SELECT b.status FROM billing_charges b WHERE b.tenant_id = t.id
    ORDER BY b.period_start DESC LIMIT 1) AS "lastCharge"`;
 
-/** Every tenant with its call counts. Counts are safe for the reseller; nothing else here is content. */
+/**
+ * Every tenant with its call counts, but those whose data has been deleted: they're kept only
+ * as "Deleted business" for the records that must outlive them (charges, the audit log), and
+ * have nothing left to open. Counts are safe for the reseller; nothing else here is content.
+ */
 export async function listTenantsWithCallCounts(admin: AdminPool): Promise<TenantWithCallCounts[]> {
   const { rows } = await admin.query<TenantWithCallCounts>(
     `SELECT t.id, t.business_name AS "businessName", t.trade, t.status,
@@ -176,9 +180,18 @@ export async function listTenantsWithCallCounts(admin: AdminPool): Promise<Tenan
             COUNT(c.id)::int AS "callsTotal",
             ${TENANT_BILLING_COLUMNS}
      FROM tenants t LEFT JOIN calls c ON c.tenant_id = t.id
+     WHERE t.data_deleted_at IS NULL
      GROUP BY t.id ORDER BY t.created_at`,
   );
   return rows;
+}
+
+/** How many businesses' data has been deleted: the list says how many it leaves out. */
+export async function countDeletedTenants(admin: AdminPool): Promise<number> {
+  const { rows } = await admin.query<{ count: number }>(
+    "SELECT count(*)::int AS count FROM tenants WHERE data_deleted_at IS NOT NULL",
+  );
+  return rows[0]!.count;
 }
 
 // ─── Admin screens (BUILD_PLAN Step 10) ────────────────────────────────────────────────
@@ -610,6 +623,8 @@ export async function listCurrentUsage(admin: AdminPool, today: Date): Promise<T
      FROM tenants t
      LEFT JOIN usage_periods u
        ON u.tenant_id = t.id AND u.period_start <= $1::date AND u.period_end > $1::date
+     -- A business whose data is deleted has no calls left to count.
+     WHERE t.data_deleted_at IS NULL
      ORDER BY t.business_name`,
     // The period that contains today: billing months run from each business's go-live date
     // (decision 019), so the one holding the 1st of the calendar month was usually last
@@ -763,6 +778,9 @@ export async function estimateCosts(
                        WHERE c.tenant_id = t.id AND c.component = 'twilio:transcription_seconds'), 0)
              * $11::numeric * $3::numeric * 100)::int AS transcription
      FROM tenants t
+     -- A business whose data is deleted has no calls, texts or number left to cost: its row
+     -- would be all zeros (the totals are the same without it).
+     WHERE t.data_deleted_at IS NULL
      ORDER BY t.business_name`,
     [
       window.from,

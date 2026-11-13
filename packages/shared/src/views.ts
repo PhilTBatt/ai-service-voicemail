@@ -42,6 +42,8 @@ export interface TenantListItem {
 
 export interface TenantListView {
   tenants: TenantListItem[];
+  /** Businesses whose data has been deleted, which the list leaves out (0 for an owner). */
+  deletedHidden: number;
 }
 
 /** GET /api/tenants/:id */

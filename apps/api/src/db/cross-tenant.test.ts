@@ -3,12 +3,15 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { TEST_ADMIN_DATABASE_URL, TEST_DATABASE_URL } from "../testing/databases.ts";
 import {
   assignPhoneNumber,
+  countDeletedTenants,
   createAdminPool,
   createTenant,
+  deleteTenantData,
   estimateCosts,
   findTenantIdByNumber,
   listCurrentUsage,
   listTenants,
+  listTenantsWithCallCounts,
 } from "./cross-tenant.ts";
 import { createPool } from "./pool.ts";
 import { withTenant } from "./tenant.ts";
@@ -238,6 +241,41 @@ describe("estimateCosts", () => {
       },
     });
     expect(unpriced).toEqual(["mystery:widgets", "unpriced-model:input_tokens"]);
+  });
+});
+
+describe("a business whose data was deleted", () => {
+  it("is left out of the business list, the usage and the costs, and counted as hidden", async () => {
+    const deletedBefore = await countDeletedTenants(admin);
+    const tenantId = await createTenant(admin, {
+      businessName: "Leaving Plumbing",
+      trade: "plumber",
+    });
+    expect((await listTenantsWithCallCounts(admin)).map((row) => row.id)).toContain(tenantId);
+
+    await deleteTenantData(admin, tenantId, { now: new Date(), actorUserId: null });
+
+    expect((await listTenantsWithCallCounts(admin)).map((row) => row.id)).not.toContain(tenantId);
+    expect((await listCurrentUsage(admin, new Date())).map((row) => row.tenantId)).not.toContain(
+      tenantId,
+    );
+    const { tenants } = await estimateCosts(
+      admin,
+      { from: new Date("2031-03-01T00:00:00Z"), to: new Date("2031-04-01T00:00:00Z") },
+      {
+        gbpPerUsd: "0.8",
+        smsSegmentGbp: "0.042325",
+        inboundCallPerMinuteGbp: "0.007558",
+        sipPerMinuteUsd: "0.004",
+        transcriptionPerMinuteUsd: "0.024",
+        localNumberPerMonthGbp: "0.86917",
+        models: {},
+      },
+    );
+    expect(tenants.map((row) => row.tenantId)).not.toContain(tenantId);
+    expect(await countDeletedTenants(admin)).toBe(deletedBefore + 1);
+    // Still there for the records that outlive it, and for the seed's own list.
+    expect((await listTenants(admin)).map((row) => row.id)).toContain(tenantId);
   });
 });
 

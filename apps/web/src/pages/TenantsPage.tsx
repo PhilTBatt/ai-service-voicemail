@@ -36,7 +36,7 @@ export function TenantsPage({ me }: { me: MeView }) {
   }
   if (list.status === "error") return <ErrorNote error={list.error} retry={list.reload} />;
 
-  const { tenants } = list.data;
+  const { tenants, deletedHidden } = list.data;
   const wanted = search.trim().toLowerCase();
   const shown = wanted
     ? tenants.filter((tenant) => tenant.businessName.toLowerCase().includes(wanted))
@@ -131,6 +131,14 @@ export function TenantsPage({ me }: { me: MeView }) {
           </ul>
         )}
       </Card>
+      {deletedHidden > 0 && (
+        <p className="muted text-sm">
+          {deletedHidden === 1
+            ? "1 business whose data was deleted isn't listed."
+            : `${deletedHidden} businesses whose data was deleted aren't listed.`}{" "}
+          Their charges stay on Admin, Billing while any is still owed.
+        </p>
+      )}
     </div>
   );
 }
