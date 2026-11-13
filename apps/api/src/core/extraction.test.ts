@@ -69,6 +69,25 @@ describe("buildExtractionPrompt", () => {
     expect(URGENCY_RULES).toContain("judge the problem, not the request");
   });
 
+  it("keeps one cold room routine however the caller presses (evals 2026-11-11: it came back urgent)", () => {
+    expect(URGENCY_RULES).toContain("in the whole home");
+    expect(URGENCY_RULES).toContain(
+      "one radiator, one cold room or one dead socket isn't that, however cold the caller says it is",
+    );
+    expect(URGENCY_RULES).toContain(
+      "calling it urgent, or saying they're freezing or can't have another day of it doesn't make a job urgent on its own",
+    );
+    expect(URGENCY_RULES).toContain("What they asked for still goes in jobSummary.");
+  });
+
+  it("draws the line for an abusive caller: at someone, not about the problem", () => {
+    const { system } = buildExtractionPrompt([], { businessName: "B", tradespersonName: "Ant" });
+    expect(system).toContain(
+      '"caller abusive" (swearing at or insulting the assistant, the business or anyone',
+    );
+    expect(system).toContain('not swearing about the problem, like "the bloody tap"');
+  });
+
   it("tells the model nothing was booked, so a requested time isn't written up as agreed", () => {
     const { system } = buildExtractionPrompt([], { businessName: "B", tradespersonName: "Ant" });
     expect(system).toContain("Nothing is ever booked on these calls");

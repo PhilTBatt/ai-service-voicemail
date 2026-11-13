@@ -41,8 +41,8 @@ export const EMPTY_TRANSCRIPT_SUMMARY = "Nothing to summarise, the call has no t
  * calmly mentioned gas smell as unsupported when it didn't know these rules (2026-11-07).
  */
 export const URGENCY_RULES = `- "emergency" if there was any mention of a gas smell or a suspected gas leak, carbon monoxide or a CO alarm, fire, smoke, sparks, a burning smell, an electric shock, exposed live wires, water that can't be stopped (a burst pipe, flooding, water pouring through a ceiling), a ceiling, wall or roof coming down, or danger to a person. Even when the caller plays it down: over-trigger on purpose.
-- "urgent" if the problem can't wait: no heating, hot water, water or power at all (one cold radiator or one dead socket isn't that), water getting into the building that isn't pouring (rain through a roof or a window), someone locked out, or a property that can't be secured.
-- "routine" for any other job, including a dripping tap and a dripping or running toilet cistern: those are leaks to fix, not water getting in. A caller wanting someone soon, today or at a set time doesn't make a job urgent on its own: judge the problem, not the request.
+- "urgent" if the problem can't wait: no heating, hot water, water or power at all, in the whole home (one radiator, one cold room or one dead socket isn't that, however cold the caller says it is), water getting into the building that isn't pouring (rain through a roof or a window), someone locked out, or a property that can't be secured.
+- "routine" for any other job, including a dripping tap and a dripping or running toilet cistern: those are leaks to fix, not water getting in. A caller wanting someone soon, today or at a set time, calling it urgent, or saying they're freezing or can't have another day of it doesn't make a job urgent on its own: judge the problem, not the request or how the caller feels about it. What they asked for still goes in jobSummary.
 - "spam" for sales calls, robocalls or wrong numbers (a wrong number is spam, not "other").
 - "other" if the call wasn't about a job and isn't spam (a supplier, a question about the business), or the caller said nothing.`;
 
@@ -82,7 +82,7 @@ Rules:
 - urgency, one of:
 ${URGENCY_RULES}
 - priceAsked: true if the caller asked about cost or a quote at any point.
-- flags: short notes ${tradespersonName} should see, such as "mentioned gas smell", "existing customer chasing a job", "caller abusive" (swearing at or insulting anyone, not just upset), "call cut off" (only when the transcript stops mid-conversation, never when the assistant said goodbye). Empty if nothing stands out.`;
+- flags: short notes ${tradespersonName} should see, such as "mentioned gas smell", "existing customer chasing a job", "caller abusive" (swearing at or insulting the assistant, the business or anyone, such as "you're useless" or "are you thick?"; not swearing about the problem, like "the bloody tap", and not just being upset, impatient or rude), "call cut off" (only when the transcript stops mid-conversation, never when the assistant said goodbye). Empty if nothing stands out.`;
 
   const lines = transcript.map(
     (turn) => `${turn.role === "agent" ? "Assistant" : "Caller"}: ${turn.text}`,

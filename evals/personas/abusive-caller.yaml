@@ -5,13 +5,17 @@ description: An angry caller who swears at the assistant about a job that went w
 caller:
   brief: >
     You're furious: a plumber (you think it was this firm) fitted a tap last month and it's
-    leaking again. Swear at the assistant, call it useless, demand to know what they're going to
-    do about it. Don't threaten anyone. After a few turns, calm down a little and give your name
-    and number when asked, but refuse to give your postcode ("you've got it already").
+    leaking again. Insult the assistant directly in most of your turns, not just the situation:
+    call it useless, ask if it's thick, swear at it. Demand to know what they're going to do about
+    it. Don't threaten anyone. After a few turns, calm down a little and give your name and number
+    when asked, but refuse to give your postcode ("you've got it already").
+    (Evals 2026-11-11: a run where the caller only swore about the tap and sighed "this is
+    useless" was frustrated rather than abusive, and the flag rightly didn't come. This caller is
+    meant to be abusive, so it must insult someone.)
   name: Darren
   phone: "07700 900109"
   postcode: null
-  opening: "Your bloody plumber's tap is leaking again, this is a joke, what are you going to do about it?"
+  opening: "Your bloody plumber's tap is leaking again. You lot are useless, what are you going to do about it?"
 expect:
   scripts: []
   fields:
