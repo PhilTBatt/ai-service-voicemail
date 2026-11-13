@@ -1,4 +1,5 @@
 // Twilio's Messages API, over fetch like the telephony adapter, so it's testable offline.
+import { z } from "zod";
 import type { SmsMessage, SmsProvider, SmsReceipt } from "./sms.ts";
 import { TwilioApiError } from "./twilio.ts";
 
@@ -18,10 +19,11 @@ export interface TwilioSmsOptions {
   statusCallbackUrl?: string;
 }
 
-interface MessageJson {
-  sid: string;
-  num_segments: string | null;
-}
+/** What a created message's answer needs, checked (CLAUDE.md: every outside input). */
+const messageSchema = z.object({
+  sid: z.string().min(1),
+  num_segments: z.union([z.string(), z.number()]).nullable().optional(),
+});
 
 export class TwilioSmsProvider implements SmsProvider {
   private readonly options: TwilioSmsOptions;
@@ -52,9 +54,15 @@ export class TwilioSmsProvider implements SmsProvider {
     if (!response.ok) {
       throw new TwilioApiError(response.status, path, (await response.text()).slice(0, 300));
     }
-    const message = (await response.json()) as MessageJson;
-    const segments = Number(message.num_segments);
-    return { providerRef: message.sid, segments: Number.isFinite(segments) ? segments : null };
+    const parsed = messageSchema.safeParse(await response.json());
+    if (!parsed.success) throw new Error("Twilio's answer to a sent text had no message ID");
+    // A count of 0, or none, isn't a count: it's left to our own (a text is at least one
+    // segment, and the onboarding and cancellation rows refuse 0).
+    const segments = Number(parsed.data.num_segments ?? Number.NaN);
+    return {
+      providerRef: parsed.data.sid,
+      segments: Number.isInteger(segments) && segments > 0 ? segments : null,
+    };
   }
 
   // Twilio's docs (read 2026-11-07): DELETE /Messages/{Sid}.json deletes the message with its

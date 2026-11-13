@@ -1768,6 +1768,7 @@ describe("billing (Step 12)", () => {
       month: 1,
       feePence: 9900,
       billableSeconds: 61,
+      suspendedThroughout: false,
       soFar: { overageMinutes: 0, overagePence: 0, totalPence: 9900 },
       // Day 25 of 31 (the test's clock is 7 November): 61 s x 31 / 25 is 76 s, 2 minutes.
       projected: { minutes: 2, overagePence: 0, totalPence: 9900 },

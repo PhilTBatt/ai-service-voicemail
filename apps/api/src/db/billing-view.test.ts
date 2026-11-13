@@ -67,6 +67,7 @@ describe("the month a business is in", () => {
       month: 3,
       feePence: 9900,
       billableSeconds: 4321,
+      suspendedThroughout: false,
       // 73 minutes of the 200 included: just the fee.
       soFar: { overageMinutes: 0, overagePence: 0, totalPence: 9900 },
       // Day 7 of 30: 4,321 s x 30 / 7 = 18,519 s, 309 minutes, 109 over at 20p.
@@ -110,6 +111,41 @@ describe("the month a business is in", () => {
     expect(period?.days.reduce((total, day) => total + day.billableSeconds, 0)).toBe(12630);
   });
 
+  it("bills nothing so far for a month suspended from its start, as the month-end charge won't", async () => {
+    const tenantId = await business({ status: "suspended" });
+    await admin.query(
+      `INSERT INTO usage_periods (tenant_id, period_start, period_end, billable_seconds)
+       VALUES ($1, '2026-11-14', '2026-12-14', 600)`,
+      [tenantId],
+    );
+    // Suspended the month before, and still.
+    await withTenant(app, tenantId, (client) =>
+      client.query(
+        "INSERT INTO tenant_suspensions (tenant_id, started_at) VALUES ($1, '2026-11-01T10:00:00Z')",
+        [tenantId],
+      ),
+    );
+    expect((await view(tenantId, "2026-11-25T12:00:00Z"))?.period).toMatchObject({
+      suspendedThroughout: true,
+      soFar: { overageMinutes: 0, overagePence: 0, totalPence: 0 },
+      projected: null,
+    });
+  });
+
+  it("bills a month as usual when the suspension began part-way through it", async () => {
+    const tenantId = await business({ status: "suspended" });
+    await withTenant(app, tenantId, (client) =>
+      client.query(
+        "INSERT INTO tenant_suspensions (tenant_id, started_at) VALUES ($1, '2026-11-20T10:00:00Z')",
+        [tenantId],
+      ),
+    );
+    expect((await view(tenantId, "2026-11-25T12:00:00Z"))?.period).toMatchObject({
+      suspendedThroughout: false,
+      soFar: { totalPence: 9900 },
+    });
+  });
+
   it("leaves the go-live day's test call out of the days, as it's left out of the bill", async () => {
     const tenantId = await business({ anchor: "2026-11-14" });
     // A 90-second test call before going live that day (stored, never billed), then a real one.
@@ -139,6 +175,7 @@ describe("the month a business is in", () => {
       month: 1,
       feePence: 9900,
       billableSeconds: 0,
+      suspendedThroughout: false,
       soFar: { overageMinutes: 0, overagePence: 0, totalPence: 9900 },
       projected: null,
       // This server's "today" is the day before the month starts: no days yet.

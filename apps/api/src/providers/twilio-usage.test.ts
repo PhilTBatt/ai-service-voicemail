@@ -138,6 +138,45 @@ describe("TwilioUsageApi", () => {
   });
 });
 
+describe("TwilioUsageApi, over more than one page", () => {
+  it("follows next_page_uri to the end, so a total on a later page is read", async () => {
+    const urls: string[] = [];
+    const pages: typeof fetch = (input) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      urls.push(url);
+      return Promise.resolve(
+        Response.json(
+          urls.length === 1
+            ? {
+                usage_records: [record("calls-inbound-local", "0.21", "28")],
+                next_page_uri: `/2010-04-01/Accounts/${ACCOUNT_SID}/Usage/Records.json?Page=1&PageToken=PAx`,
+              }
+            : { usage_records: [record("totalprice", "1.51", "0", "")], next_page_uri: null },
+        ),
+      );
+    };
+    const reading = await api(pages).usage({ from: "2026-10-15", to: "2026-11-13" });
+    expect(reading.totalPence).toBe(151);
+    expect(reading.lines.map((line) => line.category)).toEqual(["calls-inbound-local"]);
+    expect(urls[1]).toBe(
+      `https://api.twilio.com/2010-04-01/Accounts/${ACCOUNT_SID}/Usage/Records.json?Page=1&PageToken=PAx`,
+    );
+  });
+
+  it("gives up after five pages rather than following forever", async () => {
+    const endless: typeof fetch = () =>
+      Promise.resolve(
+        Response.json({
+          usage_records: [],
+          next_page_uri: `/2010-04-01/Accounts/${ACCOUNT_SID}/Usage/Records.json?Page=9`,
+        }),
+      );
+    await expect(api(endless).usage({ from: "2026-10-15", to: "2026-11-13" })).rejects.toThrow(
+      "Twilio's usage records ran past 5 pages",
+    );
+  });
+});
+
 describe("pricePence", () => {
   it("rounds pounds to the nearest penny", () => {
     expect(pricePence("0.86917", "gbp", "0.8")).toBe(87);

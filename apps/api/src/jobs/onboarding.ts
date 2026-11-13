@@ -76,7 +76,8 @@ async function sendText(
   const text = toGsm7(body);
   const receipt = decision.allowed ? await sms.send({ to, body: text }) : null;
   // What the cost estimate counts it at: the provider's count, or ours when it gives none.
-  const segments = receipt ? (receipt.segments ?? smsEncoding(text).segments) : null;
+  // A text is at least one segment (the column refuses 0, which would fail after the send).
+  const segments = receipt ? Math.max(1, receipt.segments ?? smsEncoding(text).segments) : null;
   const early = await withTenant(pool, tenantId, async (client) => {
     await client.query(
       "INSERT INTO onboarding_texts (tenant_id, kind, status, provider_ref, segments) VALUES ($1, $2, $3, $4, $5)",

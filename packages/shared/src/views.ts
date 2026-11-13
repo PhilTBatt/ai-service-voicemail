@@ -243,6 +243,11 @@ export interface BillingView {
     feePence: number;
     billableSeconds: number;
     /**
+     * Suspended since before the month began, and still: nothing is charged for a month with
+     * no service (decision 019), so the month so far is nothing.
+     */
+    suspendedThroughout: boolean;
+    /**
      * The month so far, worked out as the month-end charge would be today: the fee, plus the
      * minutes over the included ones rounded up once. Before VAT.
      */

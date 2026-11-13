@@ -36,7 +36,11 @@ const TOTAL = "totalprice";
 
 const amount = z.union([z.string(), z.number()]).nullable();
 
+/** Pages followed at most: the records for 30 days fit in one, so more means something's wrong. */
+const MAX_PAGES = 5;
+
 const recordsSchema = z.object({
+  next_page_uri: z.string().nullable().optional(),
   usage_records: z.array(
     z.object({
       category: z.string(),
@@ -101,18 +105,28 @@ export class TwilioUsageApi implements TwilioUsageProvider {
     const { accountSid, authToken, gbpPerUsd } = this.options;
     const path = `/2010-04-01/Accounts/${encodeURIComponent(accountSid)}/Usage/Records.json`;
     const query = new URLSearchParams({ StartDate: from, EndDate: to, PageSize: "1000" });
-    const response = await (this.options.fetch ?? fetch)(`https://api.twilio.com${path}?${query}`, {
-      headers: {
-        Authorization: `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString("base64")}`,
-      },
-      signal: AbortSignal.timeout(this.options.timeoutMs ?? 8_000),
-    });
-    if (!response.ok) {
-      throw new TwilioApiError(response.status, path, (await response.text()).slice(0, 300));
+    // One time limit for every page together.
+    const signal = AbortSignal.timeout(this.options.timeoutMs ?? 8_000);
+    const records: z.infer<typeof recordsSchema>["usage_records"] = [];
+    // The docs give next_page_uri as a path on api.twilio.com, null on the last page.
+    let next: string | null = `${path}?${query}`;
+    for (let page = 0; next !== null; page += 1) {
+      if (page === MAX_PAGES) throw new Error(`Twilio's usage records ran past ${MAX_PAGES} pages`);
+      const response = await (this.options.fetch ?? fetch)(`https://api.twilio.com${next}`, {
+        headers: {
+          Authorization: `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString("base64")}`,
+        },
+        signal,
+      });
+      if (!response.ok) {
+        throw new TwilioApiError(response.status, path, (await response.text()).slice(0, 300));
+      }
+      const parsed = recordsSchema.safeParse(await response.json());
+      if (!parsed.success)
+        throw new Error("Twilio's usage records weren't in the documented shape");
+      records.push(...parsed.data.usage_records);
+      next = parsed.data.next_page_uri ?? null;
     }
-    const parsed = recordsSchema.safeParse(await response.json());
-    if (!parsed.success) throw new Error("Twilio's usage records weren't in the documented shape");
-    const records = parsed.data.usage_records;
     const total = records.find((record) => record.category === TOTAL);
     const lines: TwilioUsageLine[] = [];
     for (const category of TWILIO_USAGE_CATEGORIES) {

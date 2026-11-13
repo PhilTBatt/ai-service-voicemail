@@ -35,6 +35,7 @@ const period = (over: Partial<Period> = {}): Period => ({
   month: 3,
   feePence: 9900,
   billableSeconds: 4321,
+  suspendedThroughout: false,
   soFar: { overageMinutes: 0, overagePence: 0, totalPence: 9900 },
   projected: null,
   days: [],
@@ -90,6 +91,19 @@ describe("billParts", () => {
       period({ soFar: { overageMinutes: 1, overagePence: 20, totalPence: 9920 } }),
     );
     expect(one.summary).toContain("for 1 minute over");
+  });
+
+  it("says why a month suspended throughout costs nothing", () => {
+    const suspended = billParts(
+      period({
+        suspendedThroughout: true,
+        soFar: { overageMinutes: 0, overagePence: 0, totalPence: 0 },
+      }),
+    );
+    expect(suspended.total).toBe("£0.00");
+    expect(suspended.summary).toBe(
+      "Suspended since before this month began, so nothing is charged for it while that lasts.",
+    );
   });
 
   it("shows a pilot's free month as nothing, with no bar to split", () => {
@@ -155,7 +169,18 @@ describe("projectionText", () => {
 });
 
 describe("dayColumns", () => {
-  it("draws each day against the busiest, in whole minutes rounded up", () => {
+  it("adds up to the month's time, where rounding each day up would add up to more", () => {
+    // Ten 61-second days: 610 seconds, which the month rounds up once to 11 minutes. Each day
+    // rounded up would have shown 2 minutes, 20 in all.
+    const days = Array.from({ length: 10 }, (_, index) => ({
+      date: `2026-11-${14 + index}`,
+      billableSeconds: 61,
+    }));
+    expect(dayColumns(days).every((column) => column.time === "1 min 1 sec")).toBe(true);
+    expect(minuteParts(period({ billableSeconds: 610 }), plan).used).toBe(11);
+  });
+
+  it("draws each day against the busiest, to the second", () => {
     expect(
       dayColumns([
         { date: "2026-11-14", billableSeconds: 9000 },
@@ -166,23 +191,24 @@ describe("dayColumns", () => {
       {
         date: "2026-11-14",
         day: "14 Nov 2026",
-        minutes: 150,
+        time: "150 min",
         percent: 100,
-        label: "14 Nov 2026: 150 minutes",
+        label: "14 Nov 2026: 150 min",
       },
       {
         date: "2026-11-15",
         day: "15 Nov 2026",
-        minutes: 0,
+        time: "None",
         percent: 0,
-        label: "15 Nov 2026: 0 minutes",
+        label: "15 Nov 2026: None",
       },
       {
         date: "2026-11-16",
         day: "16 Nov 2026",
-        minutes: 61,
-        percent: 40.7,
-        label: "16 Nov 2026: 61 minutes",
+        time: "60 min 30 sec",
+        // 3,630 of 9,000 seconds.
+        percent: 40.3,
+        label: "16 Nov 2026: 60 min 30 sec",
       },
     ]);
   });

@@ -185,7 +185,8 @@ async function sendCancellationNotices(
       "sms",
       "sent",
       receipt.providerRef,
-      receipt.segments ?? smsEncoding(body).segments,
+      // At least one: the column refuses 0, which would fail after the send.
+      Math.max(1, receipt.segments ?? smsEncoding(body).segments),
     );
     return "sent";
   };

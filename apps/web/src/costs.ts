@@ -10,7 +10,7 @@ import type {
   TrendView,
 } from "@callmate/shared";
 import type { Tone } from "./design/tone.ts";
-import { formatPence } from "./format.ts";
+import { formatDurationWords, formatPence } from "./format.ts";
 import { addDays, formatDate } from "./time.ts";
 
 type Period = NonNullable<BillingView["period"]>;
@@ -55,8 +55,9 @@ export function billParts(period: Period): { total: string; summary: string; par
   ];
   return {
     total: formatPence(soFar.totalPence),
-    summary:
-      soFar.overageMinutes === 0
+    summary: period.suspendedThroughout
+      ? "Suspended since before this month began, so nothing is charged for it while that lasts."
+      : soFar.overageMinutes === 0
         ? `${formatPence(feePence)} for the plan. No extra minutes so far.`
         : `${formatPence(feePence)} for the plan, plus ${formatPence(soFar.overagePence)} for ${minutes(soFar.overageMinutes)} over the included ones.`,
     parts,
@@ -115,27 +116,30 @@ export function projectionText(period: Period): string | null {
 /** One day of the month's calls, as a column: its height is against the busiest day. */
 export interface DayColumn {
   date: string;
-  /** "14 Nov: 12 minutes", for the tooltip and the table. */
+  /** "14 Nov 2026: 2 min 30 sec", for the tooltip. */
   label: string;
   day: string;
-  minutes: number;
+  /** "2 min 30 sec", for the table. */
+  time: string;
   percent: number;
 }
 
-/** Each day's billable time in whole minutes, rounded up as a call's would be; 0 stays 0. */
+/**
+ * Each day's billable time as it was, to the second: the month is rounded up to whole minutes
+ * once, at its end, so rounding each day up would add to more than the month (ten 61-second
+ * days are 20 minutes that way, and 11 billed).
+ */
 export function dayColumns(days: Period["days"]): DayColumn[] {
-  const each = days.map((day) => ({
-    date: day.date,
-    minutes: Math.ceil(day.billableSeconds / 60),
-  }));
-  const busiest = Math.max(0, ...each.map((day) => day.minutes));
-  return each.map((day) => {
+  const busiest = Math.max(0, ...days.map((day) => day.billableSeconds));
+  return days.map((day) => {
     const name = formatDate(day.date);
+    const time = day.billableSeconds === 0 ? "None" : formatDurationWords(day.billableSeconds);
     return {
-      ...day,
+      date: day.date,
       day: name,
-      label: `${name}: ${minutes(day.minutes)}`,
-      percent: share(day.minutes, busiest),
+      time,
+      label: `${name}: ${time}`,
+      percent: share(day.billableSeconds, busiest),
     };
   });
 }

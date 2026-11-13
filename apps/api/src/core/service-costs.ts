@@ -50,14 +50,15 @@ export interface WindowUsage {
 export interface ServiceReadings {
   last: WindowUsage;
   previous: WindowUsage;
-  /** Businesses that pay: live at some point, not the demo line or a test. */
-  payingBusinesses: number;
+  /**
+   * Each paying business's current billing month so far, before VAT: one per business that
+   * pays (live at some point, not the demo line or a test). Their sum is the income.
+   */
+  bills: number[];
   /** Numbers rented now. */
   activeNumbers: number;
   /** People with a dashboard login. */
   logins: number;
-  /** What the paying businesses' current billing months come to so far, before VAT. */
-  incomePence: number;
   /**
    * What the suppliers' own accounts say, where they could be read: the truth our estimates
    * are checked against, and used in their place.
@@ -403,11 +404,6 @@ function postmark(emails: Trend, counts: EmailCounts | null): ServiceCostView {
 function goCardless(readings: ServiceReadings): ServiceCostView {
   const fees = (payments: number[]) =>
     payments.reduce((total, pence) => total + goCardlessFeePence(pence), 0);
-  // Next month: every paying business's month so far collected once.
-  const typical =
-    readings.payingBusinesses === 0
-      ? 0
-      : Math.round(readings.incomePence / readings.payingBusinesses);
   return {
     id: "gocardless",
     name: "GoCardless",
@@ -431,7 +427,9 @@ function goCardless(readings: ServiceReadings): ServiceCostView {
     ],
     pence: {
       now: fees(readings.last.payments),
-      next: readings.payingBusinesses * goCardlessFeePence(typical),
+      // Next month: each paying business's month so far collected once, each its own fee
+      // (the fee is a percentage with a fixed part and a cap, so an average would be wrong).
+      next: fees(readings.bills),
     },
     measured: false,
     drivenBy: "Paying businesses",
@@ -586,6 +584,7 @@ export function serviceCosts(
     ...small(),
   ];
   const now = services.reduce((total, service) => total + service.pence.now, 0);
+  const income = readings.bills.reduce((total, pence) => total + pence, 0);
   const next = services.reduce((total, service) => total + service.pence.next, 0);
   return {
     windowDays: SERVICE_WINDOW_DAYS,
@@ -594,9 +593,9 @@ export function serviceCosts(
     totals: {
       nowPence: now,
       nextPence: next,
-      incomePence: readings.incomePence,
-      marginPence: readings.incomePence - now,
-      payingBusinesses: readings.payingBusinesses,
+      incomePence: income,
+      marginPence: income - now,
+      payingBusinesses: readings.bills.length,
       // What a minute of call costs in the metered services alone, in hundredths of a penny.
       perMinuteHundredths:
         minutes.last === 0

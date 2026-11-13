@@ -43,6 +43,39 @@ describe("TwilioSmsProvider", () => {
     });
   });
 
+  it("leaves the segment count to us when Twilio gives none, or 0", async () => {
+    for (const numSegments of [null, "0", undefined]) {
+      const answered: typeof fetch = () =>
+        Promise.resolve(
+          Response.json({ sid: "SM" + "2".repeat(32), num_segments: numSegments }, { status: 201 }),
+        );
+      const provider = new TwilioSmsProvider({
+        accountSid: ACCOUNT_SID,
+        authToken: "not-a-real-token",
+        from: "AnswerMate",
+        fetch: answered,
+      });
+      expect(await provider.send({ to: "+447700900001", body: "Hello" })).toEqual({
+        providerRef: "SM" + "2".repeat(32),
+        segments: null,
+      });
+    }
+  });
+
+  it("throws when Twilio's answer to a sent text has no message ID", async () => {
+    const answered: typeof fetch = () =>
+      Promise.resolve(Response.json({ status: "queued" }, { status: 201 }));
+    const provider = new TwilioSmsProvider({
+      accountSid: ACCOUNT_SID,
+      authToken: "not-a-real-token",
+      from: "AnswerMate",
+      fetch: answered,
+    });
+    await expect(provider.send({ to: "+447700900001", body: "Hello" })).rejects.toThrow(
+      "Twilio's answer to a sent text had no message ID",
+    );
+  });
+
   it("throws a TwilioApiError with the status when Twilio rejects the message", async () => {
     const api = stub(400);
     const provider = new TwilioSmsProvider({

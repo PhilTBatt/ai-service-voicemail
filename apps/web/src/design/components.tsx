@@ -520,7 +520,7 @@ export function DayChart({
   label,
   unit,
 }: {
-  columns: { date: string; day: string; label: string; minutes: number; percent: number }[];
+  columns: { date: string; day: string; label: string; time: string; percent: number }[];
   label: string;
   unit: string;
 }) {
@@ -555,7 +555,7 @@ export function DayChart({
               {columns.map((column) => (
                 <tr key={column.date}>
                   <td>{column.day}</td>
-                  <td className="num">{column.minutes}</td>
+                  <td className="num">{column.time}</td>
                 </tr>
               ))}
             </tbody>

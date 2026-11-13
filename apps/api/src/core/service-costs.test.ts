@@ -43,10 +43,9 @@ const usage = (
 const readings = (over: Partial<ServiceReadings> = {}): ServiceReadings => ({
   last: usage(),
   previous: usage(),
-  payingBusinesses: 0,
   activeNumbers: 0,
   logins: 0,
-  incomePence: 0,
+  bills: [],
   ...over,
 });
 
@@ -177,8 +176,7 @@ describe("serviceCosts", () => {
           },
         ),
         previous: usage({ calls: 40, callSeconds: 6000, emails: 40, textSegments: 80 }),
-        payingBusinesses: 2,
-        incomePence: 19800,
+        bills: [9900, 9900],
       }),
     );
     // Minutes 100 to 150, so 200 next: every minute-driven cost times 200/150.
@@ -207,11 +205,12 @@ describe("serviceCosts", () => {
     const result = serviceCosts(
       readings({
         last: usage({ payments: [9900, 4900] }),
-        payingBusinesses: 3,
-        incomePence: 29700,
+        // Two at £99 and a pilot's £49: each has its own fee.
+        bills: [9900, 9900, 4900],
       }),
     );
-    expect(service(result, "gocardless").pence).toEqual({ now: 119 + 69, next: 3 * 119 });
+    expect(service(result, "gocardless").pence).toEqual({ now: 119 + 69, next: 119 + 119 + 69 });
+    expect(result.totals).toMatchObject({ incomePence: 24700, payingBusinesses: 3 });
   });
 
   describe("the suppliers' own figures", () => {

@@ -130,7 +130,60 @@ describe("estimateMonthCosts", () => {
   });
 });
 
+describe("estimateMonthCosts and suspensions", () => {
+  it("bills nothing so far for a month suspended from its start, and as usual otherwise", async () => {
+    const now = new Date("2037-03-20T12:00:00Z");
+    const throughout = await business("Paused Plumbing", {
+      anchor: "2037-01-14",
+      status: "suspended",
+    });
+    const partWay = await business("Late Plumbing", { anchor: "2037-01-14", status: "suspended" });
+    for (const [tenantId, startedAt] of [
+      [throughout, "2037-03-01T10:00:00Z"],
+      [partWay, "2037-03-16T10:00:00Z"],
+    ] as const) {
+      await withTenant(app, tenantId, (client) =>
+        client.query("INSERT INTO tenant_suspensions (tenant_id, started_at) VALUES ($1, $2)", [
+          tenantId,
+          startedAt,
+        ]),
+      );
+    }
+    const { tenants } = await estimateMonthCosts(admin, now, PRICES);
+    const bill = (tenantId: string) => tenants.find((row) => row.tenantId === tenantId)?.billPence;
+    // Its month began on the 14th, after the suspension: the month-end charge is nothing.
+    expect(bill(throughout)).toBe(0);
+    // Suspended on the 16th, part-way: the month is charged in full.
+    expect(bill(partWay)).toBe(9900);
+  });
+});
+
 describe("readServiceUsage", () => {
+  it("counts calls at once in one pass: back to back isn't two, and a call from before the window still counts", async () => {
+    const now = new Date("2043-06-30T12:00:00Z");
+    const tenantId = await business("Overlap Plumbing", { anchor: "2043-01-01" });
+    // Started before the window (31 May 12:00) and still on into it.
+    await call(tenantId, "2043-05-31T11:59:00Z", 600);
+    // Starts inside the window while that one is still on: two at once.
+    await call(tenantId, "2043-05-31T12:01:00Z", 60);
+    // Back to back on the 10th: one ends at 10:05:00 as the next starts. Never two.
+    await call(tenantId, "2043-06-10T10:00:00Z", 300);
+    await call(tenantId, "2043-06-10T10:05:00Z", 300);
+    const usage = await readServiceUsage(admin, now, PRICES);
+    expect(usage.last.peakConcurrentCalls).toBe(2);
+  });
+
+  it("finds three calls at once among many", async () => {
+    const now = new Date("2045-06-30T12:00:00Z");
+    const tenantId = await business("Rush Plumbing", { anchor: "2045-01-01" });
+    for (let minute = 0; minute < 20; minute += 1) {
+      // One call a minute, each two minutes 30 long: two or three on at any start.
+      await call(tenantId, `2045-06-12T09:${String(minute).padStart(2, "0")}:00Z`, 150);
+    }
+    const usage = await readServiceUsage(admin, now, PRICES);
+    expect(usage.last.peakConcurrentCalls).toBe(3);
+  });
+
   it("counts the last 30 days and the 30 before: calls, calls at once, emails, texts, payments", async () => {
     const now = new Date("2041-06-30T12:00:00Z");
     const tenantId = await business("Busy Plumbing", { anchor: "2041-01-01" });

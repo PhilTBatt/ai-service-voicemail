@@ -48,7 +48,7 @@ test.describe("the Account page's month so far", () => {
     const columns = card.getByRole("list", { name: "Call minutes each day this month" });
     await expect(columns.getByRole("listitem")).toHaveCount(10);
     await card.getByText("Show as a table").click();
-    await expect(card.getByRole("columnheader", { name: "Minutes" })).toBeVisible();
+    await expect(card.getByRole("columnheader", { name: "Call time" })).toBeVisible();
     await shot(page, "account-light");
   });
 

@@ -591,7 +591,7 @@ function Billing({ tenant }: { tenant: TenantView }) {
           {days.length > 1 && (
             <div className="stack stack-xs">
               <h4 className="text-sm">Call minutes each day</h4>
-              <DayChart columns={days} label="Call minutes each day this month" unit="Minutes" />
+              <DayChart columns={days} label="Call minutes each day this month" unit="Call time" />
             </div>
           )}
           <p className="muted text-sm">

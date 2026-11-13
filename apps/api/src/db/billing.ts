@@ -51,6 +51,19 @@ export async function loadBillingView(
         )
       ).rows[0];
       const billableSeconds = usage?.billable_seconds ?? 0;
+      // Suspended from the month's first moment, and still (or to its end): the month-end
+      // charge (jobs/charge-periods.ts) bills nothing for it, so neither does the month so far.
+      const suspendedThroughout = (
+        await client.query<{ suspended: boolean }>(
+          `SELECT EXISTS (
+             SELECT 1 FROM tenant_suspensions
+             WHERE tenant_id = $1
+               AND started_at <= ($2::date)::timestamp AT TIME ZONE 'Europe/London'
+               AND (ended_at IS NULL OR ended_at >= ($3::date)::timestamp AT TIME ZONE 'Europe/London')
+           ) AS suspended`,
+          [tenantId, current.periodStart, current.periodEnd],
+        )
+      ).rows[0]!.suspended;
       // VAT isn't added: the Account page shows prices before VAT, as the plan is sold.
       const charge = (seconds: number) =>
         chargeFor({
@@ -59,10 +72,13 @@ export async function loadBillingView(
           isPilot: tenant.is_pilot,
           billableSeconds: seconds,
           vat: null,
+          suspendedThroughout,
         });
       const soFar = charge(billableSeconds);
       const today = ukDateOf(now);
-      const heading = projectedSeconds(billableSeconds, monthProgress(current, today));
+      const heading = suspendedThroughout
+        ? null
+        : projectedSeconds(billableSeconds, monthProgress(current, today));
       const projected = heading === null ? null : charge(heading);
       // Each day's calls, by UK date. Only the month's own: the go-live day's test call is
       // taken back off by daysOfMonth, so the days add up to the usage above.
@@ -80,6 +96,7 @@ export async function loadBillingView(
         month: current.index + 1,
         feePence: soFar.feePence,
         billableSeconds,
+        suspendedThroughout,
         soFar: {
           overageMinutes: soFar.overageMinutes,
           overagePence: soFar.overagePence,

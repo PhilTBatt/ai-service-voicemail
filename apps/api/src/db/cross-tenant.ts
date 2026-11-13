@@ -878,6 +878,24 @@ export async function estimateMonthCosts(
     [[...periods.keys()], [...periods.values()].map((period) => period.periodStart)],
   );
   const billableSeconds = new Map(usageRows.map((row) => [row.tenant_id, row.billable_seconds]));
+  // Suspended from the month's first moment, and still (or to its end): the month-end charge
+  // (jobs/charge-periods.ts) bills nothing for it, so neither does the bill so far.
+  const { rows: suspendedRows } = await admin.query<{ tenant_id: string }>(
+    `SELECT p.tenant_id
+     FROM unnest($1::uuid[], $2::date[], $3::date[]) AS p(tenant_id, period_start, period_end)
+     WHERE EXISTS (
+           SELECT 1 FROM tenant_suspensions s
+           WHERE s.tenant_id = p.tenant_id
+             AND s.started_at <= (p.period_start)::timestamp AT TIME ZONE 'Europe/London'
+             AND (s.ended_at IS NULL
+                  OR s.ended_at >= (p.period_end)::timestamp AT TIME ZONE 'Europe/London'))`,
+    [
+      [...periods.keys()],
+      [...periods.values()].map((period) => period.periodStart),
+      [...periods.values()].map((period) => period.periodEnd),
+    ],
+  );
+  const suspended = new Set(suspendedRows.map((row) => row.tenant_id));
   const { tenants, unpriced } = await estimateCosts(
     admin,
     { from: startOfUkDate(calendar.periodStart), to: startOfUkDate(calendar.periodEnd) },
@@ -909,6 +927,7 @@ export async function estimateMonthCosts(
           isPilot: tenant.is_pilot,
           billableSeconds: billableSeconds.get(estimate.tenantId) ?? 0,
           vat: null,
+          suspendedThroughout: suspended.has(estimate.tenantId),
         }).subtotalPence;
       }
       return {
@@ -938,13 +957,24 @@ async function windowUsage(
     payments: number[];
   }>(
     `SELECT
-       -- The most answered calls in progress at any call's start.
-       coalesce((SELECT max(n) FROM (
-          SELECT (SELECT count(*) FROM calls b
-                  WHERE NOT b.via_fallback AND b.started_at <= a.started_at
-                    AND coalesce(b.ended_at, b.started_at) > a.started_at) AS n
-          FROM calls a
-          WHERE NOT a.via_fallback AND a.started_at >= $1 AND a.started_at < $2) c), 0)::int AS peak,
+       -- The most answered calls in progress at once: each call that overlaps the window
+       -- adds one at its start and takes one off at its end, and the running total at each
+       -- start inside the window is how many were on then. One pass over the calls, where
+       -- counting every earlier call for each call grew with the square of the table. At the
+       -- same moment an end comes before a start, so back-to-back calls aren't two at once.
+       -- A call with no end recorded (still stored mid-call) isn't counted.
+       coalesce((SELECT max(running) FILTER (WHERE delta = 1 AND at >= $1) FROM (
+          SELECT at, delta, sum(delta) OVER (ORDER BY at, delta ROWS UNBOUNDED PRECEDING) AS running
+          FROM (
+            SELECT started_at AS at, 1 AS delta FROM calls
+            WHERE NOT via_fallback AND ended_at IS NOT NULL
+              AND started_at < $2 AND ended_at > $1
+            UNION ALL
+            SELECT ended_at, -1 FROM calls
+            WHERE NOT via_fallback AND ended_at IS NOT NULL
+              AND started_at < $2 AND ended_at > $1
+          ) events
+        ) sweep), 0)::int AS peak,
        ((SELECT count(*) FROM notifications
           WHERE channel = 'email' AND status IN ('sent', 'delivered', 'undelivered')
             AND created_at >= $1 AND created_at < $2)
