@@ -71,6 +71,7 @@ const SEEDED_TABLES = [
   "billing_charges",
   "billing_emails",
   "tenant_suspensions",
+  "mobile_confirmations",
 ] as const;
 type TenantTable = (typeof SEEDED_TABLES)[number];
 
@@ -245,6 +246,13 @@ async function seedBusiness(label: string): Promise<Seeded> {
           `INSERT INTO tenant_suspensions (tenant_id, started_at, ended_at)
            VALUES ($1, now() - interval '2 days', now() - interval '1 day')`,
           [tenantId],
+        ),
+      // A new mobile waiting for its code (the mobile is the person's; the hash isn't the code).
+      mobile_confirmations: () =>
+        client.query(
+          `INSERT INTO mobile_confirmations (tenant_id, mobile, code_hash, expires_at)
+           VALUES ($1, $2, 'not-a-real-hash', now() + interval '10 minutes')`,
+          [tenantId, mobile],
         ),
     };
     for (const table of SEEDED_TABLES) await write[table]();
@@ -446,6 +454,9 @@ describe("the data export (BUILD_PLAN Step 13)", () => {
     payment_events: "paymentEvents",
     billing_emails: "billingEmails",
     tenant_suspensions: "suspensions",
+    // The mobiles the business asked to switch texts to, and whether each was confirmed; never
+    // the code's hash.
+    mobile_confirmations: "mobileConfirmations",
   };
   /** Left out on purpose, and why. */
   const NOT_EXPORTED: Partial<Record<TenantTable, string>> = {
@@ -544,6 +555,7 @@ describe("deleting a business's data (BUILD_PLAN Step 13)", () => {
     "onboarding_texts",
     "offboarding_messages",
     "tenant_memberships",
+    "mobile_confirmations",
   ];
   /** Kept, and why (cross-tenant.ts deleteTenantData says the same). */
   const KEPT: Partial<Record<TenantTable, string>> = {

@@ -9,8 +9,11 @@ import {
   CSV_EXPORTS,
   URGENCIES,
   acceptDocumentsSchema,
+  confirmMobileSchema,
   documentsToAccept,
   type BillingView,
+  type ConfirmMobileView,
+  type NotificationSettingsView,
   type DirectDebitStartView,
   type DocumentsView,
   type CallHandledView,
@@ -20,7 +23,6 @@ import {
   type CancellationView,
   type MeView,
   type MobileNetwork,
-  type NotificationSettings,
   type ProfileView,
   type SaveProfileView,
   type SwitchView,
@@ -60,6 +62,15 @@ import {
   updateNotificationSettings,
 } from "../db/tenant-settings.ts";
 import { switchAnswering } from "../db/tenant-switch.ts";
+import { mobileCodeSms } from "../core/mobile-confirmation.ts";
+import { checkOutbound, type OutboundPolicy } from "../core/outbound-allowlist.ts";
+import {
+  confirmMobile,
+  pendingMobile,
+  startMobileConfirmation,
+} from "../db/mobile-confirmations.ts";
+import { logger } from "../logger.ts";
+import type { SmsProvider } from "../providers/sms.ts";
 import { loadBillingView } from "../db/billing.ts";
 import { checkDirectDebit, startDirectDebit } from "../db/direct-debit.ts";
 import type { AuthProvider } from "../providers/auth.ts";
@@ -93,6 +104,14 @@ export interface DashboardOptions extends RecordingSources {
    * person back to. Absent until GoCardless is configured.
    */
   billing?: { payments: PaymentsProvider; dashboardOrigin: string } | undefined;
+  /**
+   * Texting a new notification mobile its confirmation code (PROGRESS open question 4), through
+   * the outbound allowlist like every text. Absent when the server has no SMS settings: a new
+   * mobile then can't be confirmed, and the page says so.
+   */
+  sms?: { provider: SmsProvider; outbound: OutboundPolicy } | undefined;
+  /** The code to text, for the browser tests' server; random otherwise. */
+  newMobileCode?: (() => string) | undefined;
   now?: () => Date;
 }
 
@@ -159,10 +178,13 @@ export function dashboardRouter({
   voice,
   numbers,
   billing,
+  sms,
+  newMobileCode,
   now,
 }: DashboardOptions) {
   const router = Router();
   const sources: RecordingSources = { telephony, voice };
+  const clock = now ?? (() => new Date());
   router.use(json({ limit: "256kb" }));
 
   router.use((_req, res, next) => {
@@ -243,13 +265,19 @@ export function dashboardRouter({
           [tenantId],
         )
       ).rows[0];
-      return row && { row, accepted: await latestAcceptances(client, tenantId) };
+      return (
+        row && {
+          row,
+          accepted: await latestAcceptances(client, tenantId),
+          pending: await pendingMobile(client, tenantId, clock()),
+        }
+      );
     });
     if (!found) {
       res.status(404).json({ error: "Not found" });
       return;
     }
-    const { row, accepted } = found;
+    const { row, accepted, pending } = found;
     res.json({
       id: row.id,
       businessName: row.business_name,
@@ -257,6 +285,7 @@ export function dashboardRouter({
       status: row.status,
       contactName: row.contact_name,
       notificationMobile: row.notification_mobile,
+      pendingMobile: pending?.mobile ?? null,
       notificationEmail: row.notification_email,
       serviceRegion: row.service_region,
       createdAt: row.created_at.toISOString(),
@@ -374,23 +403,101 @@ export function dashboardRouter({
     res.json({ outcome: result.outcome, status: result.status } satisfies SwitchView);
   });
 
-  // Where texts and emails go. Null clears a channel; the delivery jobs then skip it.
+  // Where texts and emails go. Null clears a channel; the delivery jobs then skip it. A new
+  // mobile is texted a code and takes effect once the code comes back (confirm-mobile below), so
+  // a typo can't send the business's texts to a stranger; an admin's change is saved outright.
   tenant.put("/notifications", async (req, res) => {
     const tenantId = tenantIdOf(res);
-    const body = notificationSettingsSchema.safeParse(req.body);
+    // `newCode`: the page's "Send a new code" (the first never arrived, say); otherwise saving the
+    // same new mobile again leaves the code already out alone.
+    const body = notificationSettingsSchema
+      .extend({ newCode: z.boolean().optional() })
+      .safeParse(req.body);
     if (!body.success) {
       res
         .status(400)
         .json({ error: "Invalid settings", issues: z.flattenError(body.error).fieldErrors });
       return;
     }
-    const saved = await updateNotificationSettings(
-      pool,
-      tenantId,
-      body.data,
-      principalOf(res).userId,
+    const principal = principalOf(res);
+    const saved = await updateNotificationSettings(pool, tenantId, body.data, principal.userId, {
+      confirmMobile: principal.role !== "admin",
+      now: clock(),
+    });
+    let mobileCode: NotificationSettingsView["mobileCode"] = null;
+    let retryAt: string | null = null;
+    // The same new mobile saved again (the form re-sent with a corrected email, say) while its code
+    // is still out: that code stands. A new one would stop the one on the phone and use up one of
+    // the hour's three.
+    const alreadyOut =
+      saved.mobileToConfirm !== null &&
+      body.data.newCode !== true &&
+      (await withTenant(pool, tenantId, (client) => pendingMobile(client, tenantId, clock())))
+        ?.mobile === saved.mobileToConfirm;
+    if (saved.mobileToConfirm !== null && !alreadyOut) {
+      const started = await startMobileConfirmation(
+        pool,
+        tenantId,
+        saved.mobileToConfirm,
+        principal.userId,
+        clock(),
+        newMobileCode,
+      );
+      if (started.outcome === "too-many-codes") {
+        mobileCode = "too-many-codes";
+        retryAt = started.retryAt.toISOString();
+      } else if (!sms) {
+        mobileCode = "unavailable";
+      } else {
+        const decision = checkOutbound(sms.outbound, saved.mobileToConfirm);
+        if (decision.allowed) {
+          await sms.provider.send({
+            to: saved.mobileToConfirm,
+            body: mobileCodeSms(started.code).body,
+          });
+          mobileCode = "sent";
+        } else {
+          logger.warn("Mobile confirmation code blocked by the outbound allowlist", {
+            tenantId,
+            reason: decision.reason,
+          });
+          mobileCode = "blocked";
+        }
+      }
+    }
+    const pending = await withTenant(pool, tenantId, (client) =>
+      pendingMobile(client, tenantId, clock()),
     );
-    res.json(saved satisfies NotificationSettings);
+    res.json({
+      notificationMobile: saved.notificationMobile,
+      notificationEmail: saved.notificationEmail,
+      pendingMobile: pending?.mobile ?? null,
+      mobileCode,
+      retryAt,
+    } satisfies NotificationSettingsView);
+  });
+
+  // The code texted to a new mobile, typed back: on a match the mobile is saved and texts go there.
+  tenant.post("/notifications/confirm-mobile", async (req, res) => {
+    const body = confirmMobileSchema.safeParse(req.body);
+    if (!body.success) {
+      res
+        .status(400)
+        .json({ error: "Invalid code", issues: z.flattenError(body.error).fieldErrors });
+      return;
+    }
+    const result = await confirmMobile(
+      pool,
+      tenantIdOf(res),
+      body.data.code,
+      principalOf(res).userId,
+      clock(),
+    );
+    res.json({
+      outcome: result.outcome,
+      notificationMobile: result.outcome === "confirmed" ? result.mobile : null,
+      attemptsLeft: result.outcome === "wrong-code" ? result.attemptsLeft : null,
+    } satisfies ConfirmMobileView);
   });
 
   // Asking to leave: callers hear "service has ended" from now on, and the notices are queued.

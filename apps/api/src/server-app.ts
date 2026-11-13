@@ -17,6 +17,7 @@ import { logger } from "./logger.ts";
 import { ClerkAuthProvider } from "./providers/clerk.ts";
 import { GoCardlessPaymentsProvider } from "./providers/gocardless.ts";
 import { RetellVoiceProvider } from "./providers/retell.ts";
+import { TwilioSmsProvider } from "./providers/twilio-sms.ts";
 import { TwilioTelephonyProvider } from "./providers/twilio.ts";
 
 /**
@@ -117,6 +118,11 @@ export function buildServerApp(
                 }
               : undefined,
           billing: payments ? { payments, dashboardOrigin: config.dashboardOrigin } : undefined,
+          // A new notification mobile's confirmation code, texted from the API itself: a person
+          // is waiting for it, and it's one text (no receipt is kept for it).
+          sms: config.sms
+            ? { provider: new TwilioSmsProvider(config.sms), outbound: config.outbound }
+            : undefined,
         }
       : undefined;
   if (dashboard) logger.info("Dashboard API on", { dashboardOrigin: config.dashboardOrigin });

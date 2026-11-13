@@ -31,12 +31,21 @@ export interface InboundCallContext {
  */
 export const DEMO_DAILY_CALLS_PER_CALLER = 10;
 
+/**
+ * Callers who withhold their number share one allowance between them (otherwise dialling 141
+ * first would get round the cap), a bigger one than a phone's, so a prospect who withholds their
+ * number isn't told the demo's used up by someone else (Phil, 2026-11-11; PROGRESS open question
+ * 5). The spoken message for them (scripts.ts DEMO_LIMIT_WITHHELD_LINE) names no number.
+ */
+export const DEMO_DAILY_CALLS_WITHHELD = 30;
+
 export type RouteDecision =
   | { kind: "agent"; providerAgentId: string; variables: Record<string, string> }
   | { kind: "voicemail"; reason: string }
   | { kind: "ended"; mobile: string | null }
   | { kind: "reject"; reason: string }
-  | { kind: "demo-limit" };
+  /** `withheld`: the shared allowance for callers with no number is used up, not a phone's own. */
+  | { kind: "demo-limit"; withheld: boolean };
 
 export function routeInboundCall(context: InboundCallContext, now: Date): RouteDecision {
   // The kill switch beats everything: one move sends every number to plain voicemail.
@@ -50,13 +59,14 @@ export function routeInboundCall(context: InboundCallContext, now: Date): RouteD
     case "demo":
       // The registered mobile is the owner testing their own line: never capped. A withheld
       // caller is nobody in particular, even to a business with no mobile on record (null
-      // matched null, and every withheld call went uncapped).
-      if (
-        tenant.status === "demo" &&
-        !(context.callerNumber !== null && context.callerNumber === tenant.notificationMobile) &&
-        context.callerCallsToday >= DEMO_DAILY_CALLS_PER_CALLER
-      ) {
-        return { kind: "demo-limit" };
+      // matched null, and every withheld call went uncapped): they share their own allowance.
+      if (tenant.status === "demo") {
+        const withheld = context.callerNumber === null;
+        const isOwner = !withheld && context.callerNumber === tenant.notificationMobile;
+        const allowance = withheld ? DEMO_DAILY_CALLS_WITHHELD : DEMO_DAILY_CALLS_PER_CALLER;
+        if (!isOwner && context.callerCallsToday >= allowance) {
+          return { kind: "demo-limit", withheld };
+        }
       }
       if (!tenant.providerAgentId) return { kind: "voicemail", reason: "agent not synced yet" };
       return {

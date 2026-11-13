@@ -52,6 +52,8 @@ export interface TenantView {
   status: string;
   contactName: string | null;
   notificationMobile: string | null;
+  /** A new mobile waiting for its code (settings.ts confirmMobileSchema); null when none is. */
+  pendingMobile: string | null;
   notificationEmail: string | null;
   serviceRegion: string;
   createdAt: string;
@@ -302,6 +304,37 @@ export interface UndoCancellationView {
 export interface SuspensionView {
   outcome: "suspended" | "resumed" | "unchanged";
   status: string;
+}
+
+/**
+ * PUT /api/tenants/:id/notifications. The email is saved as given. A new mobile isn't: it's
+ * `pendingMobile` until the code texted to it is typed back (POST .../notifications/confirm-mobile),
+ * and `mobileCode` says what became of that text. An admin's change is saved outright.
+ */
+export interface NotificationSettingsView {
+  /** What texts go to now. */
+  notificationMobile: string | null;
+  notificationEmail: string | null;
+  pendingMobile: string | null;
+  mobileCode:
+    | "sent"
+    /** Outside production, texts go only to the allowlist: nothing was sent. */
+    | "blocked"
+    /** This server can't send texts (no SMS settings). */
+    | "unavailable"
+    /** Three codes in the last hour already: wait until `retryAt`. */
+    | "too-many-codes"
+    | null;
+  retryAt: string | null;
+}
+
+/** POST /api/tenants/:id/notifications/confirm-mobile */
+export interface ConfirmMobileView {
+  outcome: "confirmed" | "wrong-code" | "expired" | "too-many-attempts" | "nothing-pending";
+  /** On "confirmed": where texts go from now. */
+  notificationMobile: string | null;
+  /** On "wrong-code": how many more tries this code allows. */
+  attemptsLeft: number | null;
 }
 
 /** PUT /api/admin/kill-switch */

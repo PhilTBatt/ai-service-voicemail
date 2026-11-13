@@ -29,15 +29,16 @@ const BOILER = "Boiler leaking under the stairs.";
 const FUSE_BOX = "Fuse box tripping.";
 
 test.describe("where messages go", () => {
+  // Put back as the admin, whose change is saved outright (an owner's new mobile waits for its code).
   test.afterEach(async ({ request }) => {
     const fern = await tenantIdOf(request, FERN_LANE);
-    await apiAs(request, OWNER, "PUT", `/tenants/${fern}/notifications`, {
+    await apiAs(request, ADMIN, "PUT", `/tenants/${fern}/notifications`, {
       notificationMobile: "+447700900123",
       notificationEmail: null,
     });
   });
 
-  test("a mistake is caught before saving, and what's typed the way people type it is kept", async ({
+  test("a mistake is caught before saving, and a new mobile is confirmed by the code texted to it", async ({
     page,
     request,
   }) => {
@@ -64,17 +65,43 @@ test.describe("where messages go", () => {
     await mobile.fill("");
     await expect(page.getByText("Without a mobile you won't get texts")).toBeVisible();
 
-    // How UK letterheads write a mobile, and an email with spaces round it.
+    // How UK letterheads write a mobile, and an email with spaces round it. The email is saved;
+    // the mobile waits for the code texted to it (PROGRESS open question 4).
     await mobile.fill("+44 (0)7700 900124");
     await email.fill("  office@example.com ");
     await expect(page.getByText("Without a mobile you won't get texts")).toHaveCount(0);
     await save.click();
-    await expect(page.getByText("The next message goes to these.")).toBeVisible();
+    await expect(page.getByText("We've texted a code to 07700 900124.")).toBeVisible();
     await expect(mobile).not.toHaveAttribute("aria-invalid", "true");
+    const pending = await apiAs<TenantView>(request, OWNER, "GET", `/tenants/${fern}`);
+    expect(pending.notificationMobile).toBe("+447700900123");
+    expect(pending.pendingMobile).toBe("+447700900124");
 
+    // Still waiting after a reload; a wrong code is refused and counted.
+    await page.reload();
+    await expect(mobile).toHaveValue("07700 900123");
+    await expect(email).toHaveValue("office@example.com");
+    await expect(page.getByText("A code was texted to 07700 900124.")).toBeVisible();
+    const code = page.getByLabel("Code from the text");
+    const confirm = page.getByRole("button", { name: "Confirm mobile" });
+    await code.fill("12345");
+    await confirm.click();
+    await expect(code).toHaveAccessibleDescription(/the code is 6 digits/);
+    await code.fill("654321");
+    await confirm.click();
+    await expect(code).toHaveAccessibleDescription(/That's not the code. 4 tries left./);
+
+    // The right one (the browser tests' server always texts 123456) switches the texts.
+    await code.fill("123456");
+    await confirm.click();
+    await expect(page.getByText("Texts about calls now go to it.")).toBeVisible();
+    await expect(mobile).toHaveValue("07700 900124");
     await page.reload();
     await expect(mobile).toHaveValue("07700 900124");
-    await expect(email).toHaveValue("office@example.com");
+    await expect(page.getByLabel("Code from the text")).toHaveCount(0);
+    const confirmed = await apiAs<TenantView>(request, OWNER, "GET", `/tenants/${fern}`);
+    expect(confirmed.notificationMobile).toBe("+447700900124");
+    expect(confirmed.pendingMobile).toBeNull();
   });
 });
 

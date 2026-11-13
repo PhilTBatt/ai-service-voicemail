@@ -2,6 +2,7 @@ import { TENANT_STATUSES, type TenantStatus } from "@callmate/shared";
 import { describe, expect, it } from "vitest";
 import {
   DEMO_DAILY_CALLS_PER_CALLER,
+  DEMO_DAILY_CALLS_WITHHELD,
   routeInboundCall,
   type InboundCallContext,
 } from "./routing.ts";
@@ -108,7 +109,7 @@ describe("the demo line's daily cap", () => {
     ).toBe("agent");
     expect(
       routeInboundCall(context("demo", { callerCallsToday: DEMO_DAILY_CALLS_PER_CALLER }), NOW),
-    ).toEqual({ kind: "demo-limit" });
+    ).toEqual({ kind: "demo-limit", withheld: false });
   });
 
   it("never caps a paying tenant's callers", () => {
@@ -131,6 +132,25 @@ describe("the caller's number as a per-call variable", () => {
     expect(shown).toMatchObject({ variables: { caller_number: "07700 900123" } });
     const withheld = routeInboundCall(context("live", { callerNumber: null }), NOW);
     expect(withheld).toMatchObject({ variables: { caller_number: "unknown" } });
+  });
+});
+
+// Phil, 2026-11-11 (PROGRESS open question 5): withheld callers share one allowance, bigger than
+// a phone's, so a prospect dialling 141 isn't told the demo's used up by someone else.
+describe("the demo cap for withheld callers", () => {
+  it("lets them through past a phone's allowance, up to their own shared one", () => {
+    const withheld = (callerCallsToday: number) =>
+      routeInboundCall(context("demo", { callerNumber: null, callerCallsToday }), NOW);
+    expect(DEMO_DAILY_CALLS_WITHHELD).toBeGreaterThan(DEMO_DAILY_CALLS_PER_CALLER);
+    expect(withheld(DEMO_DAILY_CALLS_PER_CALLER).kind).toBe("agent");
+    expect(withheld(DEMO_DAILY_CALLS_WITHHELD - 1).kind).toBe("agent");
+    expect(withheld(DEMO_DAILY_CALLS_WITHHELD)).toEqual({ kind: "demo-limit", withheld: true });
+  });
+
+  it("tells a phone's limit apart from the shared one, so each hears its own message", () => {
+    expect(
+      routeInboundCall(context("demo", { callerCallsToday: DEMO_DAILY_CALLS_PER_CALLER }), NOW),
+    ).toEqual({ kind: "demo-limit", withheld: false });
   });
 });
 

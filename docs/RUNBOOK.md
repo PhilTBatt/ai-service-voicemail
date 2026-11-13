@@ -48,7 +48,9 @@ For an emergency persona (say "I can smell gas"): a priority text arrives while 
 
 ## 4. Texting commands
 
-Text the notification number from the demo tenant's registered mobile: `OFF`, `ON`, `HOLIDAY 12/12`, `STATUS`, `HELP`. The reply comes straight back. This needs a real mobile number as the sender; with an alphanumeric sender (`TWILIO_SMS_FROM=AnswerMate`) texts go out but replies can't come in.
+Text the notification number from the demo tenant's registered mobile: `OFF`, `ON`, `HOLIDAY 12/12`, `STATUS`, `HELP`. The reply comes straight back. This needs a real mobile number as the sender; with an alphanumeric sender (`TWILIO_SMS_FROM=AnswerMate`) texts go out but replies can't come in. A mobile registered on two businesses (one tradesperson, two trades) commands both, and the reply names each business's answer.
+
+**Changing the mobile a business's texts go to** (its Account page): the new mobile is texted a 6-digit code (one segment, about 4p) and the texts switch to it only once the code is typed back. A code lasts 10 minutes and 5 tries; a business can ask for 3 codes an hour. Until then the old mobile keeps getting the texts. Clearing the mobile needs no code, and a change you make as admin is saved at once (you're setting the business up, not proving a phone is yours). The account log records `mobile.code-sent` and `notifications.changed`, never the number. Outside production the code goes only to a mobile on `OUTBOUND_ALLOWLIST`; the page says when it was blocked.
 
 ## 5. When something's wrong
 

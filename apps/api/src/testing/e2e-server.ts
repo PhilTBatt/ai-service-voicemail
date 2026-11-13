@@ -18,6 +18,8 @@ import { createPool } from "../db/pool.ts";
 import { startQueue } from "../jobs/queue.ts";
 import { logger } from "../logger.ts";
 import type { NumberConfiguration, PurchasedNumber } from "../providers/telephony.ts";
+import { parseAllowlist } from "../core/outbound-allowlist.ts";
+import { FakeSmsProvider } from "../providers/sms.fake.ts";
 import { FakeTelephonyProvider } from "../providers/telephony.fake.ts";
 import { FakeVoiceProvider } from "../providers/voice.fake.ts";
 import type { NumberProvisioning } from "../routes/admin.ts";
@@ -131,6 +133,17 @@ const dashboard = {
   boss,
   voice: new FakeVoiceProvider(),
   telephony: new FakeTelephonyProvider(),
+  // Confirming a new notification mobile: the code goes to a fake, so the browser tests know it
+  // (the drama-range mobiles the tests use are on the allowlist; any other is blocked, as outside
+  // production).
+  sms: {
+    provider: new FakeSmsProvider(),
+    outbound: {
+      nodeEnv: "test" as const,
+      allowlist: parseAllowlist("+447700900123,+447700900124"),
+    },
+  },
+  newMobileCode: () => "123456",
 };
 const withoutNumbers = createApp({ pool, dashboard });
 const withNumbers = createApp({ pool, dashboard: { ...dashboard, numbers: numbersSetup(true) } });

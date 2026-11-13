@@ -61,3 +61,11 @@ export const VOICEMAIL_THANKS = "Thanks. Goodbye.";
 /** Demo tenants allow DEMO_DAILY_CALLS_PER_CALLER calls a day from each phone (routing.ts). */
 export const DEMO_LIMIT_LINE =
   "Thanks for trying the demo line. It allows ten calls a day from each phone, and you've used yours for today. Please try again tomorrow. Goodbye.";
+
+/**
+ * For callers with their number withheld, who share one allowance (routing.ts
+ * DEMO_DAILY_CALLS_WITHHELD): theirs may have been used by others, and showing their number
+ * gets them their own.
+ */
+export const DEMO_LIMIT_WITHHELD_LINE =
+  "Thanks for trying the demo line. Today's calls from withheld numbers have all been used. Please try again tomorrow, or call back with your number showing. Goodbye.";

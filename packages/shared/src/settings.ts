@@ -26,6 +26,18 @@ export const notificationSettingsSchema = z.object({
 });
 export type NotificationSettings = z.infer<typeof notificationSettingsSchema>;
 
+/**
+ * A new mobile is confirmed by a code texted to it before texts go there (PROGRESS open
+ * question 4): the owner types the 6 digits back.
+ */
+export const MOBILE_CODE_LENGTH = 6;
+export const confirmMobileSchema = z.object({
+  code: z
+    .string()
+    .trim()
+    .regex(new RegExp(`^\\d{${MOBILE_CODE_LENGTH}}$`), `the code is ${MOBILE_CODE_LENGTH} digits`),
+});
+
 /** The tables a business can download as CSV (BUILD_PLAN Step 13), with what the page calls them. */
 export const CSV_EXPORTS = [
   "business",

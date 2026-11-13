@@ -15,12 +15,27 @@ import { withTenant } from "./tenant.ts";
 // The rules live in packages/shared/src/settings.ts, so the dashboard checks them too.
 export { notificationSettingsSchema, type NotificationSettings };
 
+export interface SavedNotificationSettings extends NotificationSettings {
+  /**
+   * A new mobile that wasn't saved: it has to be confirmed by the code texted to it first
+   * (db/mobile-confirmations.ts). Null when the mobile was saved, cleared or unchanged.
+   */
+  mobileToConfirm: string | null;
+}
+
+/**
+ * Saves where the business's messages go. The email is saved as given; clearing the mobile is
+ * saved as given; a new mobile is saved only once its code is confirmed, unless `confirmMobile`
+ * is false (an admin setting a business up), in which case it's saved outright. PROGRESS open
+ * question 4 (Phil, 2026-11-11): a typo used to send the business's texts to a stranger.
+ */
 export async function updateNotificationSettings(
   pool: pg.Pool,
   tenantId: string,
   settings: NotificationSettings,
   actorUserId: string,
-): Promise<NotificationSettings> {
+  { confirmMobile = true, now = new Date() }: { confirmMobile?: boolean; now?: Date } = {},
+): Promise<SavedNotificationSettings> {
   const parsed = notificationSettingsSchema.parse(settings);
   return withTenant(pool, tenantId, async (client) => {
     const before = (
@@ -30,21 +45,37 @@ export async function updateNotificationSettings(
       )
     ).rows[0];
     if (!before) throw new Error(`Tenant ${tenantId} not found`);
+    const mobileChanged = before.notification_mobile !== parsed.notificationMobile;
+    const needsCode = confirmMobile && mobileChanged && parsed.notificationMobile !== null;
+    const mobile = needsCode ? before.notification_mobile : parsed.notificationMobile;
     const changed = [
-      ...(before.notification_mobile !== parsed.notificationMobile ? ["notificationMobile"] : []),
+      ...(mobileChanged && !needsCode ? ["notificationMobile"] : []),
       ...(before.notification_email !== parsed.notificationEmail ? ["notificationEmail"] : []),
     ];
     if (changed.length > 0) {
       await client.query(
         "UPDATE tenants SET notification_mobile = $2, notification_email = $3 WHERE id = $1",
-        [tenantId, parsed.notificationMobile, parsed.notificationEmail],
+        [tenantId, mobile, parsed.notificationEmail],
       );
       await client.query(
         "INSERT INTO audit_log (tenant_id, actor_user_id, action, details) VALUES ($1, $2, 'notifications.changed', $3)",
         [tenantId, actorUserId, { via: "dashboard", changed }],
       );
     }
-    return parsed;
+    if (mobileChanged && !needsCode) {
+      // The mobile was settled outright (cleared, or set by an admin): a code still out for an
+      // earlier one would otherwise switch the texts back to it.
+      await client.query(
+        `UPDATE mobile_confirmations SET expires_at = $2
+         WHERE tenant_id = $1 AND confirmed_at IS NULL AND expires_at > $2`,
+        [tenantId, now],
+      );
+    }
+    return {
+      notificationMobile: mobile,
+      notificationEmail: parsed.notificationEmail,
+      mobileToConfirm: needsCode ? parsed.notificationMobile : null,
+    };
   });
 }
 
@@ -119,6 +150,13 @@ const BILLING_EMAILS_SQL = `SELECT created_at, kind, status, delivery_status, fa
 /** Each time the business was suspended, and when it was resumed (empty while it still is). */
 const SUSPENSIONS_SQL = `SELECT started_at, ended_at
   FROM tenant_suspensions WHERE tenant_id = $1 ORDER BY started_at`;
+/**
+ * Each mobile the business asked to switch its texts to, and whether the code texted to it was
+ * typed back (db/mobile-confirmations.ts). The code's hash stays out: it's ours, and not theirs
+ * to need.
+ */
+const MOBILE_CONFIRMATIONS_SQL = `SELECT mobile, attempts, expires_at, confirmed_at, created_at
+  FROM mobile_confirmations WHERE tenant_id = $1 ORDER BY created_at`;
 
 /** Everything we hold for one tenant, for the data export. RLS guarantees it's only theirs. */
 export async function exportTenant(pool: pg.Pool, tenantId: string) {
@@ -198,6 +236,7 @@ export async function exportTenant(pool: pg.Pool, tenantId: string) {
     const paymentEvents = await client.query(PAYMENT_EVENTS_SQL, [tenantId]);
     const billingEmails = await client.query(BILLING_EMAILS_SQL, [tenantId]);
     const suspensions = await client.query(SUSPENSIONS_SQL, [tenantId]);
+    const mobileConfirmations = await client.query(MOBILE_CONFIRMATIONS_SQL, [tenantId]);
     return {
       exportedAt: new Date().toISOString(),
       tenant: (tenant.rows[0] as Record<string, unknown> | undefined) ?? null,
@@ -217,6 +256,7 @@ export async function exportTenant(pool: pg.Pool, tenantId: string) {
       paymentEvents: paymentEvents.rows,
       billingEmails: billingEmails.rows,
       suspensions: suspensions.rows,
+      mobileConfirmations: mobileConfirmations.rows,
     };
   });
 }

@@ -32,18 +32,16 @@ export async function findTenantIdByNumber(
 }
 
 /**
- * Finds the tenant whose registered mobile sent a text, for the SMS command webhook. Only an
- * unambiguous match counts: two tenants sharing a mobile get nothing (and no reply).
+ * Finds the tenants whose registered mobile sent a text, for the SMS command webhook: usually
+ * one, two when one tradesperson runs two businesses on one phone (a mobile is confirmed by a
+ * code texted to it before it's saved, so a shared one is really theirs). Oldest first.
  */
-export async function findTenantIdByMobile(
-  appPool: pg.Pool,
-  mobile: string,
-): Promise<string | null> {
-  const { rows } = await appPool.query<{ tenant_id: string | null }>(
-    "SELECT tenant_id_for_mobile($1) AS tenant_id",
+export async function findTenantIdsByMobile(appPool: pg.Pool, mobile: string): Promise<string[]> {
+  const { rows } = await appPool.query<{ tenant_id: string }>(
+    "SELECT tenant_ids_for_mobile($1) AS tenant_id",
     [mobile],
   );
-  return rows[0]?.tenant_id ?? null;
+  return rows.map((row) => row.tenant_id);
 }
 
 /** Finds the tenant a call belongs to, for the signed call page (the link carries only the call ID). */
@@ -958,6 +956,8 @@ export async function deleteTenantData(
       "onboarding_texts",
       "offboarding_messages",
       "tenant_memberships",
+      // The mobiles the business asked to switch its texts to: personal data.
+      "mobile_confirmations",
     ]) {
       await client.query(`DELETE FROM ${table} WHERE tenant_id = $1`, [tenantId]);
     }

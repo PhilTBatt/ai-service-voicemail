@@ -283,6 +283,11 @@ const DOORS: Record<string, Door> = {
   },
   "GET /admin/health": { access: "admin", path: () => "/admin/health" },
   "PUT /admin/kill-switch": { access: "admin", path: () => "/admin/kill-switch", body: {} },
+  "POST /tenants/:tenantId/notifications/confirm-mobile": {
+    access: "business",
+    path: ({ tenant }) => `/tenants/${tenant}/notifications/confirm-mobile`,
+    body: {},
+  },
   "GET /admin/voicemail-transcription": {
     access: "admin",
     path: () => "/admin/voicemail-transcription",

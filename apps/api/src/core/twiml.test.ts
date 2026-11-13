@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEMO_DAILY_CALLS_PER_CALLER } from "./routing.ts";
-import { DEMO_LIMIT_LINE } from "./scripts.ts";
+import { DEMO_LIMIT_LINE, DEMO_LIMIT_WITHHELD_LINE } from "./scripts.ts";
 import {
   agentDial,
   demoLimitReached,
@@ -78,6 +78,18 @@ describe("TwiML", () => {
     expect(xml).toMatchSnapshot();
     expect(xml).toContain("ten calls a day");
     expect(xml).toContain("<Hangup/>");
+  });
+
+  // Withheld callers share an allowance (routing.ts DEMO_DAILY_CALLS_WITHHELD): their message
+  // names no number of calls, and suggests showing their number for one of their own.
+  it("tells a withheld caller the shared allowance is used, and to call back with their number showing", () => {
+    const xml = demoLimitReached({ withheld: true });
+    expect(xml).toContain(`>${DEMO_LIMIT_WITHHELD_LINE}</Say>`);
+    expect(xml).toContain("withheld numbers");
+    expect(xml).toContain("with your number showing");
+    expect(DEMO_LIMIT_WITHHELD_LINE).not.toMatch(/\d/); // no number of calls that could go stale
+    expect(xml).toContain("<Hangup/>");
+    expect(demoLimitReached({ withheld: false })).toContain(DEMO_LIMIT_LINE);
   });
 
   it("says the same number of calls a day as the limit the routing applies", () => {

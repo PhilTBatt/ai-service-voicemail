@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { createApp } from "../app.ts";
 import { parseAllowlist } from "../core/outbound-allowlist.ts";
-import { DEMO_LIMIT_LINE, openingLine } from "../core/scripts.ts";
+import { DEMO_LIMIT_LINE, DEMO_LIMIT_WITHHELD_LINE, openingLine } from "../core/scripts.ts";
 import {
   FALLBACK_VOICEMAILS_PER_WINDOW,
   SIGNATURE_FAILURES_PER_WINDOW,
@@ -20,7 +20,7 @@ import { FakeVoiceProvider } from "../providers/voice.fake.ts";
 import { TEST_ADMIN_DATABASE_URL, TEST_DATABASE_URL } from "../testing/databases.ts";
 import { MOBILE_BANDS, bandMobile } from "../testing/drama-mobiles.ts";
 import { AGENT_DROPPED_UNDER_SECONDS } from "./twilio.ts";
-import { DEMO_DAILY_CALLS_PER_CALLER } from "../core/routing.ts";
+import { DEMO_DAILY_CALLS_PER_CALLER, DEMO_DAILY_CALLS_WITHHELD } from "../core/routing.ts";
 import {
   GLOBAL_SETTINGS_LOCK_TIMEOUT_MS,
   holdGlobalSettings,
@@ -817,6 +817,30 @@ describe("POST /webhooks/twilio/sms", () => {
     expect(await status(tenantId)).toBe("paused");
   });
 
+  // One tradesperson, two trades, one phone (PROGRESS open question 4): a confirmed mobile on two
+  // businesses commands both.
+  it("commands both businesses of a mobile on two, naming each in the reply", async () => {
+    const first = await makeTexter();
+    const { tenantId: second } = await makeTenant("live");
+    await admin.query("UPDATE tenants SET business_name = 'First Plumbing' WHERE id = $1", [
+      first.tenantId,
+    ]);
+    await admin.query(
+      "UPDATE tenants SET notification_mobile = $2, business_name = 'Second Sparks' WHERE id = $1",
+      [second, first.mobile],
+    );
+    const xml = await (await post("/webhooks/twilio/sms", sms(first.mobile, "OFF"))).text();
+    expect(xml).toContain("First Plumbing: AnswerMate is now OFF.");
+    expect(xml).toContain("Second Sparks: AnswerMate is now OFF.");
+    expect(await status(first.tenantId)).toBe("paused");
+    expect(await status(second)).toBe("paused");
+
+    // The same help for both: said once, with no business named.
+    const help = await (await post("/webhooks/twilio/sms", sms(first.mobile, "HELP"))).text();
+    expect(help).toContain("<Message>AnswerMate commands:");
+    expect(help).not.toContain("First Plumbing:");
+  });
+
   it("rejects an unsigned text", async () => {
     const response = await fetch(`${baseUrl}/webhooks/twilio/sms`, {
       method: "POST",
@@ -832,17 +856,32 @@ describe("the demo line (POST /webhooks/twilio/voice)", () => {
   const callsThisMorning = (count: number) =>
     Array.from({ length: count }, (_, i) => new Date(Date.UTC(2026, 6, 15, 8, i)).toISOString());
 
-  it("counts withheld callers as one: between them, one day's allowance", async () => {
+  // Withheld callers share one allowance, bigger than a phone's (Phil, 2026-11-11), with a
+  // message of its own that suggests showing their number.
+  it("gives withheld callers one shared, bigger allowance, and its own message when it's used", async () => {
     const { tenantId, number } = await makeTenant("demo");
-    for (const startedAt of callsThisMorning(DEMO_DAILY_CALLS_PER_CALLER)) {
-      await admin.query(
+    const withheldCall = async (startedAt: string) =>
+      admin.query(
         `INSERT INTO calls (tenant_id, provider_call_id, caller_number, started_at, ended_at)
          VALUES ($1, $2, NULL, $3, $3)`,
         [tenantId, `call_${randomUUID()}`, startedAt],
       );
+    // A phone's allowance of withheld calls today: nowhere near the shared allowance.
+    for (const startedAt of callsThisMorning(DEMO_DAILY_CALLS_PER_CALLER))
+      await withheldCall(startedAt);
+    expect(
+      await (await post("/webhooks/twilio/voice", call(number, "anonymous"))).text(),
+    ).toContain("<Dial");
+
+    for (const startedAt of callsThisMorning(DEMO_DAILY_CALLS_WITHHELD).slice(
+      DEMO_DAILY_CALLS_PER_CALLER,
+    )) {
+      await withheldCall(startedAt);
     }
     const withheld = await (await post("/webhooks/twilio/voice", call(number, "anonymous"))).text();
-    expect(withheld).toContain(DEMO_LIMIT_LINE);
+    expect(withheld).toContain(DEMO_LIMIT_WITHHELD_LINE);
+    expect(withheld).not.toContain(DEMO_LIMIT_LINE);
+    expect(withheld).toContain("<Hangup/>");
     // A caller who shows their number still gets through.
     const shown = await (
       await post("/webhooks/twilio/voice", call(number, "+447700900322"))

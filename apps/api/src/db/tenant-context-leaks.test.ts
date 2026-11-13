@@ -264,6 +264,8 @@ describe("the database's guard rails", () => {
       ORDER BY 1`);
     for (const fn of rows) {
       if (fn.name.startsWith("tenant_id_for_")) expect(fn.result, fn.name).toBe("uuid");
+      // The businesses a confirmed mobile is on: IDs, nothing else (a mobile can be on two).
+      else if (fn.name === "tenant_ids_for_mobile") expect(fn.result, fn.name).toBe("SETOF uuid");
       else if (fn.name === "tenant_members")
         expect(fn.result, fn.name).toBe(
           "TABLE(email text, role text, added_at timestamp with time zone)",

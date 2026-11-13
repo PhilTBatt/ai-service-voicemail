@@ -36,6 +36,7 @@ import { createPool } from "../db/pool.ts";
 import { withTenant } from "../db/tenant.ts";
 import { FakeAuthProvider } from "../providers/auth.fake.ts";
 import { FakePaymentsProvider } from "../providers/payments.fake.ts";
+import { FakeSmsProvider } from "../providers/sms.fake.ts";
 import { FakeTelephonyProvider } from "../providers/telephony.fake.ts";
 import { ONBOARDING_QUEUE, startQueue } from "../jobs/queue.ts";
 import { FakeVoiceProvider } from "../providers/voice.fake.ts";
@@ -57,6 +58,10 @@ const auth = new FakeAuthProvider();
 const voice = new FakeVoiceProvider();
 const telephony = new FakeTelephonyProvider();
 const payments = new FakePaymentsProvider();
+// Confirmation codes for new mobiles go here; only allowlisted mobiles get one, as outside production.
+const sms = new FakeSmsProvider();
+const SMS_ALLOWED = "+447700900802";
+const MOBILE_CODE = "246810";
 
 let boss: PgBoss;
 let get: (path: string, token?: string) => Promise<Response>;
@@ -116,6 +121,9 @@ beforeAll(async () => {
       telephony,
       numbers: { telephony, ...NUMBER_URLS, purchasesEnabled: true },
       billing: { payments, dashboardOrigin: "https://dash.example" },
+      sms: { provider: sms, outbound: { nodeEnv: "test", allowlist: new Set([SMS_ALLOWED]) } },
+      // A known code, so the tests can type the right one (and a wrong one) exactly.
+      newMobileCode: () => MOBILE_CODE,
       now: () => new Date("2026-11-07T10:00:00Z"),
     },
   }).listen(0);
@@ -302,6 +310,13 @@ describe("authorisation matrix", () => {
     { name: "PUT /tenants/:id/profile", path: `/tenants/${tenantA}/profile`, body: {} },
     { name: "PUT /tenants/:id/switch", path: `/tenants/${tenantA}/switch`, body: { on: true } },
     { name: "PUT /tenants/:id/notifications", path: `/tenants/${tenantA}/notifications`, body: {} },
+    // An empty body: refused (400) even for the owner, so the matrix confirms nothing.
+    {
+      name: "POST /tenants/:id/notifications/confirm-mobile",
+      path: `/tenants/${tenantA}/notifications/confirm-mobile`,
+      body: {},
+      method: "POST",
+    },
     {
       name: "POST /tenants/:id/cancel",
       path: `/tenants/${tenantA}/cancel`,
@@ -1065,55 +1080,242 @@ describe("invitations", () => {
 });
 
 describe("notification settings", () => {
-  it("changes where texts and emails go, and records which fields changed but not to what", async () => {
+  const storedSettings = async (tenant: string) =>
+    (
+      await admin.query<{ notification_mobile: string | null; notification_email: string | null }>(
+        "SELECT notification_mobile, notification_email FROM tenants WHERE id = $1",
+        [tenant],
+      )
+    ).rows[0]!;
+  const auditRows = async (tenant: string) =>
+    (
+      await admin.query<{ action: string; details: Record<string, unknown> }>(
+        "SELECT action, details FROM audit_log WHERE tenant_id = $1 ORDER BY created_at",
+        [tenant],
+      )
+    ).rows;
+  /** The 6 digits in the last code text the fake sent. */
+  const lastCode = () => /\b(\d{6})\b/.exec(sms.sent.at(-1)!.body)![1]!;
+
+  // PROGRESS open question 4 (Phil, 2026-11-11): a new mobile is texted a code and takes effect
+  // once it's typed back, so a typo can't send the business's texts to a stranger.
+  it("saves the email, texts the new mobile a code, and switches to it once the code is typed back", async () => {
     const tenant = await createTenant(admin, {
       businessName: "Notify Roofing",
       trade: "roofer",
       notificationMobile: "+447700900801",
     });
     const owner = await personFor(tenant);
+    const sentBefore = sms.sent.length;
     const response = await send(
       "PUT",
       `/tenants/${tenant}/notifications`,
-      { notificationMobile: "+447700900802", notificationEmail: "sam@example.com" },
+      { notificationMobile: SMS_ALLOWED, notificationEmail: "sam@example.com" },
       owner,
     );
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
-      notificationMobile: "+447700900802",
+      notificationMobile: "+447700900801", // still the old one
       notificationEmail: "sam@example.com",
+      pendingMobile: SMS_ALLOWED,
+      mobileCode: "sent",
+      retryAt: null,
     });
-    const row = (
-      await admin.query<{ notification_mobile: string; notification_email: string }>(
-        "SELECT notification_mobile, notification_email FROM tenants WHERE id = $1",
-        [tenant],
-      )
-    ).rows[0]!;
-    expect(row).toEqual({
-      notification_mobile: "+447700900802",
+    expect(await storedSettings(tenant)).toEqual({
+      notification_mobile: "+447700900801",
       notification_email: "sam@example.com",
     });
-    const audit = await admin.query<{ details: { changed: string[] } }>(
-      "SELECT details FROM audit_log WHERE tenant_id = $1 AND action = 'notifications.changed'",
-      [tenant],
-    );
-    expect(audit.rows).toHaveLength(1);
-    expect(audit.rows[0]!.details.changed.sort()).toEqual([
-      "notificationEmail",
-      "notificationMobile",
-    ]);
-    expect(JSON.stringify(audit.rows[0]!.details)).not.toContain("900802");
+    expect(sms.sent).toHaveLength(sentBefore + 1);
+    expect(sms.sent.at(-1)).toMatchObject({ to: SMS_ALLOWED });
+    expect(sms.sent.at(-1)!.body).toMatch(/AnswerMate: \d{6} is your code to confirm this mobile/);
+    // The business shows the mobile waiting for its code.
+    expect(await json<TenantView>(get(`/tenants/${tenant}`, owner))).toMatchObject({
+      notificationMobile: "+447700900801",
+      pendingMobile: SMS_ALLOWED,
+    });
 
-    // Saving the same values again isn't a change.
+    expect(lastCode()).toBe(MOBILE_CODE);
+
+    // The form saved again with the same new mobile (a corrected email, say): the code already
+    // on the phone stands, and no second text goes (the review of 2026-11-13).
+    expect(
+      await json<object>(
+        send(
+          "PUT",
+          `/tenants/${tenant}/notifications`,
+          { notificationMobile: SMS_ALLOWED, notificationEmail: "sam.b@example.com" },
+          owner,
+        ),
+      ),
+    ).toEqual({
+      notificationMobile: "+447700900801",
+      notificationEmail: "sam.b@example.com",
+      pendingMobile: SMS_ALLOWED,
+      mobileCode: null,
+      retryAt: null,
+    });
+    expect(sms.sent).toHaveLength(sentBefore + 1);
+
+    // A wrong code counts down; the right one switches the texts.
+    expect(
+      await json<object>(
+        send("POST", `/tenants/${tenant}/notifications/confirm-mobile`, { code: "000000" }, owner),
+      ),
+    ).toEqual({ outcome: "wrong-code", notificationMobile: null, attemptsLeft: 4 });
+    expect(
+      await json<object>(
+        send(
+          "POST",
+          `/tenants/${tenant}/notifications/confirm-mobile`,
+          { code: MOBILE_CODE },
+          owner,
+        ),
+      ),
+    ).toEqual({ outcome: "confirmed", notificationMobile: SMS_ALLOWED, attemptsLeft: null });
+    expect(await storedSettings(tenant)).toEqual({
+      notification_mobile: SMS_ALLOWED,
+      notification_email: "sam.b@example.com",
+    });
+    expect(await json<TenantView>(get(`/tenants/${tenant}`, owner))).toMatchObject({
+      notificationMobile: SMS_ALLOWED,
+      pendingMobile: null,
+    });
+
+    // The account log says what happened, never the numbers.
+    const audit = await auditRows(tenant);
+    expect(audit.map((row) => row.action)).toEqual([
+      "notifications.changed",
+      "mobile.code-sent",
+      "notifications.changed",
+      "notifications.changed",
+    ]);
+    expect(audit[0]!.details).toEqual({ via: "dashboard", changed: ["notificationEmail"] });
+    expect(audit[2]!.details).toEqual({ via: "dashboard", changed: ["notificationEmail"] });
+    expect(audit[3]!.details).toEqual({
+      via: "dashboard",
+      changed: ["notificationMobile"],
+      confirmed: true,
+    });
+    expect(JSON.stringify(audit)).not.toContain("900802");
+
+    // Saving the same values again isn't a change, and starts no code.
     await send(
       "PUT",
       `/tenants/${tenant}/notifications`,
-      { notificationMobile: "+447700900802", notificationEmail: "sam@example.com" },
+      { notificationMobile: SMS_ALLOWED, notificationEmail: "sam.b@example.com" },
       owner,
     );
+    expect(await auditRows(tenant)).toHaveLength(4);
+    expect(sms.sent).toHaveLength(sentBefore + 1);
+  });
+
+  // The review of 2026-11-13: a fourth code in the hour used to come back as "Saved".
+  it("sends a new code when asked, and says when the hour's three codes are used", async () => {
+    const tenant = await createTenant(admin, {
+      businessName: "Notify Sparks",
+      trade: "electrician",
+      notificationMobile: "+447700900801",
+    });
+    const owner = await personFor(tenant);
+    const sentBefore = sms.sent.length;
+    const settings = { notificationMobile: SMS_ALLOWED, notificationEmail: null };
+    const put = (body: object) =>
+      json<{ mobileCode: string | null; pendingMobile: string | null; retryAt: string | null }>(
+        send("PUT", `/tenants/${tenant}/notifications`, body, owner),
+      );
+    expect(await put(settings)).toMatchObject({ mobileCode: "sent", pendingMobile: SMS_ALLOWED });
+    // "Send a new code": another text, though one is out.
+    expect(await put({ ...settings, newCode: true })).toMatchObject({ mobileCode: "sent" });
+    expect(await put({ ...settings, newCode: true })).toMatchObject({ mobileCode: "sent" });
+    expect(sms.sent).toHaveLength(sentBefore + 3);
+    // The fourth in the hour: refused, with when to try again; nothing texted.
+    expect(await put({ ...settings, newCode: true })).toEqual({
+      notificationMobile: "+447700900801",
+      notificationEmail: null,
+      pendingMobile: SMS_ALLOWED,
+      mobileCode: "too-many-codes",
+      retryAt: "2026-11-07T11:00:00.000Z",
+    });
+    expect(sms.sent).toHaveLength(sentBefore + 3);
+    // The third code still works.
     expect(
-      (await admin.query("SELECT 1 FROM audit_log WHERE tenant_id = $1", [tenant])).rowCount,
-    ).toBe(1);
+      await json<object>(
+        send(
+          "POST",
+          `/tenants/${tenant}/notifications/confirm-mobile`,
+          { code: MOBILE_CODE },
+          owner,
+        ),
+      ),
+    ).toMatchObject({ outcome: "confirmed" });
+  });
+
+  it("says when the code couldn't go, saves a cleared mobile outright, and lets an admin set one outright", async () => {
+    const tenant = await createTenant(admin, {
+      businessName: "Notify Locks",
+      trade: "locksmith",
+      notificationMobile: "+447700900801",
+    });
+    const owner = await personFor(tenant);
+    const sentBefore = sms.sent.length;
+    // Not on the allowlist: outside production no text goes, and the page is told so.
+    expect(
+      await json<object>(
+        send(
+          "PUT",
+          `/tenants/${tenant}/notifications`,
+          { notificationMobile: "+447700900803", notificationEmail: null },
+          owner,
+        ),
+      ),
+    ).toMatchObject({ pendingMobile: "+447700900803", mobileCode: "blocked" });
+    expect(sms.sent).toHaveLength(sentBefore);
+
+    // Clearing the mobile needs no code.
+    expect(
+      await json<object>(
+        send(
+          "PUT",
+          `/tenants/${tenant}/notifications`,
+          { notificationMobile: null, notificationEmail: null },
+          owner,
+        ),
+      ),
+    ).toMatchObject({ notificationMobile: null, mobileCode: null });
+    expect((await storedSettings(tenant)).notification_mobile).toBeNull();
+
+    // An admin setting a business up isn't texted a code.
+    expect(
+      await json<object>(
+        send(
+          "PUT",
+          `/tenants/${tenant}/notifications`,
+          { notificationMobile: "+447700900804", notificationEmail: null },
+          tokens.admin,
+        ),
+      ),
+    ).toMatchObject({ notificationMobile: "+447700900804", pendingMobile: null, mobileCode: null });
+    expect((await storedSettings(tenant)).notification_mobile).toBe("+447700900804");
+    expect(sms.sent).toHaveLength(sentBefore);
+
+    // A code has to be six digits.
+    expect(
+      (
+        await send(
+          "POST",
+          `/tenants/${tenant}/notifications/confirm-mobile`,
+          { code: "12345" },
+          owner,
+        )
+      ).status,
+    ).toBe(400);
+    // The code that was out for the blocked mobile stopped when the mobile was settled outright.
+    expect(
+      await json<object>(
+        send("POST", `/tenants/${tenant}/notifications/confirm-mobile`, { code: "123456" }, owner),
+      ),
+    ).toEqual({ outcome: "expired", notificationMobile: null, attemptsLeft: null });
+    expect((await json<TenantView>(get(`/tenants/${tenant}`, owner))).pendingMobile).toBeNull();
   });
 
   it("takes only UK mobiles and real-looking emails", async () => {

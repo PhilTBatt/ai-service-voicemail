@@ -4,6 +4,7 @@ import twilio from "twilio";
 import { nationalNumber } from "./notifications.ts";
 import {
   DEMO_LIMIT_LINE,
+  DEMO_LIMIT_WITHHELD_LINE,
   FALLBACK_VOICEMAIL_GREETING,
   SERVICE_ENDED_LINE,
   VOICEMAIL_THANKS,
@@ -98,10 +99,13 @@ export function serviceEnded(mobile: string | null): string {
   return response.toString();
 }
 
-/** A demo caller who has used today's calls (routing.ts DEMO_DAILY_CALLS_PER_CALLER). */
-export function demoLimitReached(): string {
+/**
+ * A demo caller who has used today's calls (routing.ts DEMO_DAILY_CALLS_PER_CALLER), or a
+ * withheld one whose shared allowance has gone (DEMO_DAILY_CALLS_WITHHELD).
+ */
+export function demoLimitReached({ withheld = false }: { withheld?: boolean } = {}): string {
   const response = new VoiceResponse();
-  response.say(SAY, DEMO_LIMIT_LINE);
+  response.say(SAY, withheld ? DEMO_LIMIT_WITHHELD_LINE : DEMO_LIMIT_LINE);
   response.hangup();
   return response.toString();
 }

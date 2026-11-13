@@ -301,7 +301,10 @@ describe("POST /webhooks/twilio/sms with odd texts", () => {
     expect(rows).toEqual([{ status: "live" }]);
   });
 
-  it("ignores a mobile two businesses share, rather than guessing which one it is", async () => {
+  // A mobile is confirmed by a code texted to it before it's saved (PROGRESS open question 4),
+  // so one on two businesses is really theirs: the command applies to both, named in the reply,
+  // rather than being ignored as it used to be.
+  it("commands both businesses of a shared mobile, rather than guessing which one it is", async () => {
     const mobile = await bandMobile(admin, BAND);
     const first = await makeTenant({ mobile });
     const second = await makeTenant({ mobile });
@@ -313,12 +316,13 @@ describe("POST /webhooks/twilio/sms with odd texts", () => {
         Body: "OFF",
       })
     ).text();
-    expect(xml).toBe('<?xml version="1.0" encoding="UTF-8"?><Response/>');
+    expect(xml).toContain("<Message>");
+    expect(xml.match(/AnswerMate is now OFF/g)).toHaveLength(2);
     const { rows } = await admin.query(
       "SELECT status FROM tenants WHERE id = ANY($1) ORDER BY status",
       [[first.tenantId, second.tenantId]],
     );
-    expect(rows).toEqual([{ status: "live" }, { status: "live" }]);
+    expect(rows).toEqual([{ status: "paused" }, { status: "paused" }]);
   });
 
   it("pauses once however often Twilio redelivers OFF, with one audit row", async () => {

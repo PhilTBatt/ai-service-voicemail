@@ -6,7 +6,7 @@ import {
   assignPhoneNumber,
   createAdminPool,
   createTenant,
-  findTenantIdByMobile,
+  findTenantIdsByMobile,
 } from "./cross-tenant.ts";
 import { createPool } from "./pool.ts";
 import { TEST_ADMIN_DATABASE_URL, TEST_DATABASE_URL } from "../testing/databases.ts";
@@ -209,18 +209,24 @@ describe("applySmsCommand", () => {
   });
 });
 
-describe("findTenantIdByMobile", () => {
-  it("finds the one tenant with that mobile, and nobody when it's shared or unknown", async () => {
+describe("findTenantIdsByMobile", () => {
+  it("finds every business with that mobile, oldest first, and nobody for an unknown one", async () => {
     const { tenantId, mobile } = await makeTenant("live");
-    expect(await findTenantIdByMobile(app, mobile)).toBe(tenantId);
-    expect(await findTenantIdByMobile(app, "+447700900000")).toBeNull();
+    expect(await findTenantIdsByMobile(app, mobile)).toEqual([tenantId]);
+    expect(await findTenantIdsByMobile(app, "+447700900000")).toEqual([]);
 
-    await createTenant(admin, {
+    // One tradesperson, two trades, one phone: both are theirs (the mobile was confirmed by a
+    // code texted to it), so both answer to it.
+    const second = await createTenant(admin, {
       businessName: "Same Mobile Ltd",
       trade: "roofer",
       notificationMobile: mobile,
     });
-    expect(await findTenantIdByMobile(app, mobile)).toBeNull();
+    expect(await findTenantIdsByMobile(app, mobile)).toEqual([tenantId, second]);
+
+    // A business that has left is out of it.
+    await admin.query("UPDATE tenants SET status = 'cancelled' WHERE id = $1", [second]);
+    expect(await findTenantIdsByMobile(app, mobile)).toEqual([tenantId]);
   });
 });
 

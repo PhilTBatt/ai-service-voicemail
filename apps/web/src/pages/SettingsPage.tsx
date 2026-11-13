@@ -4,13 +4,15 @@ import {
   CSV_EXPORTS,
   CSV_EXPORT_LABELS,
   PILOT,
+  confirmMobileSchema,
   notificationSettingsSchema,
   type BillingView,
   type CancellationView,
+  type ConfirmMobileView,
   type UndoCancellationView,
   type DirectDebitStartView,
   type DocumentsView,
-  type NotificationSettings,
+  type NotificationSettingsView,
   type SuspensionView,
   type TenantView,
 } from "@callmate/shared";
@@ -216,6 +218,18 @@ function Documents({
   );
 }
 
+/** A new mobile waiting for the code texted to it, and what the server said about that text. */
+interface PendingMobile {
+  mobile: string;
+  code: NotificationSettingsView["mobileCode"];
+  retryAt: string | null;
+}
+
+/**
+ * Where the messages go. A new mobile isn't saved on its own: the server texts it a code, and
+ * texts switch to it once the code is typed back (so a typo can't send the business's texts to
+ * a stranger). An admin's change is saved outright.
+ */
 function Notifications({ tenant }: { tenant: TenantView }) {
   const { api } = useApi();
   const toast = useToast();
@@ -226,8 +240,15 @@ function Notifications({ tenant }: { tenant: TenantView }) {
   const [problems, setProblems] = useState<{ mobile?: string[]; email?: string[] }>({});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<Error | null>(null);
+  const [pending, setPending] = useState<PendingMobile | null>(
+    tenant.pendingMobile ? { mobile: tenant.pendingMobile, code: null, retryAt: null } : null,
+  );
+  const [code, setCode] = useState("");
+  const [codeProblem, setCodeProblem] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
 
-  const save = async () => {
+  /** `newCode`: send a fresh code even though one is out for this mobile ("Send a new code"). */
+  const save = async (newCode = false) => {
     const candidate = {
       notificationMobile: mobile.trim() === "" ? null : toUkMobileE164(mobile),
       notificationEmail: email.trim() === "" ? null : email.trim(),
@@ -244,15 +265,103 @@ function Notifications({ tenant }: { tenant: TenantView }) {
     setSaving(true);
     setError(null);
     try {
-      await api<NotificationSettings>(`/tenants/${tenant.id}/notifications`, {
+      const saved = await api<NotificationSettingsView>(`/tenants/${tenant.id}/notifications`, {
         method: "PUT",
-        body: checked.data,
+        body: { ...checked.data, ...(newCode && { newCode: true }) },
       });
-      toast({ title: "Saved", body: "The next message goes to these." });
+      if (saved.mobileCode !== null || saved.pendingMobile !== null) {
+        // The new mobile isn't saved yet: a code went (or couldn't), or the one already out stands.
+        // With too many codes asked for, nothing may be waiting, so it's the mobile just typed.
+        const waiting = saved.pendingMobile ?? checked.data.notificationMobile ?? "";
+        if (saved.mobileCode !== null || pending?.mobile !== waiting) {
+          setPending({ mobile: waiting, code: saved.mobileCode, retryAt: saved.retryAt });
+        }
+        if (saved.mobileCode === "sent") {
+          setCode("");
+          setCodeProblem(null);
+        }
+        toast(
+          saved.mobileCode === "sent"
+            ? {
+                title: "Code texted",
+                body: `Enter the code we've texted to ${formatPhone(waiting)}.`,
+              }
+            : saved.mobileCode === null
+              ? {
+                  title: "Saved",
+                  body: `The code texted to ${formatPhone(waiting)} still stands: enter it below.`,
+                }
+              : { title: "Saved", body: "The new mobile still needs confirming (see below)." },
+        );
+      } else {
+        setPending(null);
+        toast({ title: "Saved", body: "The next message goes to these." });
+      }
     } catch (caught) {
       setError(asError(caught));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const confirm = async () => {
+    const checked = confirmMobileSchema.safeParse({ code });
+    if (!checked.success) {
+      setCodeProblem(checked.error.issues[0]?.message ?? "the code is 6 digits");
+      return;
+    }
+    setConfirming(true);
+    setCodeProblem(null);
+    setError(null);
+    try {
+      const result = await api<ConfirmMobileView>(
+        `/tenants/${tenant.id}/notifications/confirm-mobile`,
+        { method: "POST", body: checked.data },
+      );
+      switch (result.outcome) {
+        case "confirmed":
+          setPending(null);
+          setCode("");
+          setMobile(result.notificationMobile ? formatPhone(result.notificationMobile) : "");
+          toast({ title: "Mobile confirmed", body: "Texts about calls now go to it." });
+          break;
+        case "wrong-code":
+          setCodeProblem(
+            result.attemptsLeft === 0
+              ? "That's not the code, and there are no tries left. Save the mobile again for a new one."
+              : `That's not the code. ${result.attemptsLeft} ${result.attemptsLeft === 1 ? "try" : "tries"} left.`,
+          );
+          break;
+        case "expired":
+          setCodeProblem("That code has expired. Save the mobile again for a new one.");
+          break;
+        case "too-many-attempts":
+          setCodeProblem("Too many wrong tries. Save the mobile again for a new code.");
+          break;
+        case "nothing-pending":
+          setPending(null);
+          break;
+      }
+    } catch (caught) {
+      setError(asError(caught));
+    } finally {
+      setConfirming(false);
+    }
+  };
+
+  const pendingNote = (waiting: PendingMobile) => {
+    const number = formatPhone(waiting.mobile);
+    switch (waiting.code) {
+      case "sent":
+        return `We've texted a code to ${number}. Enter it below and texts about calls switch to that number.`;
+      case "blocked":
+        return `Texts to ${number} are blocked on this server (outside production only listed numbers get texts), so no code was sent.`;
+      case "unavailable":
+        return `This server can't send texts, so ${number} can't be confirmed here.`;
+      case "too-many-codes":
+        return `Three codes have been asked for in the last hour. Try again${waiting.retryAt ? ` after ${formatUkDateTime(waiting.retryAt)}` : " later"}.`;
+      case null:
+        return `A code was texted to ${number}. Enter it below, or send a new one if it didn't arrive.`;
     }
   };
 
@@ -289,6 +398,47 @@ function Notifications({ tenant }: { tenant: TenantView }) {
         {mobile.trim() === "" && (
           <Alert tone="warning">
             <p>Without a mobile you won't get texts, including the ones about emergencies.</p>
+          </Alert>
+        )}
+        {pending && (
+          <Alert tone="info" title="Confirm the new mobile">
+            <p>
+              {pendingNote(pending)}
+              {tenant.notificationMobile || pending.code !== "sent"
+                ? ""
+                : " Until then they go nowhere."}
+            </p>
+            {/* A code to type only when one went, or one from before is waiting. */}
+            {(pending.code === "sent" || pending.code === null) && (
+              <div className="cluster" data-testid="confirm-mobile">
+                <TextField
+                  label="Code from the text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  value={code}
+                  error={codeProblem ? [codeProblem] : undefined}
+                  onChange={(event) => setCode(event.target.value)}
+                />
+                <Button
+                  type="button"
+                  variant="secondary"
+                  loading={confirming}
+                  onClick={() => void confirm()}
+                >
+                  Confirm mobile
+                </Button>
+              </div>
+            )}
+            {pending.code !== "too-many-codes" && (
+              <Button
+                type="button"
+                variant="ghost"
+                loading={saving}
+                onClick={() => void save(true)}
+              >
+                Send a new code
+              </Button>
+            )}
           </Alert>
         )}
         <TextField

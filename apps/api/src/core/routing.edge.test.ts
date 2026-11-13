@@ -5,6 +5,7 @@ import { TENANT_STATUSES, type TenantStatus } from "@callmate/shared";
 import { describe, expect, it } from "vitest";
 import {
   DEMO_DAILY_CALLS_PER_CALLER,
+  DEMO_DAILY_CALLS_WITHHELD,
   routeInboundCall,
   type InboundCallContext,
   type RouteDecision,
@@ -133,16 +134,17 @@ describe("routeInboundCall, the demo line's cap", () => {
 
   it("caps withheld callers even when the business has no mobile on record", () => {
     // A withheld caller (null) used to match a missing mobile (null) and count as the owner.
+    // Withheld callers share their own, bigger allowance (DEMO_DAILY_CALLS_WITHHELD).
     expect(
       routeInboundCall(
         context(
           "demo",
-          { callerNumber: null, callerCallsToday: DEMO_DAILY_CALLS_PER_CALLER },
+          { callerNumber: null, callerCallsToday: DEMO_DAILY_CALLS_WITHHELD },
           { notificationMobile: null },
         ),
         NOW,
       ),
-    ).toEqual({ kind: "demo-limit" });
+    ).toEqual({ kind: "demo-limit", withheld: true });
   });
 
   it("never caps a live tenant's callers, however many calls", () => {

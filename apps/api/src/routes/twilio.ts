@@ -18,7 +18,8 @@ import {
   smsReply,
   voicemailDone,
 } from "../core/twiml.ts";
-import { findTenantIdByMobile } from "../db/cross-tenant.ts";
+import { findTenantIdsByMobile } from "../db/cross-tenant.ts";
+import { withTenant } from "../db/tenant.ts";
 import { recordReceipt } from "../db/delivery-receipts.ts";
 import { loadInboundCallContext } from "../db/inbound-call.ts";
 import { applySmsCommand } from "../db/tenant-commands.ts";
@@ -265,7 +266,7 @@ export function twilioRouter({
         twiml = rejectCall();
         break;
       case "demo-limit":
-        twiml = demoLimitReached();
+        twiml = demoLimitReached({ withheld: decision.withheld });
         break;
     }
 
@@ -395,31 +396,55 @@ export function twilioRouter({
     }
     const { MessageSid: messageSid, Body: body } = parsed.data;
     const from = e164OrNull(parsed.data.From);
-    const tenantId = from === null ? null : await findTenantIdByMobile(pool, from);
+    const tenantIds = from === null ? [] : await findTenantIdsByMobile(pool, from);
     res.type("text/xml");
-    if (tenantId === null || from === null) {
+    if (from === null || tenantIds.length === 0) {
       logger.info("Ignored SMS from an unknown sender", { messageSid });
       res.send(noSmsReply());
       return;
     }
 
+    // A mobile on two businesses (one tradesperson, two trades) commands both: each gets the
+    // command, and the reply names each business's answer. The informational replies (help, an
+    // unknown command, a bad date) are the same for every business, so they're said once.
     const command = parseSmsCommand(body, ukToday(now()));
-    const result = await applySmsCommand(pool, tenantId, command, now());
-    if (result.resyncProfileVersion !== undefined) {
-      await enqueueSync({ tenantId, profileVersion: result.resyncProfileVersion });
+    const replies: string[] = [];
+    for (const tenantId of tenantIds) {
+      const result = await applySmsCommand(pool, tenantId, command, now());
+      if (result.resyncProfileVersion !== undefined) {
+        await enqueueSync({ tenantId, profileVersion: result.resyncProfileVersion });
+      }
+      logger.info("SMS command handled", { messageSid, tenantId, command: command.kind });
+      replies.push(result.reply);
     }
-    logger.info("SMS command handled", { messageSid, tenantId, command: command.kind });
+    const informational =
+      command.kind === "help" || command.kind === "unknown" || command.kind === "holiday-invalid";
+    let reply = replies[0]!;
+    if (tenantIds.length > 1 && !informational) {
+      const names = await Promise.all(
+        tenantIds.map((tenantId) =>
+          withTenant(pool, tenantId, async (client) => {
+            const { rows } = await client.query<{ business_name: string }>(
+              "SELECT business_name FROM tenants WHERE id = $1",
+              [tenantId],
+            );
+            return rows[0]?.business_name ?? "Business";
+          }),
+        ),
+      );
+      reply = replies.map((each, index) => `${names[index]}: ${each}`).join("\n");
+    }
 
     const decision = checkOutbound(outbound, from);
     if (!decision.allowed) {
       logger.warn("SMS reply blocked by the outbound allowlist", {
-        tenantId,
+        tenantIds,
         reason: decision.reason,
       });
       res.send(noSmsReply());
       return;
     }
-    res.send(smsReply(result.reply));
+    res.send(smsReply(reply));
   });
 
   // Delivery receipts for every text we send (a call's, onboarding, leaving, a deletion's
