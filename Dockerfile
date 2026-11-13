@@ -11,8 +11,16 @@
 # the dashboard is built. Debian slim rather than Alpine, to match the glibc-based systems
 # Azure runs.
 
+# The Node image both stages start from, pinned to an exact version and its digest (the
+# registry's fingerprint of that one image). A tag like node:26-slim moves every time Docker Hub
+# republishes it, so the same commit could build on a different Node, or a different Debian,
+# from one release to the next. This is what node:26-slim was on 2026-11-13: Node 26.13.1 on
+# Debian 13 (trixie). Moving it on is a deliberate change: RUNBOOK section 16, "Moving to a
+# newer Node image". The digest is the multi-platform one, so it builds on any machine.
+ARG NODE_IMAGE=node:26.13.1-trixie-slim@sha256:e6bedef217677b276c591795e169840edd9096dbf13f29df8ef8d1856b8820bc
+
 # ─── Build: the dashboard, and the migration tool. Dev dependencies live only here. ────────
-FROM node:26-slim AS build
+FROM ${NODE_IMAGE} AS build
 WORKDIR /app
 
 COPY package.json package-lock.json .npmrc ./
@@ -35,7 +43,7 @@ RUN npm run build --workspace @callmate/web
 RUN cp "$(node --input-type=module -e "import { resolveBinary } from 'dbmate'; console.log(resolveBinary())")" /usr/local/bin/dbmate
 
 # ─── Run ──────────────────────────────────────────────────────────────────────────────────
-FROM node:26-slim
+FROM ${NODE_IMAGE}
 
 # Links the published image to its repository on GitHub (decision 016).
 LABEL org.opencontainers.image.source=https://github.com/PhilTBatt/ai-service-voicemail

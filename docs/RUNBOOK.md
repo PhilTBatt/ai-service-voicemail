@@ -367,6 +367,16 @@ The voicemail callers hear when the assistant can't answer comes from two places
 3. Open bin 2 ("AnswerMate fallback voicemail"), replace everything in it with what the script printed (from `<?xml` to `</Response>`), and save. Its URL doesn't change, so nothing else needs updating.
 4. Check it: Twilio console, the demo number, **Voice configuration**: its fallback URL is still bin 2's URL.
 
+### Moving to a newer Node image
+
+The image is built on one exact Node image, pinned by version and digest at the top of the `Dockerfile` (`ARG NODE_IMAGE`), so every release builds on the same Node and Debian until you choose otherwise. To move on (a Node security release, say, or once a quarter):
+
+1. Docker Hub's [node tags](https://hub.docker.com/_/node/tags?name=-slim): the newest `26.x.y-trixie-slim` (the Node major in `package.json`'s `engines`).
+2. Its digest, from the repo root: `docker buildx imagetools inspect node:26.x.y-trixie-slim`. Copy the `Digest:` line (`sha256:...`) at the top, the multi-platform one, not one of the per-platform ones under it.
+3. Put both in `ARG NODE_IMAGE=node:26.x.y-trixie-slim@sha256:...`, update the date and version in the comment above it, run `npm run check`, and release as usual.
+
+`npm run check` refuses a `Dockerfile` whose image isn't pinned this way, or whose Node major isn't `engines`'.
+
 ### The uptime check (decision 018)
 
 The one thing the service can't email about is being down, so something outside asks it every five minutes. UptimeRobot, free plan, two monitors of type HTTP(s), each alerting the same address as `ALERT_EMAIL`:

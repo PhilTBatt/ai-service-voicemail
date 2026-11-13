@@ -289,11 +289,20 @@ describe("the database connection budget (apps/api/src/db/pool.ts)", () => {
 describe("Dockerfile", () => {
   const engine = /"node": "\^(\d+)\./.exec(read("package.json"))?.[1];
 
-  it("builds and runs on the Node major package.json pins", () => {
+  // node:<x.y.z>-<debian>-slim@sha256:<digest>: an exact version, and the image's own fingerprint.
+  const image = /^ARG NODE_IMAGE=node:(\d+)\.\d+\.\d+-[a-z]+-slim@sha256:[0-9a-f]{64}$/m.exec(
+    dockerfile,
+  );
+
+  it("pins its Node image to an exact version and digest, so a release can't change under it", () => {
+    expect(image, "ARG NODE_IMAGE=node:<x.y.z>-<debian>-slim@sha256:<digest>").not.toBeNull();
+  });
+
+  it("builds and runs both stages on that image, on the Node major package.json pins", () => {
     expect(engine).toBeDefined();
-    const bases = [...dockerfile.matchAll(/^FROM node:(\d+)-/gm)].map((m) => m[1]);
-    expect(bases).toHaveLength(2);
-    for (const major of bases) expect(major).toBe(engine);
+    expect(image?.[1]).toBe(engine);
+    const bases = [...dockerfile.matchAll(/^FROM (\S+)/gm)].map((m) => m[1]);
+    expect(bases).toEqual(["${NODE_IMAGE}", "${NODE_IMAGE}"]);
   });
 
   it("starts the API with node itself, so SIGTERM reaches it and shutdown is graceful", () => {
