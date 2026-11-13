@@ -10,12 +10,29 @@
 // timer tries again after 1 minute, then 2, 4, 8 and every 15 at most, one email at a time,
 // stopping at the first that fails. So an outage costs one attempt per retry, and once the
 // provider is back each waiting alert gets its one email, as the throttle would have allowed.
+//
+// Those waiting alerts were only in memory, so a restart or a release lost them (2026-11-13).
+// Now, given the database, every alert is written to the outbox (db/alert-outbox.ts) before
+// it's emailed, and each process sweeps the outbox every minute, starting the moment it starts:
+// a waiting alert outlives the process that raised it. The throttle and the back-off live in
+// the outbox too, so they hold across the API and the worker, and alerts the throttle held back
+// now get their email when the 15 minutes are up ("Plus 3 more..."), not only when another
+// comes. If the database can't be reached (one of the things an alert can be about), the alert
+// goes through the in-memory sender above instead, as every alert did before.
+import type pg from "pg";
 import { setAlertSink, type AlertName, type AlertSink } from "./alerts.ts";
 import type { Config } from "./config.ts";
 import { checkOutbound, type OutboundPolicy } from "./core/outbound-allowlist.ts";
 import { logger } from "./logger.ts";
 import type { EmailProvider } from "./providers/email.ts";
 import { PostmarkEmailProvider } from "./providers/postmark.ts";
+import {
+  claimDueAlerts,
+  markAlertFailed,
+  markAlertSent,
+  pruneSentAlerts,
+  recordAlert,
+} from "./db/alert-outbox.ts";
 import { redactField } from "./redact.ts";
 
 export const ALERT_EMAIL_MIN_INTERVAL_MS = 15 * 60_000;
@@ -189,22 +206,150 @@ export function alertEmailer({
   };
 }
 
-/** Installs the email sink when ALERT_EMAIL and the email settings are there; says if not. */
+/** How often each process looks through the outbox for alerts due an email. */
+export const ALERT_SWEEP_MS = 60_000;
+
+export interface DurableAlertEmailOptions extends AlertEmailOptions {
+  /** The app role's pool: the outbox has no tenant data, so no tenant context. */
+  pool: pg.Pool;
+  /** Where an alert goes when the outbox can't be written: the in-memory sender. */
+  fallback: AlertSink;
+}
+
+/**
+ * The sink that keeps alerts in the database until an email carries them, and the sweep that
+ * sends whatever is due (each process runs it every minute, and once as it starts).
+ */
+export function durableAlertEmailer({
+  pool,
+  email,
+  to,
+  outbound,
+  fallback,
+  now = () => new Date(),
+  minIntervalMs = ALERT_EMAIL_MIN_INTERVAL_MS,
+}: DurableAlertEmailOptions): { sink: AlertSink; sweep: () => Promise<void> } {
+  /** Emails each window claimed (one, or every one due), recording what became of it. */
+  const deliver = async (key?: string) => {
+    const claimed = await claimDueAlerts(pool, {
+      at: now(),
+      minIntervalMs,
+      ...(key !== undefined && { key }),
+    });
+    for (const [index, alert] of claimed.entries()) {
+      const decision = checkOutbound(outbound, to);
+      if (!decision.allowed) {
+        // Refused for as long as the settings stand: no point trying again, so it counts as done.
+        logger.warn("Alert email not sent", { alert: alert.alert, reason: decision.reason });
+        await markAlertSent(pool, { key: alert.key, carried: alert.unsent, at: now() });
+        continue;
+      }
+      try {
+        await email.send(
+          composeAlertMessage({
+            alert: alert.alert,
+            details: alert.details,
+            at: alert.raisedAt,
+            suppressed: alert.unsent - 1,
+            to,
+          }),
+        );
+      } catch (error) {
+        logger.error("Alert email failed", { alert: alert.alert, error });
+        await markAlertFailed(pool, { key: alert.key, at: now() });
+        // The provider is failing: the rest wait for their own retry rather than each trying
+        // now. Their claims lapse in two minutes; letting them go now is tidier.
+        for (const rest of claimed.slice(index + 1)) {
+          await markAlertFailed(pool, { key: rest.key, at: now() });
+        }
+        return;
+      }
+      await markAlertSent(pool, { key: alert.key, carried: alert.unsent, at: now() });
+    }
+  };
+
+  const sink: AlertSink = async (alert, details) => {
+    const key = throttleKey(alert, details);
+    let stored: Record<string, unknown>;
+    try {
+      stored = redactedDetails(details);
+    } catch (error) {
+      // Details that can't be written out (a BigInt, say): this alert goes no further than the
+      // log, as before.
+      logger.error("Alert email failed", { alert, error });
+      return;
+    }
+    try {
+      await recordAlert(pool, { key, alert, details: stored, at: now() });
+    } catch (error) {
+      logger.warn("Alert outbox unreachable: this alert's email waits in memory", {
+        alert,
+        error,
+      });
+      await fallback(alert, details);
+      return;
+    }
+    try {
+      await deliver(key);
+    } catch (error) {
+      // Saved, so the next sweep sends it.
+      logger.error("Alert email failed", { alert, error });
+    }
+  };
+
+  const sweep = async () => {
+    await deliver();
+    await pruneSentAlerts(pool, now());
+  };
+  return { sink, sweep };
+}
+
+let sweepTimer: NodeJS.Timeout | undefined;
+
+/** Stops the outbox sweep (at shutdown, before the pool closes). */
+export function stopAlertEmail(): void {
+  clearInterval(sweepTimer);
+  sweepTimer = undefined;
+}
+
+/**
+ * Installs the email sink when ALERT_EMAIL and the email settings are there; says if not.
+ * Given the database, alerts wait in the outbox and survive a restart, and the sweep starts;
+ * without, they wait in memory as before.
+ */
 export function installAlertEmail(
   config: Pick<Config, "email" | "alertEmail" | "outbound">,
+  pool?: pg.Pool,
 ): boolean {
   if (!config.email || !config.alertEmail) {
     logger.warn("Alert emails off: needs ALERT_EMAIL, POSTMARK_SERVER_TOKEN and EMAIL_FROM");
     return false;
   }
-  setAlertSink(
-    alertEmailer({
-      email: new PostmarkEmailProvider(config.email),
-      to: config.alertEmail,
-      outbound: config.outbound,
-    }),
-  );
-  logger.info("Alert emails on");
+  const options = {
+    email: new PostmarkEmailProvider(config.email),
+    to: config.alertEmail,
+    outbound: config.outbound,
+  };
+  const memory = alertEmailer(options);
+  if (!pool) {
+    setAlertSink(memory);
+    logger.info("Alert emails on");
+    return true;
+  }
+  const { sink, sweep } = durableAlertEmailer({ ...options, pool, fallback: memory });
+  setAlertSink(sink);
+  const run = () => {
+    sweep().catch((error: unknown) => {
+      logger.warn("Alert outbox sweep failed; the next minute's tries again", { error });
+    });
+  };
+  // Straight away, for alerts a restart left waiting; then every minute. Unref'd, so it never
+  // holds up a shutdown.
+  stopAlertEmail();
+  run();
+  sweepTimer = setInterval(run, ALERT_SWEEP_MS);
+  sweepTimer.unref();
+  logger.info("Alert emails on, through the outbox");
   return true;
 }
 
@@ -214,6 +359,21 @@ const ukTime = new Intl.DateTimeFormat("en-GB", {
   timeStyle: "short",
 });
 
+/**
+ * An alert's details as its email shows them: redacted, errors as their name and message, and
+ * written out as JSON and back, so what's stored is what's sent. Throws for details JSON can't
+ * hold (a BigInt).
+ */
+export function redactedDetails(details: Record<string, unknown>): Record<string, unknown> {
+  const redacted = Object.fromEntries(
+    Object.entries(details).map(([key, value]) => [
+      key,
+      redactField(key, value instanceof Error ? `${value.name}: ${value.message}` : value),
+    ]),
+  );
+  return JSON.parse(JSON.stringify(redacted)) as Record<string, unknown>;
+}
+
 /** The email: redacted details, the time in UK terms, and where the runbook explains it. */
 export function alertMessage(alert: {
   alert: AlertName;
@@ -222,12 +382,18 @@ export function alertMessage(alert: {
   suppressed: number;
   to: string;
 }) {
-  const details = Object.fromEntries(
-    Object.entries(alert.details).map(([key, value]) => [
-      key,
-      redactField(key, value instanceof Error ? `${value.name}: ${value.message}` : value),
-    ]),
-  );
+  return composeAlertMessage({ ...alert, details: redactedDetails(alert.details) });
+}
+
+/** The email from details already redacted (from the outbox, say). */
+export function composeAlertMessage(alert: {
+  alert: string;
+  details: Record<string, unknown>;
+  at: Date;
+  suppressed: number;
+  to: string;
+}) {
+  const details = alert.details;
   const lines = [
     `AnswerMate alert: ${alert.alert}`,
     `At: ${ukTime.format(alert.at)} (UK time)`,

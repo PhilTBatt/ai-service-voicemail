@@ -6,7 +6,7 @@
 // /readyz says "starting" until the queue is up, so Azure keeps traffic on the old revision
 // during a release. Before, a start during a database blip threw, and Azure's restarts of a
 // crashing container slowed down each time, keeping the API down after the database was back.
-import { installAlertEmail } from "./alert-email.ts";
+import { installAlertEmail, stopAlertEmail } from "./alert-email.ts";
 import { ConfigError, loadConfig, type Config } from "./config.ts";
 import { createAdminPool } from "./db/cross-tenant.ts";
 import { createPool } from "./db/pool.ts";
@@ -16,8 +16,9 @@ import { buildServerApp } from "./server-app.ts";
 
 function start(config: Config): void {
   logger.level = config.logLevel;
-  installAlertEmail(config);
   const pool = createPool(config.databaseUrl);
+  // Alerts wait in the database until emailed, so one waiting out an outage survives a restart.
+  installAlertEmail(config, pool);
   // The API only enqueues; the worker process runs the jobs.
   const boss = createQueue(config.databaseUrl);
   let queueReady = false;
@@ -29,8 +30,10 @@ function start(config: Config): void {
   const app = buildServerApp(config, { pool, boss, admin, ready: () => queueReady });
 
   const stopping = new AbortController();
-  const closeAll = () =>
-    boss.stop({ close: true }).then(() => Promise.all([pool.end(), admin?.end()]));
+  const closeAll = () => {
+    stopAlertEmail();
+    return boss.stop({ close: true }).then(() => Promise.all([pool.end(), admin?.end()]));
+  };
 
   const server = app.listen(config.port, (error) => {
     if (error) {

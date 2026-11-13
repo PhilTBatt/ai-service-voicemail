@@ -4,7 +4,7 @@
 // If the database can't be reached at start-up it waits for it, as the API does (server.ts),
 // rather than exiting into a slowing restart loop. Until the queue is up it doesn't check in,
 // so /healthz/worker and the Admin page say it's down, which is true.
-import { installAlertEmail } from "./alert-email.ts";
+import { installAlertEmail, stopAlertEmail } from "./alert-email.ts";
 import { ConfigError, loadConfig } from "./config.ts";
 import { createAdminPool } from "./db/cross-tenant.ts";
 import { WORKER_ADMIN_POOL_MAX, createPool } from "./db/pool.ts";
@@ -22,11 +22,12 @@ import { registerJobs } from "./worker-jobs.ts";
 try {
   const config = loadConfig(process.env);
   logger.level = config.logLevel;
-  installAlertEmail(config);
   if (!config.retellApiKey)
     throw new ConfigError(["RETELL_API_KEY is missing (the worker syncs agents to Retell)"]);
 
   const pool = createPool(config.databaseUrl);
+  // Alerts wait in the database until emailed, so one waiting out an outage survives a restart.
+  installAlertEmail(config, pool);
   const admin = config.adminDatabaseUrl
     ? createAdminPool(config.adminDatabaseUrl, { max: WORKER_ADMIN_POOL_MAX })
     : null;
@@ -41,6 +42,7 @@ try {
     logger.info("Worker shutting down", { signal });
     stopping.abort();
     stopTimers();
+    stopAlertEmail();
     void boss
       .stop({ graceful: true, timeout: 30_000, close: true })
       .then(() => Promise.all([pool.end(), admin?.end()]))
