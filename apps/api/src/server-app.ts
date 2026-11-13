@@ -17,7 +17,10 @@ import { logger } from "./logger.ts";
 import { ClerkAuthProvider } from "./providers/clerk.ts";
 import { GoCardlessPaymentsProvider } from "./providers/gocardless.ts";
 import { RetellVoiceProvider } from "./providers/retell.ts";
+import { PostmarkStatsApi } from "./providers/postmark-stats.ts";
 import { TwilioSmsProvider } from "./providers/twilio-sms.ts";
+import { TwilioUsageApi } from "./providers/twilio-usage.ts";
+import { GBP_PER_USD } from "./core/prices.ts";
 import { TwilioTelephonyProvider } from "./providers/twilio.ts";
 
 /**
@@ -123,6 +126,15 @@ export function buildServerApp(
           sms: config.sms
             ? { provider: new TwilioSmsProvider(config.sms), outbound: config.outbound }
             : undefined,
+          // Read-only: what Twilio and Postmark say we used, beside the admin's estimates.
+          supplierReadings: {
+            twilio: config.twilio
+              ? new TwilioUsageApi({ ...config.twilio, gbpPerUsd: GBP_PER_USD })
+              : undefined,
+            email: config.email
+              ? new PostmarkStatsApi({ serverToken: config.email.serverToken })
+              : undefined,
+          },
         }
       : undefined;
   if (dashboard) logger.info("Dashboard API on", { dashboardOrigin: config.dashboardOrigin });

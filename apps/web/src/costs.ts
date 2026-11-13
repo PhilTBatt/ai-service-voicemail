@@ -248,3 +248,34 @@ export function costHeadlines(
 export function businessMargin(row: CostRowView): number | null {
   return row.billPence === null ? null : row.billPence - row.pence.total;
 }
+
+/** How a supplier's own figure compares with our estimate, in words. */
+export function estimateGap(actualPence: number, estimatePence: number): string {
+  const gap = actualPence - estimatePence;
+  if (gap === 0) return "the same as our estimate";
+  return gap > 0
+    ? `${formatPence(gap)} more than our estimate`
+    : `${formatPence(-gap)} less than our estimate`;
+}
+
+/** A share of what was sent, to one decimal place: "7.1%"; nothing of nothing is "0%". */
+export function percentOf(part: number, whole: number): string {
+  if (whole <= 0) return "0%";
+  return `${Math.round((part / whole) * 1000) / 10}%`;
+}
+
+/**
+ * Postmark's count beside ours, in a sentence. Ours misses the alert emails (and anything else
+ * the server sends that isn't recorded), so Postmark's is the one the plan counts.
+ */
+export function emailCountText(sent: number, ourCount: number): string {
+  const more = sent - ourCount;
+  const counted = `Our records count ${ourCount}`;
+  if (more > 0) {
+    return `${counted}: the other ${more} ${more === 1 ? "is an alert email" : "are alert emails"} or anything else we don't record.`;
+  }
+  if (more < 0) {
+    return `${counted}: more than Postmark's, which can happen at the edges of the 30 days (Postmark counts in US Eastern time).`;
+  }
+  return `${counted}, the same.`;
+}

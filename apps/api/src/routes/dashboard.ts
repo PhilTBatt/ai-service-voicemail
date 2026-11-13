@@ -39,7 +39,7 @@ import { agentProfileInputSchema, saveAgentProfile } from "../db/agent-profiles.
 import { NEEDS_REPLY_SQL, setCallHandled } from "../db/call-handled.ts";
 import { enqueueOffboardingWith } from "../jobs/offboarding.ts";
 import { enqueueOnboardingWith } from "../jobs/onboarding.ts";
-import { adminRouter, type NumberProvisioning } from "./admin.ts";
+import { adminRouter, type NumberProvisioning, type SupplierReadingProviders } from "./admin.ts";
 import {
   createSignupLink,
   listTenantsWithCallCounts,
@@ -112,6 +112,8 @@ export interface DashboardOptions extends RecordingSources {
   sms?: { provider: SmsProvider; outbound: OutboundPolicy } | undefined;
   /** The code to text, for the browser tests' server; random otherwise. */
   newMobileCode?: (() => string) | undefined;
+  /** Twilio's and Postmark's own figures, for the admin's costs. Each absent until set up. */
+  supplierReadings?: SupplierReadingProviders | undefined;
   now?: () => Date;
 }
 
@@ -180,6 +182,7 @@ export function dashboardRouter({
   billing,
   sms,
   newMobileCode,
+  supplierReadings,
   now,
 }: DashboardOptions) {
   const router = Router();
@@ -219,6 +222,7 @@ export function dashboardRouter({
       enqueueOnboarding: enqueueOnboardingWith(boss),
       enqueueOffboarding: enqueueOffboardingWith(boss),
       payments: billing?.payments,
+      supplierReadings,
       ...(now && { now }),
     }),
   );

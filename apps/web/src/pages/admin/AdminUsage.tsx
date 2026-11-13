@@ -1,11 +1,20 @@
 // What the service uses and what it costs (all estimated, never a bill): the headline figures,
 // tier changes on the way, how fast use is growing, every supplier with its plan and tiers, and
 // each business's costs beside its bill so far. Integer pence throughout, summed here too.
-import type { CostRowView, CostsView, ServiceCostView, UsageView } from "@callmate/shared";
+import type {
+  AccountReadingsView,
+  CostRowView,
+  CostsView,
+  ServiceCostView,
+  UsageView,
+} from "@callmate/shared";
 import { Link } from "react-router";
 import { useApi, useLoad } from "../../api.ts";
 import {
   businessMargin,
+  emailCountText,
+  estimateGap,
+  percentOf,
   costHeadlines,
   penceChange,
   rankedServices,
@@ -146,6 +155,8 @@ function Costs() {
         )}
       </Card>
 
+      <Accounts accounts={suppliers.accounts} />
+
       <Growth growth={suppliers.growth} days={suppliers.windowDays} />
 
       <Card
@@ -271,7 +282,10 @@ function SupplierRow({ service }: { service: ServiceCostView }) {
         )}
       </td>
       <td data-label="Last 30 days" className="num">
-        {formatPence(service.pence.now)}
+        <div className="stack stack-xs">
+          <span>{formatPence(service.pence.now)}</span>
+          {service.measured && <span className="muted text-xs">Its own figure</span>}
+        </div>
       </td>
       <td data-label="Next 30 days" className="num">
         {formatPence(service.pence.next)}
@@ -451,5 +465,98 @@ function Businesses({
         </table>
       </div>
     </Card>
+  );
+}
+
+/** What Twilio's and Postmark's own accounts say, beside our estimates. */
+function Accounts({ accounts }: { accounts: AccountReadingsView }) {
+  const { twilio, postmark } = accounts;
+  return (
+    <Card
+      title="From your accounts"
+      description={`What Twilio and Postmark say themselves for ${formatDate(accounts.from)} to ${formatDate(accounts.to)}, read as this page opened. Where they're read, their figures are used above in place of ours.`}
+    >
+      <div className="stack">
+        <section className="stack stack-sm" aria-labelledby="account-twilio">
+          <h3 id="account-twilio">Twilio</h3>
+          {twilio.status === "read" ? (
+            <>
+              <p>
+                <strong className="num">{formatPence(twilio.totalPence)}</strong> by Twilio's own
+                total, {estimateGap(twilio.totalPence, twilio.estimatePence)} (
+                {formatPence(twilio.estimatePence)}).
+              </p>
+              {twilio.lines.length > 0 && (
+                <div className="table-wrap">
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>What</th>
+                        <th className="num">Used</th>
+                        <th className="num">Cost</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {twilio.lines.map((line) => (
+                        <tr key={line.category}>
+                          <td>{line.description}</td>
+                          <td className="num">{line.usage}</td>
+                          <td className="num">{formatPence(line.pence)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              <p className="muted text-xs">
+                The total includes anything not listed. The account's balance isn't shown: Twilio's
+                docs don't describe a way to read it.
+              </p>
+            </>
+          ) : (
+            <Unread reading={twilio} />
+          )}
+        </section>
+
+        <section className="stack stack-sm" aria-labelledby="account-postmark">
+          <h3 id="account-postmark">Postmark</h3>
+          {postmark.status === "read" ? (
+            <>
+              <p>
+                <strong className="num">{postmark.sent}</strong> emails sent, against{" "}
+                {postmark.previousSent} in the 30 days before.{" "}
+                {emailCountText(postmark.sent, postmark.ourCount)}
+              </p>
+              <ul className="stack stack-xs text-sm">
+                <li>
+                  Bounced: {postmark.bounced} ({percentOf(postmark.bounced, postmark.sent)}).
+                  Postmark pauses an account past 10%.
+                </li>
+                <li>
+                  Reported as spam: {postmark.spamComplaints} (
+                  {percentOf(postmark.spamComplaints, postmark.sent)}). Postmark pauses an account
+                  past 1 in 1,000.
+                </li>
+              </ul>
+            </>
+          ) : (
+            <Unread reading={postmark} />
+          )}
+        </section>
+      </div>
+    </Card>
+  );
+}
+
+function Unread({ reading }: { reading: { status: "off" | "failed"; reason: string } }) {
+  return reading.status === "off" ? (
+    <p className="muted">{reading.reason}, so the figures above are our estimates.</p>
+  ) : (
+    <Alert tone="warning">
+      <p>
+        Couldn't read it this time: {reading.reason}. The figures above are our estimates until it
+        can be.
+      </p>
+    </Alert>
   );
 }

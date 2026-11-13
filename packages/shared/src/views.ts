@@ -540,6 +540,8 @@ export interface ServiceCostView {
   /** The last 30 days, and the next 30 if use carries on changing as it has. */
   pence: { now: number; next: number };
   /** What its cost moves with. */
+  /** True when `pence.now` is the supplier's own figure, read from its account. */
+  measured: boolean;
   drivenBy: string;
   /** A tier about to change: "up" costs more or hits a limit, "down" is a saving. */
   warnings: { direction: "up" | "down"; text: string }[];
@@ -551,6 +553,8 @@ export interface ServiceCostsView {
   from: string;
   to: string;
   services: ServiceCostView[];
+  /** What the suppliers' own accounts said, beside our estimate. */
+  accounts: AccountReadingsView;
   growth: { calls: TrendView; minutes: TrendView; emails: TrendView; textSegments: TrendView };
   totals: {
     nowPence: number;
@@ -563,4 +567,33 @@ export interface ServiceCostsView {
     /** The metered cost of a minute of call, in hundredths of a penny; null with no calls. */
     perMinuteHundredths: number | null;
   };
+}
+
+/** One supplier's own figures: read, not set up on this server, or failed to read. */
+export type AccountReading<T> =
+  | ({ status: "read" } & T)
+  | { status: "off"; reason: string }
+  | { status: "failed"; reason: string };
+
+/** What Twilio's and Postmark's own accounts say about the last 30 days. */
+export interface AccountReadingsView {
+  /** The days read, both included: UTC dates for Twilio, Postmark's own (US Eastern) for it. */
+  from: string;
+  to: string;
+  twilio: AccountReading<{
+    /** Everything the account used in those days, by Twilio's own total. */
+    totalPence: number;
+    /** Our estimate of the same, from our own records. */
+    estimatePence: number;
+    lines: { category: string; description: string; pence: number; usage: string }[];
+  }>;
+  postmark: AccountReading<{
+    sent: number;
+    /** Sent in the 30 days before. */
+    previousSent: number;
+    /** What our own records count: Postmark's is more by the alert emails, which we don't record. */
+    ourCount: number;
+    bounced: number;
+    spamComplaints: number;
+  }>;
 }

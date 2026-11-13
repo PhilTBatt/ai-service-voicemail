@@ -20,6 +20,7 @@ import { logger } from "../logger.ts";
 import type { NumberConfiguration, PurchasedNumber } from "../providers/telephony.ts";
 import { parseAllowlist } from "../core/outbound-allowlist.ts";
 import { FakeSmsProvider } from "../providers/sms.fake.ts";
+import { FakeEmailStats, FakeTwilioUsage } from "../providers/supplier-readings.fake.ts";
 import { FakeTelephonyProvider } from "../providers/telephony.fake.ts";
 import { FakeVoiceProvider } from "../providers/voice.fake.ts";
 import type { NumberProvisioning } from "../routes/admin.ts";
@@ -78,6 +79,41 @@ function numbersSetup(purchasesEnabled: boolean): NumberProvisioning {
     purchasesEnabled,
     ukRegulatoryReady: true,
   };
+}
+
+/** Twilio's own figures for the last 30 days, whatever days are asked for. */
+function e2eTwilioUsage(): FakeTwilioUsage {
+  const twilio = new FakeTwilioUsage();
+  twilio.reading = {
+    totalPence: 151,
+    lines: [
+      {
+        category: "calls-inbound-local",
+        description: "Inbound Local Calls",
+        pence: 21,
+        usage: "28 minutes",
+      },
+      { category: "phonenumbers", description: "Phone Numbers", pence: 87, usage: "1 numbers" },
+    ],
+  };
+  return twilio;
+}
+
+/** Postmark's own count: 14 sent, 1 bounced, in the last 30 days; 6 in the 30 before. */
+function e2eEmailStats(): FakeEmailStats {
+  const email = new FakeEmailStats();
+  const outbound = email.outbound.bind(email);
+  email.outbound = (range) => {
+    const last = range.to >= new Date().toISOString().slice(0, 10);
+    email.readings.set(
+      range.from,
+      last
+        ? { sent: 14, bounced: 1, spamComplaints: 0 }
+        : { sent: 6, bounced: 0, spamComplaints: 0 },
+    );
+    return outbound(range);
+  };
+  return email;
 }
 
 /** Who and what the smoke tests expect to find. */
@@ -158,6 +194,9 @@ const dashboard = {
     },
   },
   newMobileCode: () => "123456",
+  // What Twilio's and Postmark's own accounts say: fixed figures, so the Admin page's costs have
+  // something to show beside the estimates (e2e/money.e2e.ts).
+  supplierReadings: { twilio: e2eTwilioUsage(), email: e2eEmailStats() },
 };
 const withoutNumbers = createApp({ pool, dashboard });
 const withNumbers = createApp({ pool, dashboard: { ...dashboard, numbers: numbersSetup(true) } });

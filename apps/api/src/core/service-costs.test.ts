@@ -214,6 +214,64 @@ describe("serviceCosts", () => {
     expect(service(result, "gocardless").pence).toEqual({ now: 119 + 69, next: 3 * 119 });
   });
 
+  describe("the suppliers' own figures", () => {
+    const busy = {
+      last: usage(
+        { calls: 60, callSeconds: 9000, emails: 9, textSegments: 120 },
+        { phoneMinutes: 160, transcription: 10, texts: 508, numbers: 174 },
+      ),
+      previous: usage({ calls: 40, callSeconds: 6000, emails: 4, textSegments: 80 }),
+    };
+
+    it("are estimates, marked so, when no account could be read", () => {
+      const result = serviceCosts(readings(busy));
+      expect(result.services.every((each) => !each.measured)).toBe(true);
+      expect(service(result, "postmark").usage).toMatchObject({
+        label: "Emails (our count, without alerts)",
+        used: 9,
+      });
+    });
+
+    it("put Twilio's own total in place of ours, moving it as our estimate moves", () => {
+      const result = serviceCosts(
+        readings({ ...busy, accounts: { twilioPence: 1000, postmark: null } }),
+      );
+      const twilio = service(result, "twilio");
+      // Ours: 852 now, 1,078 next. Twilio says 1,000, so next is 1,000 x 1,078 / 852.
+      expect(twilio.pence).toEqual({ now: 1000, next: 1265 });
+      expect(twilio.measured).toBe(true);
+      expect(result.totals.nowPence).toBe(
+        result.services.reduce((total, each) => total + each.pence.now, 0),
+      );
+    });
+
+    it("keep Twilio's total as it is when we have no estimate to move it by", () => {
+      const result = serviceCosts(readings({ accounts: { twilioPence: 87, postmark: null } }));
+      expect(service(result, "twilio").pence).toEqual({ now: 87, next: 87 });
+    });
+
+    it("count Postmark's emails, alerts included, for the plan and its warnings", () => {
+      const result = serviceCosts(
+        readings({
+          ...busy,
+          accounts: {
+            twilioPence: null,
+            postmark: {
+              last: { sent: 70, bounced: 0, spamComplaints: 0 },
+              previous: { sent: 40, bounced: 0, spamComplaints: 0 },
+            },
+          },
+        }),
+      );
+      const postmark = service(result, "postmark");
+      expect(postmark.measured).toBe(true);
+      expect(postmark.usage).toMatchObject({ label: "Emails (Postmark's count)", used: 70 });
+      expect(result.growth.emails).toEqual({ last: 70, previous: 40, next: 100, ratePercent: 75 });
+      // Ours said 9 and would never have warned; Postmark's 70 heads for the plan's 100.
+      expect(postmark.warnings[0]?.text).toContain("100 emails a month is close to the 100");
+    });
+  });
+
   describe("warnings", () => {
     it("has none on a quiet month, apart from the database's connections", () => {
       const result = serviceCosts(readings());
@@ -286,6 +344,31 @@ describe("serviceCosts", () => {
         }),
       );
       expect(service(close, "anthropic").warnings[0]?.text).toContain("Start tier");
+    });
+
+    it("warns when Postmark's bounces or spam complaints near the limits it pauses an account at", () => {
+      const counts = (sent: number, bounced: number, spamComplaints: number) =>
+        readings({
+          accounts: {
+            twilioPence: null,
+            postmark: {
+              last: { sent, bounced, spamComplaints },
+              previous: { sent, bounced: 0, spamComplaints: 0 },
+            },
+          },
+        });
+      // 1 bounce in 14 is 7.1%: past half of Postmark's 10%.
+      const bounced = service(serviceCosts(counts(14, 1, 0)), "postmark").warnings;
+      expect(bounced.map((each) => each.text)).toEqual([
+        "1 of 14 emails bounced (7.1%). Postmark pauses an account past 10%: check the addresses on the businesses' Account pages.",
+      ]);
+      // 1 complaint in 14 is far past 1 in 1,000.
+      const complained = service(serviceCosts(counts(14, 0, 1)), "postmark").warnings;
+      expect(complained[0]?.text).toContain("1 of 14 emails were reported as spam (7.14%)");
+      // 1 bounce in 40 is 2.5%: fine.
+      expect(service(serviceCosts(counts(40, 1, 0)), "postmark").warnings).toEqual([]);
+      // Nothing sent: nothing to divide by.
+      expect(service(serviceCosts(counts(0, 0, 0)), "postmark").warnings).toEqual([]);
     });
 
     it("warns as logins near Clerk's free plan", () => {

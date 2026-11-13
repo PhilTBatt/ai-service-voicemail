@@ -5,6 +5,9 @@ import { describe, expect, it } from "vitest";
 import {
   billParts,
   businessMargin,
+  emailCountText,
+  estimateGap,
+  percentOf,
   costHeadlines,
   dayColumns,
   minuteParts,
@@ -52,6 +55,7 @@ const service = (set: Partial<ServiceCostView>): ServiceCostView => ({
   usage: null,
   tiers: [],
   pence: { now: 0, next: 0 },
+  measured: false,
   drivenBy: "",
   warnings: [],
   ...set,
@@ -348,5 +352,37 @@ describe("businessMargin", () => {
     expect(businessMargin(row(9900, 1500))).toBe(8400);
     expect(businessMargin(row(0, 300))).toBe(-300);
     expect(businessMargin(row(null, 300))).toBeNull();
+  });
+});
+
+describe("estimateGap", () => {
+  it("says how far a supplier's own figure is from ours, either way", () => {
+    expect(estimateGap(151, 149)).toBe("£0.02 more than our estimate");
+    expect(estimateGap(140, 149)).toBe("£0.09 less than our estimate");
+    expect(estimateGap(149, 149)).toBe("the same as our estimate");
+  });
+});
+
+describe("percentOf", () => {
+  it("gives a share to one decimal place", () => {
+    expect(percentOf(1, 14)).toBe("7.1%");
+    expect(percentOf(0, 14)).toBe("0%");
+    expect(percentOf(3, 0)).toBe("0%");
+  });
+});
+
+describe("emailCountText", () => {
+  it("puts the difference down to the alert emails we don't record", () => {
+    expect(emailCountText(14, 9)).toBe(
+      "Our records count 9: the other 5 are alert emails or anything else we don't record.",
+    );
+    expect(emailCountText(10, 9)).toBe(
+      "Our records count 9: the other 1 is an alert email or anything else we don't record.",
+    );
+  });
+
+  it("says when the two agree, and why ours could be more", () => {
+    expect(emailCountText(9, 9)).toBe("Our records count 9, the same.");
+    expect(emailCountText(8, 9)).toContain("more than Postmark's");
   });
 });

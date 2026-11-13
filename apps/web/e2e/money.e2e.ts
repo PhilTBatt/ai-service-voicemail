@@ -114,7 +114,6 @@ test.describe("the Admin page's costs", () => {
     }
     const postmark = suppliers.locator("tbody tr", { hasText: "Postmark" });
     await expect(postmark).toContainText("Free");
-    await expect(postmark).toContainText("of 100 emails");
 
     // Opening a supplier shows its tiers, with the current one marked.
     await postmark.getByText("Postmark", { exact: true }).click();
@@ -128,6 +127,20 @@ test.describe("the Admin page's costs", () => {
     const warnings = page.locator(".card", { hasText: "Tier changes on the way" });
     await expect(warnings).toContainText("Microsoft Azure: costs or limits ahead");
     await expect(warnings).toContainText("35 of the database's 35 connections");
+
+    // Twilio's and Postmark's own figures (the test server's fixed ones), beside ours.
+    const accounts = page.locator(".card", { hasText: "From your accounts" });
+    await expect(accounts).toContainText("£1.51 by Twilio's own total");
+    await expect(accounts.getByRole("cell", { name: "Inbound Local Calls" })).toBeVisible();
+    await expect(accounts).toContainText("14 emails sent, against 6 in the 30 days before.");
+    await expect(accounts).toContainText("Bounced: 1 (7.1%)");
+    // The supplier rows use those figures, and say so.
+    const twilio = suppliers.locator("tbody tr", { hasText: "Twilio" });
+    await expect(twilio).toContainText("£1.51");
+    await expect(twilio).toContainText("Its own figure");
+    await expect(postmark).toContainText("Emails (Postmark's count): 14 of 100 emails");
+    // 1 bounce in 14 is past half of Postmark's 10%: a warning.
+    await expect(warnings).toContainText("1 of 14 emails bounced (7.1%)");
 
     // Growth, and each business beside its bill.
     await expect(page.getByRole("heading", { name: "How fast use is growing" })).toBeVisible();

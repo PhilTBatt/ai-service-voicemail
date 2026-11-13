@@ -58,7 +58,33 @@ export interface ServiceReadings {
   logins: number;
   /** What the paying businesses' current billing months come to so far, before VAT. */
   incomePence: number;
+  /**
+   * What the suppliers' own accounts say, where they could be read: the truth our estimates
+   * are checked against, and used in their place.
+   */
+  accounts?: SupplierAccounts | undefined;
 }
+
+/** The suppliers' own figures for the same two windows. Null where one couldn't be read. */
+export interface SupplierAccounts {
+  /** Twilio's own total for the last window, in pence. */
+  twilioPence: number | null;
+  /** Postmark's own counts, alert emails and everything else our server sent included. */
+  postmark: { last: EmailCounts; previous: EmailCounts } | null;
+}
+
+export interface EmailCounts {
+  sent: number;
+  bounced: number;
+  spamComplaints: number;
+}
+
+/**
+ * Postmark pauses an account whose bounces pass 10% of its emails, or whose spam complaints
+ * pass 1 in 1,000 (RUNBOOK section 16). The page warns at half of each.
+ */
+export const POSTMARK_BOUNCE_LIMIT_PERCENT = 10;
+export const POSTMARK_COMPLAINT_LIMIT_PERCENT = 0.1;
 
 /** The plans we're on. Change one here when Phil changes it at the supplier. */
 export const CURRENT_PLANS = {
@@ -219,6 +245,7 @@ function retell(readings: ServiceReadings, minutes: Trend): ServiceCostView {
       now: readings.last.pence.voicePlatform + extra(peak.last),
       next: scaled(readings.last.pence.voicePlatform, minutes) + extra(peak.next),
     },
+    measured: false,
     drivenBy: "Call minutes",
     warnings,
   };
@@ -243,12 +270,29 @@ function twilio(readings: ServiceReadings, minutes: Trend, segments: Trend): Ser
         limit: "A discount agreed with Twilio's sales team",
       },
     ],
-    pence: {
+    pence: twilioPence(readings, {
       now: metered + pence.texts + pence.numbers,
       next: scaled(metered, minutes) + scaled(pence.texts, segments) + pence.numbers,
-    },
+    }),
+    measured: readings.accounts?.twilioPence != null,
     drivenBy: "Call minutes, texts and numbers",
     warnings: [],
+  };
+}
+
+/**
+ * Twilio's figures: its own total for the last window when it could be read, and where that's
+ * heading moved by the same amount our estimate moves.
+ */
+function twilioPence(
+  readings: ServiceReadings,
+  estimate: { now: number; next: number },
+): { now: number; next: number } {
+  const actual = readings.accounts?.twilioPence;
+  if (actual == null) return estimate;
+  return {
+    now: actual,
+    next: estimate.now === 0 ? actual : Math.round((actual * estimate.next) / estimate.now),
   };
 }
 
@@ -283,12 +327,13 @@ function anthropic(readings: ServiceReadings, calls: Trend): ServiceCostView {
       limit: `Up to ${pounds(tier.capPence)} a month`,
     })),
     pence: { now, next },
+    measured: false,
     drivenBy: "Calls",
     warnings,
   };
 }
 
-function postmark(emails: Trend): ServiceCostView {
+function postmark(emails: Trend, counts: EmailCounts | null): ServiceCostView {
   const current = POSTMARK_TIERS.find((tier) => tier.id === CURRENT_PLANS.postmark)!;
   const best = cheapestPostmarkTier(emails.next);
   const now = postmarkPence(current.id, emails.last);
@@ -315,19 +360,41 @@ function postmark(emails: Trend): ServiceCostView {
           : `At ${emails.next} emails a month, ${best.name} is cheaper than paying for extras: ${pounds(best.pence)} against ${pounds(next)}.`,
     });
   }
+  if (counts !== null && counts.sent > 0) {
+    const bounceRate = (counts.bounced / counts.sent) * 100;
+    const complaintRate = (counts.spamComplaints / counts.sent) * 100;
+    if (bounceRate >= POSTMARK_BOUNCE_LIMIT_PERCENT / 2) {
+      warnings.push({
+        direction: "up",
+        text: `${counts.bounced} of ${counts.sent} emails bounced (${bounceRate.toFixed(1)}%). Postmark pauses an account past ${POSTMARK_BOUNCE_LIMIT_PERCENT}%: check the addresses on the businesses' Account pages.`,
+      });
+    }
+    if (complaintRate >= POSTMARK_COMPLAINT_LIMIT_PERCENT / 2) {
+      warnings.push({
+        direction: "up",
+        text: `${counts.spamComplaints} of ${counts.sent} emails were reported as spam (${complaintRate.toFixed(2)}%). Postmark pauses an account past 1 in 1,000.`,
+      });
+    }
+  }
   return {
     id: "postmark",
     name: "Postmark",
     purpose: "Emails: call summaries, receipts and alerts",
     plan: current.name,
     pricing: `By emails a month. Paid plans charge ${pounds(POSTMARK_EXTRA_PER_1000_PENCE)} for each extra 1,000; the free plan sends none past its limit.`,
-    usage: { label: "Emails", used: emails.last, limit: current.emails, unit: "emails" },
+    usage: {
+      label: counts === null ? "Emails (our count, without alerts)" : "Emails (Postmark's count)",
+      used: emails.last,
+      limit: current.emails,
+      unit: "emails",
+    },
     tiers: tiers(POSTMARK_TIERS, current, (tier) => ({
       monthlyPence: tier.pence,
       limit: `${tier.emails.toLocaleString("en-GB")} emails a month`,
     })),
     // Over the free plan's limit there's nothing to pay: the cost is the emails not sent.
     pence: { now: now ?? current.pence, next: next ?? best.pence },
+    measured: counts !== null,
     drivenBy: "Emails sent",
     warnings,
   };
@@ -366,6 +433,7 @@ function goCardless(readings: ServiceReadings): ServiceCostView {
       now: fees(readings.last.payments),
       next: readings.payingBusinesses * goCardlessFeePence(typical),
     },
+    measured: false,
     drivenBy: "Paying businesses",
     warnings: [],
   };
@@ -399,6 +467,7 @@ function azure(): ServiceCostView {
       limit: `${tier.connections} connections`,
     })),
     pence: { now: total, next: total },
+    measured: false,
     drivenBy: "Fixed",
     warnings,
   };
@@ -434,6 +503,7 @@ function clerk(readings: ServiceReadings): ServiceCostView {
       },
     ],
     pence: { now: 0, next: 0 },
+    measured: false,
     drivenBy: "People with a login",
     warnings,
   };
@@ -463,6 +533,7 @@ function small(): ServiceCostView[] {
         },
       ],
       pence: { now: 0, next: 0 },
+      measured: false,
       drivenBy: "Fixed",
       warnings: [],
     },
@@ -482,6 +553,7 @@ function small(): ServiceCostView[] {
         },
       ],
       pence: { now: DOMAIN_PENCE_PER_MONTH, next: DOMAIN_PENCE_PER_MONTH },
+      measured: false,
       drivenBy: "Fixed",
       warnings: [],
     },
@@ -489,19 +561,25 @@ function small(): ServiceCostView[] {
 }
 
 /** Everything the Costs tab shows about suppliers, from one set of readings. */
-export function serviceCosts(readings: ServiceReadings): Omit<ServiceCostsView, "from" | "to"> {
+export function serviceCosts(
+  readings: ServiceReadings,
+): Omit<ServiceCostsView, "from" | "to" | "accounts"> {
   const minutes = trend(
     Math.ceil(readings.last.callSeconds / 60),
     Math.ceil(readings.previous.callSeconds / 60),
   );
   const calls = trend(readings.last.calls, readings.previous.calls);
-  const emails = trend(readings.last.emails, readings.previous.emails);
+  // Postmark's own count where it could be read: it has the alert emails ours misses.
+  const sent = readings.accounts?.postmark ?? null;
+  const emails = sent
+    ? trend(sent.last.sent, sent.previous.sent)
+    : trend(readings.last.emails, readings.previous.emails);
   const segments = trend(readings.last.textSegments, readings.previous.textSegments);
   const services = [
     retell(readings, minutes),
     twilio(readings, minutes, segments),
     anthropic(readings, calls),
-    postmark(emails),
+    postmark(emails, sent?.last ?? null),
     goCardless(readings),
     azure(),
     clerk(readings),

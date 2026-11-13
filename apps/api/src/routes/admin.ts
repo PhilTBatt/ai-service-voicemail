@@ -31,6 +31,8 @@ import { startOfUkDate } from "../core/usage.ts";
 import { TRANSCRIBABLE_MIN_SECONDS } from "../core/voicemail-transcription.ts";
 import { ukDateOf } from "../core/billing.ts";
 import { serviceCosts } from "../core/service-costs.ts";
+import type { EmailStatsProvider, TwilioUsageProvider } from "../providers/supplier-readings.ts";
+import { readSupplierAccounts } from "./supplier-accounts.ts";
 import { collectAgain, setSuspended, undoCancellation } from "../db/billing-actions.ts";
 import {
   activeNumberFor,
@@ -95,7 +97,14 @@ export interface AdminOptions {
   enqueueOffboarding?: EnqueueOffboarding | undefined;
   /** Collecting a failed payment again (Step 12). Absent until GoCardless is configured. */
   payments?: PaymentsProvider | undefined;
+  /** Twilio's and Postmark's own figures, for the costs. Each absent until set up. */
+  supplierReadings?: SupplierReadingProviders | undefined;
   now?: () => Date;
+}
+
+export interface SupplierReadingProviders {
+  twilio?: TwilioUsageProvider | undefined;
+  email?: EmailStatsProvider | undefined;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -144,6 +153,7 @@ export function adminRouter({
   enqueueOnboarding,
   enqueueOffboarding,
   payments,
+  supplierReadings = {},
   now = () => new Date(),
 }: AdminOptions) {
   const router = Router();
@@ -409,6 +419,7 @@ export function adminRouter({
     const { calendar, tenants, unpriced } = await estimateMonthCosts(admin, now(), CURRENT_PRICES);
     const usage = await readServiceUsage(admin, now(), CURRENT_PRICES);
     const paying = tenants.filter((tenant) => tenant.billPence !== null);
+    const accounts = await readSupplierAccounts(supplierReadings, now(), usage);
     res.json({
       periodStart: calendar.periodStart,
       periodEnd: calendar.periodEnd,
@@ -423,7 +434,9 @@ export function adminRouter({
           logins: usage.logins,
           payingBusinesses: paying.length,
           incomePence: paying.reduce((total, tenant) => total + (tenant.billPence ?? 0), 0),
+          accounts: accounts.forCosts,
         }),
+        accounts: accounts.view,
       },
       assumptions: describePrices(CURRENT_PRICES),
       unpriced,
