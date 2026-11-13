@@ -567,7 +567,11 @@ test.describe("the assistant's details", () => {
     await page.getByRole("switch", { name: "Saturday" }).check();
     await page.getByLabel("Saturday opens").fill("09:00");
     await page.getByLabel("Saturday closes").fill("13:00");
-    await page.getByLabel("Monday closes").fill("07:00"); // before it opens
+    // Closing before it opens runs overnight, and says so; the same time twice is a mistake.
+    await page.getByLabel("Monday closes").fill("07:00");
+    await expect(page.getByText("closes Tuesday morning")).toBeVisible();
+    await page.getByLabel("Monday closes").fill("08:00");
+    await expect(page.getByText("closes Tuesday morning")).toHaveCount(0);
     await page.getByRole("switch", { name: "I'm away" }).check();
     await page.getByLabel("Last day away").fill(holidayEnd);
     await page.getByRole("switch", { name: "I take urgent call-outs" }).check();
@@ -581,7 +585,11 @@ test.describe("the assistant's details", () => {
 
     const save = page.getByRole("button", { name: "Save", exact: true });
     await save.click();
-    await expect(page.getByText("Monday: close must be after open")).toBeVisible();
+    await expect(
+      page.getByText(
+        "Monday: can't open and close at the same time (for all day, use 00:00 to 23:59)",
+      ),
+    ).toBeVisible();
     await expect(page.getByText("Some details need changing. They're marked above.")).toBeVisible();
     await expect(page.getByText("Not saved yet")).toHaveCount(0); // the problem line replaces it
 

@@ -173,13 +173,14 @@ describe("where each problem is shown", () => {
     expect(problems(form).services).toEqual([`${PROFILE_LIMITS.services} at most`]);
   });
 
-  it("names each day with bad hours, in the week's order", () => {
+  it("names each day with bad hours, in the week's order, and lets overnight hours through", () => {
     const form = blankForm("plumber");
-    form.hours.fri = { open: true, from: "17:00", to: "08:00" };
+    form.hours.fri = { open: true, from: "17:00", to: "17:00" };
     form.hours.mon = { open: true, from: "12:00", to: "12:00" };
+    form.hours.sat = { open: true, from: "18:00", to: "02:00" }; // overnight: fine
     expect(problems(form).openingHours).toEqual([
-      "Monday: close must be after open",
-      "Friday: close must be after open",
+      "Monday: can't open and close at the same time (for all day, use 00:00 to 23:59)",
+      "Friday: can't open and close at the same time (for all day, use 00:00 to 23:59)",
     ]);
   });
 

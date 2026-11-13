@@ -3,6 +3,7 @@
 // it to the voice platform, and this page shows when the assistant is using it.
 import {
   agentProfileInputSchema,
+  isOvernight,
   PROFILE_LIMITS,
   TRADES,
   WEEKDAYS,
@@ -235,6 +236,15 @@ function ProfileEditor({
                       value={slot.to}
                       onChange={(event) => updateDay(day, { to: event.target.value })}
                     />
+                    {/* Closing earlier than opening runs past midnight: say so, so it's plainly
+                        meant (a locksmith's 18:00 to 02:00) rather than a slip. */}
+                    {slot.to !== "" &&
+                      slot.from !== "" &&
+                      isOvernight({ open: slot.from, close: slot.to }) && (
+                        <span className="muted text-sm">
+                          closes {DAY_NAMES[WEEKDAYS[(WEEKDAYS.indexOf(day) + 1) % 7]!]} morning
+                        </span>
+                      )}
                   </span>
                 ) : (
                   <span className="muted text-sm">Closed</span>

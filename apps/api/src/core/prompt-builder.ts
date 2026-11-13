@@ -2,7 +2,7 @@
 // function: the same profile always gives the same definition, which is what the snapshot
 // tests check. Nothing here knows which voice platform is in use.
 import type { AgentDefinition, FixedScript } from "./agent.ts";
-import { WEEKDAYS, type OpeningHours, type TenantProfile } from "./profile.ts";
+import { WEEKDAYS, isOvernight, type OpeningHours, type TenantProfile } from "./profile.ts";
 import {
   DANGER_SCRIPT,
   areYouAiLine,
@@ -107,10 +107,16 @@ const DAY_NAMES: Record<keyof OpeningHours, string> = {
   sun: "Sunday",
 };
 
+/**
+ * One line a day. A slot that runs past midnight says which morning it closes, so the model
+ * doesn't read 18:00 to 02:00 as a mistake, or a caller at 01:00 on Saturday as out of hours.
+ */
 function formatHours(hours: OpeningHours): string {
-  return WEEKDAYS.map((day) => {
+  return WEEKDAYS.map((day, index) => {
     const slot = hours[day];
-    return `- ${DAY_NAMES[day]}: ${slot ? `${slot.open} to ${slot.close}` : "closed"}`;
+    if (!slot) return `- ${DAY_NAMES[day]}: closed`;
+    const next = DAY_NAMES[WEEKDAYS[(index + 1) % 7]!];
+    return `- ${DAY_NAMES[day]}: ${slot.open} to ${slot.close}${isOvernight(slot) ? ` (into ${next} morning)` : ""}`;
   }).join("\n");
 }
 

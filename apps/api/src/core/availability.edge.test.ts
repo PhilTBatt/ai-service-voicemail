@@ -13,6 +13,54 @@ import type { OpeningHours } from "./profile.ts";
 
 const at = (iso: string) => new Date(iso);
 
+// Overnight hours (the watch list, 2026-11-13): a slot that closes earlier than it opens runs
+// into the next morning, so the hours after midnight belong to the day before.
+describe("isOpenAt with overnight hours", () => {
+  const lateNights: OpeningHours = {
+    fri: { open: "18:00", close: "02:00" },
+    sun: { open: "20:00", close: "06:00" }, // into Monday: the week wraps
+  };
+
+  it.each([
+    // Friday 17 July 2026 is BST: 18:00 UK is 17:00 UTC.
+    ["Friday 17:59", "2026-07-17T16:59:00Z", false],
+    ["Friday 18:00", "2026-07-17T17:00:00Z", true],
+    ["Friday 23:59", "2026-07-17T22:59:00Z", true],
+    ["Saturday 00:00", "2026-07-17T23:00:00Z", true],
+    ["Saturday 01:59", "2026-07-18T00:59:00Z", true],
+    ["Saturday 02:00 (close is exclusive)", "2026-07-18T01:00:00Z", false],
+    ["Saturday 18:00 (Saturday is closed)", "2026-07-18T17:00:00Z", false],
+    ["Sunday 19:59", "2026-07-19T18:59:00Z", false],
+    ["Sunday 22:00", "2026-07-19T21:00:00Z", true],
+    ["Monday 05:59, from Sunday's slot", "2026-07-20T04:59:00Z", true],
+    ["Monday 06:00", "2026-07-20T05:00:00Z", false],
+  ])("%s: %s", (_label, iso, open) => {
+    expect(isOpenAt(lateNights, at(iso))).toBe(open);
+  });
+
+  it("keeps the same wall-clock hours across both clock changes", () => {
+    // Saturday 28 March 2027 18:00 to 02:00: the clocks go forward at 01:00 UTC on Sunday 29th,
+    // so 01:00 to 02:00 UK doesn't exist, and 02:00 BST (01:00 UTC) is closing time.
+    const saturdayNight: OpeningHours = { sat: { open: "18:00", close: "02:00" } };
+    expect(isOpenAt(saturdayNight, at("2027-03-27T18:00:00Z"))).toBe(true); // 18:00 GMT
+    expect(isOpenAt(saturdayNight, at("2027-03-28T00:59:00Z"))).toBe(true); // 00:59 GMT
+    expect(isOpenAt(saturdayNight, at("2027-03-28T01:00:00Z"))).toBe(false); // 02:00 BST
+    // Saturday 24 October 2026 18:00 to 02:00: the clocks go back at 01:00 UTC on Sunday 25th,
+    // so 01:00 to 02:00 UK happens twice, and both are inside the slot.
+    expect(isOpenAt(saturdayNight, at("2026-10-24T23:30:00Z"))).toBe(true); // 00:30 BST
+    expect(isOpenAt(saturdayNight, at("2026-10-25T00:30:00Z"))).toBe(true); // 01:30 BST
+    expect(isOpenAt(saturdayNight, at("2026-10-25T01:30:00Z"))).toBe(true); // 01:30 GMT
+    expect(isOpenAt(saturdayNight, at("2026-10-25T02:00:00Z"))).toBe(false); // 02:00 GMT
+  });
+
+  it("opens all of a day with 00:00 to 23:59, the way the editor suggests", () => {
+    const allDay: OpeningHours = { wed: { open: "00:00", close: "23:59" } };
+    expect(isOpenAt(allDay, at("2026-07-14T23:00:00Z"))).toBe(true); // Wednesday 00:00 BST
+    expect(isOpenAt(allDay, at("2026-07-15T22:58:00Z"))).toBe(true); // Wednesday 23:58 BST
+    expect(isOpenAt(allDay, at("2026-07-15T22:59:00Z"))).toBe(false); // the last minute
+  });
+});
+
 describe("isOpenAt around the clock changes", () => {
   const weekdays: OpeningHours = {
     mon: { open: "08:00", close: "18:00" },

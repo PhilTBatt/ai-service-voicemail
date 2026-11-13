@@ -79,12 +79,14 @@ describe("profile form", () => {
     const form = {
       ...profileToForm(PROFILE),
       services: "Boiler repairs\nBoiler service £80",
-      hours: { ...profileToForm(PROFILE).hours, mon: { open: true, from: "18:00", to: "08:00" } },
+      hours: { ...profileToForm(PROFILE).hours, mon: { open: true, from: "18:00", to: "18:00" } },
       faqs: [{ question: "Call-out fee?", answer: "It's £60." }],
     };
     expect(errorsFor(form)).toEqual({
       services: ['"Boiler service £80": can\'t include prices: the assistant never quotes them'],
-      openingHours: ["Monday: close must be after open"],
+      openingHours: [
+        "Monday: can't open and close at the same time (for all day, use 00:00 to 23:59)",
+      ],
       faqs: ["Question 1, answer: can't include prices: the assistant never quotes them"],
     });
   });

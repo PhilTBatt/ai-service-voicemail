@@ -15,16 +15,26 @@ export type Weekday = (typeof WEEKDAYS)[number];
 
 const hhmm = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "expected HH:MM");
 
-/** Open and close times per day. A null or missing day is closed. */
+/**
+ * Open and close times per day. A null or missing day is closed. A slot that closes earlier than
+ * it opens runs overnight, closing the next morning (a locksmith's 18:00 to 02:00, say: the
+ * watch list, 2026-11-13). The same time twice is refused: it could mean no time or all day.
+ */
 export const openingHoursSchema = z.partialRecord(
   z.enum(WEEKDAYS),
   z
     .object({ open: hhmm, close: hhmm })
-    // isOpenAt() treats close as the same day, so an overnight slot would read as always closed.
-    .refine((slot) => slot.close > slot.open, { message: "close must be after open" })
+    .refine((slot) => slot.close !== slot.open, {
+      message: "can't open and close at the same time (for all day, use 00:00 to 23:59)",
+    })
     .nullable(),
 );
 export type OpeningHours = z.infer<typeof openingHoursSchema>;
+
+/** A slot that runs past midnight: it closes the next morning (HH:MM strings compare as times). */
+export function isOvernight(slot: { open: string; close: string }): boolean {
+  return slot.close < slot.open;
+}
 
 /**
  * Text the agent may say to a caller, written by the tenant. Checked (the editor), it may not

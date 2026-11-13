@@ -195,6 +195,27 @@ describe("buildAgentDefinition", () => {
   });
 });
 
+// Overnight hours (2026-11-13): the prompt says which morning a late slot closes, so the model
+// reads 18:00 to 02:00 as meant, and a caller at 01:00 on Saturday as inside Friday's hours.
+describe("opening hours that run overnight", () => {
+  it("says which morning an overnight slot closes, and leaves a same-day slot as it was", () => {
+    const { instructions } = buildAgentDefinition(
+      sampleProfile({
+        openingHours: {
+          mon: { open: "08:00", close: "18:00" },
+          fri: { open: "18:00", close: "02:00" },
+          sun: { open: "20:00", close: "06:00" },
+        },
+      }),
+    );
+    expect(instructions).toContain("- Monday: 08:00 to 18:00\n");
+    expect(instructions).toContain("- Friday: 18:00 to 02:00 (into Saturday morning)\n");
+    expect(instructions).toContain("- Saturday: closed\n");
+    // The week wraps: Sunday night closes on Monday morning.
+    expect(instructions).toContain("- Sunday: 20:00 to 06:00 (into Monday morning)\n");
+  });
+});
+
 describe("tenantProfileSchema", () => {
   it("accepts the sample profile", () => {
     expect(tenantProfileSchema.safeParse(sampleProfile()).success).toBe(true);

@@ -14,13 +14,29 @@ function minutesOfDay(hhmm: string): number {
   return hours * 60 + minutes;
 }
 
-/** True when the local time falls inside that weekday's opening slot (close is exclusive). */
+/**
+ * True when the local time falls inside an opening slot (close is exclusive): today's, or
+ * yesterday's when that one runs overnight (closes earlier than it opens, so the next morning).
+ * Wall-clock times, so a slot means the same hours either side of a clock change.
+ */
 export function isOpenAt(hours: OpeningHours, at: Date, timeZone = UK_TIME_ZONE): boolean {
   const local = localTime(at, timeZone);
-  const slot = hours[WEEKDAYS[local.dayOfWeek - 1]!]; // Temporal: 1 is Monday, 7 is Sunday
-  if (!slot) return false;
   const now = local.hour * 60 + local.minute;
-  return now >= minutesOfDay(slot.open) && now < minutesOfDay(slot.close);
+  // Temporal: 1 is Monday, 7 is Sunday; yesterday wraps Monday back to Sunday.
+  const today = hours[WEEKDAYS[local.dayOfWeek - 1]!];
+  const yesterday = hours[WEEKDAYS[(local.dayOfWeek + 5) % 7]!];
+  if (today) {
+    const open = minutesOfDay(today.open);
+    const close = minutesOfDay(today.close);
+    // An overnight slot is open from its opening time to midnight today, and on into tomorrow.
+    if (close > open ? now >= open && now < close : now >= open) return true;
+  }
+  if (yesterday) {
+    const open = minutesOfDay(yesterday.open);
+    const close = minutesOfDay(yesterday.close);
+    if (close < open && now < close) return true;
+  }
+  return false;
 }
 
 /** True while holiday mode is on: until further notice, or through the end of the given local date. */

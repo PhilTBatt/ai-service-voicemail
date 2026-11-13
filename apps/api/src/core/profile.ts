@@ -10,6 +10,7 @@ export {
   WEEKDAYS,
   emergencyPolicySchema,
   faqSchema,
+  isOvernight,
   openingHoursSchema,
   type Faq,
   type OpeningHours,

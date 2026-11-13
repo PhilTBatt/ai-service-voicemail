@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   agentProfileInputSchema,
+  isOvernight,
   storedAgentProfileSchema,
   type AgentProfileInput,
 } from "./profile.ts";
@@ -127,12 +128,25 @@ describe("agentProfileInputSchema", () => {
     });
   });
 
-  it("keeps opening hours within a day and holiday dates as dates", () => {
+  it("takes overnight hours, refuses a slot with no length, and keeps holiday dates as dates", () => {
     expect(
       problems({ ...PROFILE, openingHours: { mon: { open: "18:00", close: "08:00" } } }),
-    ).toEqual({ "openingHours.mon": ["close must be after open"] });
+    ).toEqual({});
+    expect(
+      problems({ ...PROFILE, openingHours: { mon: { open: "18:00", close: "18:00" } } }),
+    ).toEqual({
+      "openingHours.mon": [
+        "can't open and close at the same time (for all day, use 00:00 to 23:59)",
+      ],
+    });
     expect(problems({ ...PROFILE, holidayMode: true, holidayUntil: "next week" })).toHaveProperty(
       "holidayUntil",
     );
+  });
+
+  it("calls a slot overnight only when it closes earlier than it opens", () => {
+    expect(isOvernight({ open: "18:00", close: "02:00" })).toBe(true);
+    expect(isOvernight({ open: "00:00", close: "23:59" })).toBe(false);
+    expect(isOvernight({ open: "08:00", close: "17:00" })).toBe(false);
   });
 });
