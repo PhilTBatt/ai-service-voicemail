@@ -4,7 +4,9 @@
 import { raiseAlert, type AlertFn } from "../alerts.ts";
 import {
   RECORDING_BATCH_SIZE,
+  BILLING_RETENTION_YEARS,
   clearExpiredTranscripts,
+  deleteOldBillingRecords,
   clearRecording,
   findExpiredRecordings,
   recordRecordingDeleteFailure,
@@ -57,6 +59,8 @@ export interface RetentionCounts {
   recordingsDeleted: number;
   recordingsFailed: number;
   transcriptsCleared: number;
+  /** Billing records past their 7 years, all tables together (deleteOldBillingRecords). */
+  billingRecordsDeleted: number;
 }
 
 /** A recording no retry can delete: retention alerts about it on its first failure. */
@@ -86,6 +90,7 @@ export async function runRetention({
     recordingsDeleted: 0,
     recordingsFailed: 0,
     transcriptsCleared: 0,
+    billingRecordsDeleted: 0,
   };
 
   // One at a time, and the row is only cleared once the provider has deleted its copy. If a
@@ -123,6 +128,24 @@ export async function runRetention({
   }
 
   counts.transcriptsCleared = await clearExpiredTranscripts(admin, transcriptsBefore);
+
+  // Billing records: 7 years from the end of each billing month (UK dates), then gone. Months
+  // end at UK midnight, so a month that ended on or before this date seven years ago is due.
+  const billingBefore = today.subtract({ years: BILLING_RETENTION_YEARS }).toPlainDate();
+  const billing = await deleteOldBillingRecords(admin, {
+    endedBefore: billingBefore.toString(),
+    before: new Date(
+      billingBefore.toZonedDateTime({ timeZone: "Europe/London" }).epochMilliseconds,
+    ),
+  });
+  counts.billingRecordsDeleted =
+    billing.charges +
+    billing.usage +
+    billing.emails +
+    billing.paymentEvents +
+    billing.mandates +
+    billing.suspensions;
+  if (counts.billingRecordsDeleted > 0) logger.info("Old billing records deleted", { ...billing });
 
   logger.info("Retention run finished", counts);
   return counts;

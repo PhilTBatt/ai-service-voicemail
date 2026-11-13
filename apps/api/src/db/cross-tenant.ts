@@ -1620,6 +1620,62 @@ export async function clearExpiredTranscripts(
   return cleared;
 }
 
+/** How long billing records are kept: 7 years from the end of each billing month (PROGRESS, open question 3). */
+export const BILLING_RETENTION_YEARS = 7;
+
+/** What one night's billing clean-up deleted, table by table. */
+export interface BillingRecordsDeleted {
+  charges: number;
+  usage: number;
+  emails: number;
+  paymentEvents: number;
+  mandates: number;
+  suspensions: number;
+}
+
+/**
+ * Deletes billing records more than BILLING_RETENTION_YEARS past their month: a month's charge
+ * and its usage once the month ended before `endedBefore` (a UK date); its emails, the payment
+ * provider's events, Direct Debits that ended and suspensions that ended, by their own time,
+ * before `before` (the start of that UK date). All of a business's billing history goes this
+ * way, deleted business or not. Months and Direct Debits still running are never touched.
+ */
+export async function deleteOldBillingRecords(
+  admin: AdminPool,
+  { endedBefore, before }: { endedBefore: string; before: Date },
+): Promise<BillingRecordsDeleted> {
+  const client = await admin.connect();
+  try {
+    await client.query("BEGIN");
+    const count = async (sql: string, values: unknown[]) =>
+      (await client.query(sql, values)).rowCount ?? 0;
+    const deleted: BillingRecordsDeleted = {
+      // A month's charge, and the time it counted, together.
+      charges: await count("DELETE FROM billing_charges WHERE period_end <= $1", [endedBefore]),
+      usage: await count("DELETE FROM usage_periods WHERE period_end <= $1", [endedBefore]),
+      // Each sent after the month it's about, so dated later: kept at least as long.
+      emails: await count("DELETE FROM billing_emails WHERE created_at < $1", [before]),
+      paymentEvents: await count("DELETE FROM payment_events WHERE received_at < $1", [before]),
+      mandates: await count(
+        `DELETE FROM payment_mandates
+         WHERE status <> 'active' AND coalesce(ended_at, created_at) < $1`,
+        [before],
+      ),
+      suspensions: await count(
+        "DELETE FROM tenant_suspensions WHERE ended_at IS NOT NULL AND ended_at < $1",
+        [before],
+      ),
+    };
+    await client.query("COMMIT");
+    return deleted;
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 /**
  * The latest agent profile version of each business that has an agent at the voice platform
  * (some version of its profile has synced): what the worker re-checks at start-up

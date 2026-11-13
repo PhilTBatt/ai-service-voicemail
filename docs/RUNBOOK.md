@@ -151,7 +151,9 @@ asked, and the worker deletes, in this order:
    only to addresses on `OUTBOUND_ALLOWLIST`).
 6. Here: calls, messages, the assistant's settings, contact details and those people's
    accounts. The billing record (each month's charge, the Direct Debit's history, which hold
-   no personal details), the terms the business accepted and the account log stay.
+   no personal details), the terms the business accepted and the account log stay. The
+   billing record goes too, 7 years after the end of each month it covers: the nightly
+   retention run (03:30) deletes every business's billing records that old, left or not.
 
 The worker needs `ADMIN_DATABASE_URL`, the Twilio settings, `CLERK_SECRET_KEY`, and
 `GOCARDLESS_ACCESS_TOKEN` if the business has a Direct Debit, for this.
