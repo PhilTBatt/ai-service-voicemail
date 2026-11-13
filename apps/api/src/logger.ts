@@ -15,7 +15,7 @@ const redactFormat = winston.format((info) => {
  * Tests pass their own transport to capture output.
  */
 export function createLogger(transport: winston.transport = new winston.transports.Console()) {
-  return winston.createLogger({
+  const logger = winston.createLogger({
     level: "info",
     format: winston.format.combine(
       winston.format.errors({ stack: true }),
@@ -25,6 +25,29 @@ export function createLogger(transport: winston.transport = new winston.transpor
     ),
     transports: [transport],
   });
+  // Given a field called "message" (logger.info("Sent", { message })), Winston appends it to the
+  // line's own text before any format runs (winston 3.19, Logger.prototype.log), where it would
+  // only be pattern-redacted: a transcript or a text's body logged that way would keep its
+  // words. Every level method (logger.info and the rest) goes through log, so here, first, such
+  // a field is replaced whole, as redactFormat does to every other content field. An Error's own
+  // message isn't a field: it stays, pattern-redacted, as errors always have.
+  const log = logger.log.bind(logger);
+  logger.log = ((...args: unknown[]) =>
+    args.length > 2
+      ? (log as (...all: unknown[]) => winston.Logger)(
+          args[0],
+          args[1],
+          ...args.slice(2).map(withoutMessageField),
+        )
+      : (log as (...all: unknown[]) => winston.Logger)(...args)) as typeof logger.log;
+  return logger;
+}
+
+/** A log call's details with any field called "message" replaced whole. Errors pass as they are. */
+function withoutMessageField(meta: unknown): unknown {
+  if (typeof meta !== "object" || meta === null || meta instanceof Error) return meta;
+  if (!Object.hasOwn(meta, "message")) return meta;
+  return { ...meta, message: redactField("message", (meta as { message: unknown }).message) };
 }
 
 export const logger = createLogger();

@@ -51,6 +51,38 @@ describe("logger", () => {
     expect(JSON.stringify(lines[0])).not.toContain("900123");
   });
 
+  it("replaces a field called message whole, which Winston would otherwise add to the line's text", () => {
+    const { logger, lines } = captureLogger();
+    logger.info("Text sent", {
+      message: "Hi, it's Robin, the boiler in the loft is leaking",
+      callId: "call_123",
+    });
+    logger.warn("Reply refused", { message: { body: "Robin, 4 Fern Lane" } });
+    expect(lines.map((line) => line.message)).toEqual([
+      "Text sent [redacted]",
+      "Reply refused [redacted]",
+    ]);
+    expect(lines[0]).toMatchObject({ callId: "call_123" });
+    expect(JSON.stringify(lines)).not.toContain("Robin");
+    expect(JSON.stringify(lines)).not.toContain("boiler");
+  });
+
+  it("still logs an Error passed as the details with its message, pattern-redacted", () => {
+    const { logger, lines } = captureLogger();
+    logger.error("Send failed", new Error("Rejected 07700 900123"));
+    expect(lines[0]?.message).toBe("Send failed Rejected [phone]");
+  });
+
+  it("still takes a whole log entry as one object", () => {
+    const { logger, lines } = captureLogger();
+    logger.log({ level: "info", message: "Entry", callId: "call_9" });
+    logger.log("warn", "Level and text");
+    expect(lines).toMatchObject([
+      { level: "info", message: "Entry", callId: "call_9" },
+      { level: "warn", message: "Level and text" },
+    ]);
+  });
+
   it("drops lines below the configured level", () => {
     const { logger, lines } = captureLogger();
     logger.level = "warn";
