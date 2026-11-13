@@ -79,6 +79,10 @@ const envSchema = z
       .regex(/^GB\d{9}(\d{3})?$/, "expected a UK VAT number like GB123456789")
       .optional(),
     VAT_REGISTRATION_FROM: z.iso.date().optional(),
+    // The supplier on each VAT invoice (core/invoice.ts): the name trading and the address, as
+    // registered for VAT. Needed with VAT_REGISTRATION_NUMBER: HMRC wants both on the invoice.
+    VAT_SELLER_NAME: z.string().trim().min(1).max(120).optional(),
+    VAT_SELLER_ADDRESS: z.string().trim().min(5).max(300).optional(),
     // The password in the Basic-auth webhook URL registered at Postmark (username "postmark"):
     // https://postmark:<secret>@<public host>/webhooks/postmark. Postmark doesn't sign webhooks.
     POSTMARK_WEBHOOK_SECRET: z.string().min(16).optional(),
@@ -168,6 +172,10 @@ const envSchema = z
     vat:
       env.VAT_REGISTRATION_NUMBER !== undefined && env.VAT_REGISTRATION_FROM !== undefined
         ? { number: env.VAT_REGISTRATION_NUMBER, from: env.VAT_REGISTRATION_FROM }
+        : undefined,
+    invoiceSupplier:
+      env.VAT_SELLER_NAME !== undefined && env.VAT_SELLER_ADDRESS !== undefined
+        ? { name: env.VAT_SELLER_NAME, address: env.VAT_SELLER_ADDRESS }
         : undefined,
     outbound: { nodeEnv: env.NODE_ENV, allowlist: parseAllowlist(env.OUTBOUND_ALLOWLIST) },
     sms:
@@ -259,6 +267,17 @@ function crossSettingProblems(
       name: vatNumber === undefined ? "VAT_REGISTRATION_NUMBER" : "VAT_REGISTRATION_FROM",
       message: "VAT_REGISTRATION_NUMBER and VAT_REGISTRATION_FROM go together",
     });
+  }
+  // A VAT invoice must say who it's from: no VAT without the name and address to put on it.
+  if (vatNumber !== undefined) {
+    for (const name of ["VAT_SELLER_NAME", "VAT_SELLER_ADDRESS"]) {
+      if (env[name] === undefined) {
+        problems.push({
+          name,
+          message: "needed with VAT_REGISTRATION_NUMBER, for the VAT invoices",
+        });
+      }
+    }
   }
   // Exactly "production", as the schema takes it: anything else isn't production (and a
   // mistyped NODE_ENV is reported by the schema).

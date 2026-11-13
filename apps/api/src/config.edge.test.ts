@@ -420,6 +420,8 @@ describe("VAT", () => {
         ...valid,
         VAT_REGISTRATION_NUMBER: "GB123456789012",
         VAT_REGISTRATION_FROM: "2027-04-01",
+        VAT_SELLER_NAME: "Brockersby",
+        VAT_SELLER_ADDRESS: "1 Example Street, Leeds, XQ1 2AB",
       }).vat,
     ).toEqual({ number: "GB123456789012", from: "2027-04-01" });
   });
@@ -457,6 +459,9 @@ describe("VAT", () => {
       "DATABASE_URL is missing",
       expect.stringMatching(/^PORT is invalid/),
       "VAT_REGISTRATION_FROM is missing",
+      // And, as the number is there, what its invoices need.
+      "VAT_SELLER_ADDRESS is missing",
+      "VAT_SELLER_NAME is missing",
     ]);
   });
 });

@@ -278,7 +278,14 @@ export async function registerJobs(
     const enqueueBillingEmail = enqueueBillingEmailWith(boss);
     await boss.work(CHARGE_PERIODS_QUEUE, () =>
       trackRun(pool, CHARGE_PERIODS_QUEUE, () =>
-        runChargePeriods({ pool, admin, payments, enqueueBillingEmail, vat: config.vat ?? null }),
+        runChargePeriods({
+          pool,
+          admin,
+          payments,
+          enqueueBillingEmail,
+          vat: config.vat ?? null,
+          supplier: config.invoiceSupplier ?? null,
+        }),
       ),
     );
     await boss.schedule(CHARGE_PERIODS_QUEUE, CHARGE_PERIODS_CRON, null, SCHEDULE_OPTIONS);

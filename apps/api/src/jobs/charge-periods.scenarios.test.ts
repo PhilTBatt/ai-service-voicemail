@@ -117,6 +117,9 @@ async function suspend(tenantId: string, startedAt: string, endedAt: string | nu
   );
 }
 
+/** Who the VAT invoices are from: config.ts insists on one whenever VAT is on. */
+const SUPPLIER = { name: "Brockersby", address: "1 Example Street, Leeds, XQ1 2AB" };
+
 function harness(tenantIds: string[], overrides: Partial<ChargePeriodsDeps> = {}) {
   const payments = new ScriptedPayments();
   const enqueueBillingEmail = vi.fn((_job: BillingEmailJobData, _client?: unknown) =>
@@ -131,6 +134,7 @@ function harness(tenantIds: string[], overrides: Partial<ChargePeriodsDeps> = {}
       enqueueBillingEmail,
       alert,
       vat: null,
+      supplier: SUPPLIER,
       ...overrides,
       now: () => date,
     });
@@ -652,6 +656,104 @@ describe("VAT", () => {
       ["2027-02-20", 11_880, 1980, "GB999999973"],
     ]);
     expect(payments.payments.map((p) => p.amountPence)).toEqual([9900, 9900, 9920, 11_904, 11_880]);
+  });
+});
+
+describe("VAT invoices", () => {
+  const invoiceOf = async (tenantId: string) =>
+    (
+      await admin.query<{
+        period_start: string;
+        invoice_number: number | null;
+        invoice: Record<string, unknown> | null;
+      }>(
+        `SELECT period_start::text, invoice_number, invoice FROM billing_charges
+         WHERE tenant_id = $1 ORDER BY period_start`,
+        [tenantId],
+      )
+    ).rows;
+
+  it("gives each month charged with VAT the next number, and the invoice as issued; none before", async () => {
+    const { tenantId } = await business({
+      anchor: "2026-11-20",
+      usage: { "2027-01-20": 210 * 60 },
+    });
+    await admin.query("UPDATE tenants SET billing_address = $2 WHERE id = $1", [
+      tenantId,
+      "4 Fern Lane, Leeds, XQ12 3AB",
+    ]);
+    const { run } = harness([tenantId], { vat: { number: "GB999999973", from: "2027-01-01" } });
+    await run(morningOf("2027-03-20"));
+    const rows = await invoiceOf(tenantId);
+    // November and December began before the registration: receipts, no invoice.
+    expect(rows.map((row) => [row.period_start, row.invoice_number === null])).toEqual([
+      ["2026-11-20", true],
+      ["2026-12-20", true],
+      ["2027-01-20", false],
+      ["2027-02-20", false],
+    ]);
+    const [january, february] = [rows[2]!, rows[3]!];
+    // One series, no gaps: February's is the next after January's.
+    expect(february.invoice_number).toBe(january.invoice_number! + 1);
+    expect(january.invoice).toEqual({
+      number: january.invoice_number,
+      // Charged the morning after the month ended, which is when the run that made it ran.
+      issuedOn: "2027-03-20",
+      periodStart: "2027-01-20",
+      periodEnd: "2027-02-20",
+      supplier: { ...SUPPLIER, vatNumber: "GB999999973" },
+      customer: { name: "Lifetime Plumbing", address: "4 Fern Lane, Leeds, XQ12 3AB" },
+      lines: [
+        {
+          description: "AI Answering plan",
+          quantity: 1,
+          unit: "month",
+          unitPence: 9900,
+          vatRatePercent: 20,
+          pence: 9900,
+        },
+        {
+          description: "Minutes over the 200 included",
+          quantity: 10,
+          unit: "minute",
+          unitPence: 20,
+          vatRatePercent: 20,
+          pence: 200,
+        },
+      ],
+      netPence: 10_100,
+      vatRatePercent: 20,
+      vatPence: 2020,
+      totalPence: 12_120,
+    });
+  });
+
+  it("still issues the invoice without a billing address, saying it wasn't given", async () => {
+    const { tenantId } = await business({ anchor: "2027-01-20" });
+    const { run } = harness([tenantId], { vat: { number: "GB999999973", from: "2027-01-01" } });
+    await run(morningOf("2027-02-20"));
+    const [row] = await invoiceOf(tenantId);
+    expect(row?.invoice).toMatchObject({ customer: { name: "Lifetime Plumbing", address: null } });
+  });
+
+  it("charges nothing, and takes no number, if VAT is on with no supplier to put on the invoice", async () => {
+    const { tenantId } = await business({ anchor: "2027-01-20" });
+    const before = (
+      await admin.query<{ last_number: number }>("SELECT last_number FROM invoice_numbers")
+    ).rows[0]!.last_number;
+    const { run, payments } = harness([tenantId], {
+      vat: { number: "GB999999973", from: "2027-01-01" },
+      supplier: null,
+    });
+    await expect(run(morningOf("2027-02-20"))).rejects.toThrow(/Charging failed/);
+    // The month's charge rolled back with it, so the next run starts clean.
+    expect(await invoiceOf(tenantId)).toEqual([]);
+    expect(payments.payments).toHaveLength(0);
+    const after = (
+      await admin.query<{ last_number: number }>("SELECT last_number FROM invoice_numbers")
+    ).rows[0]!.last_number;
+    // Other test files may take numbers meanwhile, but this run gave back any it took.
+    expect(after).toBeGreaterThanOrEqual(before);
   });
 });
 

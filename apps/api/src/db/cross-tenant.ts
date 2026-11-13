@@ -1285,7 +1285,8 @@ export async function deleteTenantData(
     await client.query(
       `UPDATE tenants SET business_name = 'Deleted business', contact_name = NULL,
               notification_mobile = NULL, notification_email = NULL, mobile_network = NULL,
-              uses_network_voicemail = NULL, voicemail_restore_code = NULL, data_deleted_at = $2
+              uses_network_voicemail = NULL, voicemail_restore_code = NULL, billing_address = NULL,
+              data_deleted_at = $2
        WHERE id = $1`,
       [tenantId, now],
     );

@@ -1733,6 +1733,63 @@ describe("CSV export", () => {
 });
 
 describe("billing (Step 12)", () => {
+  it("keeps the address for VAT invoices: saved, shown, cleared, and audited without it", async () => {
+    const tenant = await createTenant(admin, {
+      businessName: "Address Plumbing",
+      trade: "plumber",
+    });
+    const owner = await personFor(tenant);
+    const put = (address: unknown) =>
+      send("PUT", `/tenants/${tenant}/billing/address`, { address }, owner);
+
+    expect((await json<BillingView>(get(`/tenants/${tenant}/billing`, owner))).billingAddress).toBe(
+      null,
+    );
+    const saved = await put("  4 Fern Lane, Leeds, XQ12 3AB  ");
+    expect(saved.status).toBe(200);
+    // Trimmed, and the whole billing view comes back, as the page shows it.
+    expect(((await saved.json()) as BillingView).billingAddress).toBe(
+      "4 Fern Lane, Leeds, XQ12 3AB",
+    );
+    expect((await json<BillingView>(get(`/tenants/${tenant}/billing`, owner))).billingAddress).toBe(
+      "4 Fern Lane, Leeds, XQ12 3AB",
+    );
+
+    // Blank clears it, as null does.
+    expect(((await (await put("   ")).json()) as BillingView).billingAddress).toBeNull();
+    // Too long, or not text: refused, and nothing changes.
+    expect((await put("x".repeat(301))).status).toBe(400);
+    expect((await put(42)).status).toBe(400);
+
+    // Each change is in the account log, without the address itself.
+    const audit = await admin.query<{ details: unknown }>(
+      "SELECT details FROM audit_log WHERE tenant_id = $1 AND action = 'billing.address-changed' ORDER BY created_at",
+      [tenant],
+    );
+    expect(audit.rows.map((row) => row.details)).toEqual([{ cleared: false }, { cleared: true }]);
+    expect(JSON.stringify(audit.rows)).not.toContain("Fern Lane");
+  });
+
+  it("shows a month's VAT invoice number on the Account page", async () => {
+    const tenant = await createTenant(admin, {
+      businessName: "Invoice Plumbing",
+      trade: "plumber",
+    });
+    const owner = await personFor(tenant);
+    await withTenant(app, tenant, (client) =>
+      client.query(
+        `INSERT INTO billing_charges (tenant_id, period_start, period_end, period_index,
+           billable_seconds, fee_pence, overage_minutes, overage_pence, vat_rate_percent,
+           vat_pence, total_pence, lines, status, invoice_number, invoice)
+         VALUES ($1, '2027-01-20', '2027-02-20', 2, 0, 9900, 0, 0, 20, 1980, 11880, '[]',
+                 'paid_out', $2, '{}')`,
+        [tenant, 900_000 + Math.floor(Math.random() * 90_000)],
+      ),
+    );
+    const [charge] = (await json<BillingView>(get(`/tenants/${tenant}/billing`, owner))).charges;
+    expect(charge?.invoiceNumber).toMatch(/^9\d{5}$/);
+  });
+
   // The month a business leaves in is charged; none after. The Account tab used to quote the
   // next month's fee as still to come.
   it("shows no month to be charged for once one starts after the business left", async () => {
@@ -1772,6 +1829,7 @@ describe("billing (Step 12)", () => {
       leftOn: null,
       directDebit: { status: "none", since: null, endReason: null },
       charges: [],
+      billingAddress: null,
     });
 
     // Live since 14 October, with 61 seconds this month (the test clock is 7 November).

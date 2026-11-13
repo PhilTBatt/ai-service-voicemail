@@ -1,6 +1,7 @@
 // The business's account: its number, where messages go, the plan and Direct Debit, the
 // documents, a download of everything we hold, and leaving.
 import {
+  BILLING_ADDRESS_MAX,
   CSV_EXPORTS,
   CSV_EXPORT_LABELS,
   PILOT,
@@ -32,6 +33,7 @@ import {
   DayChart,
   SplitBar,
   SectionHeader,
+  TextAreaField,
   TextField,
 } from "../design/components.tsx";
 import { useConfirm, useConfirmTyped } from "../design/dialog.tsx";
@@ -673,6 +675,14 @@ function Billing({ tenant }: { tenant: TenantView }) {
         {error && <ErrorNote error={error} />}
       </div>
 
+      <hr />
+      <BillingAddress
+        key={view.billingAddress ?? ""}
+        tenantId={tenant.id}
+        address={view.billingAddress}
+        onSaved={setChecked}
+      />
+
       {view.charges.length > 0 && (
         <>
           <hr />
@@ -695,6 +705,9 @@ function Billing({ tenant }: { tenant: TenantView }) {
                           {formatDate(charge.periodStart)} to{" "}
                           {formatDate(addDays(charge.periodEnd, -1))}
                         </strong>
+                        {charge.invoiceNumber && (
+                          <span className="text-xs">VAT invoice {charge.invoiceNumber}</span>
+                        )}
                         <span className="muted text-xs">
                           {charge.lines
                             .map((line) => `${line.description}: ${formatPence(line.pence)}`)
@@ -1030,5 +1043,70 @@ function Cancel({
       </p>
       {error && <ErrorNote error={error} />}
     </Card>
+  );
+}
+
+/**
+ * The address the business's VAT invoices are made out to (HMRC wants the customer's name and
+ * address on each). Saved on its own, so a half-typed address never goes with another form.
+ */
+function BillingAddress({
+  tenantId,
+  address,
+  onSaved,
+}: {
+  tenantId: string;
+  address: string | null;
+  onSaved: (view: BillingView) => void;
+}) {
+  const { api } = useApi();
+  const toast = useToast();
+  const [value, setValue] = useState(address ?? "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+
+  const save = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      onSaved(
+        await api<BillingView>(`/tenants/${tenantId}/billing/address`, {
+          method: "PUT",
+          body: { address: value },
+        }),
+      );
+      toast({ title: value.trim() ? "Address saved" : "Address cleared" });
+    } catch (caught) {
+      setError(asError(caught));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <form
+      className="stack stack-sm"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void save();
+      }}
+    >
+      <h3>Billing address</h3>
+      <TextAreaField
+        label="Address for your invoices"
+        hint="The business's address, as you'd like it on a VAT invoice. Once AnswerMate charges VAT, each month's invoice is made out to it."
+        rows={3}
+        maxLength={BILLING_ADDRESS_MAX}
+        autoComplete="street-address"
+        value={value}
+        onChange={(event) => setValue(event.target.value)}
+      />
+      <div className="cluster">
+        <Button type="submit" variant="secondary" loading={saving}>
+          Save address
+        </Button>
+      </div>
+      {error && <ErrorNote error={error} />}
+    </form>
   );
 }

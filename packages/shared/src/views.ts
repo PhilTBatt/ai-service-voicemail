@@ -269,7 +269,12 @@ export interface BillingView {
   };
   /** The months charged so far, newest first (the last twelve). */
   charges: BillingChargeView[];
+  /** The business's address for its VAT invoices, as it gave it; null until it does. */
+  billingAddress: string | null;
 }
+
+/** PUT /api/tenants/:id/billing/address: the address for its invoices, or null to clear it. */
+export const BILLING_ADDRESS_MAX = 300;
 
 /** One month's charge, as the business sees it on its Account tab. */
 export interface BillingChargeView {
@@ -285,6 +290,8 @@ export interface BillingChargeView {
   status: string;
   /** The day the money is collected, once a payment is made. */
   chargeDate: string | null;
+  /** The month's VAT invoice number as printed ("0042"), when it was charged with VAT. */
+  invoiceNumber: string | null;
 }
 
 /** POST /api/tenants/:id/billing/direct-debit: where to send the person to set it up. */

@@ -11,6 +11,7 @@ import {
   receiptEmail,
   type EmailContent,
 } from "../core/billing-emails.ts";
+import type { Invoice } from "../core/invoice.ts";
 import { checkOutbound, type OutboundPolicy } from "../core/outbound-allowlist.ts";
 import { applyEarlyReceipt, raiseReceiptAlert } from "../db/delivery-receipts.ts";
 import { withTenant } from "../db/tenant.ts";
@@ -73,6 +74,7 @@ interface ChargeRow {
   total_pence: number;
   vat_number: string | null;
   charge_date: string | null;
+  invoice: Invoice | null;
 }
 
 export async function runBillingEmail(
@@ -98,7 +100,7 @@ export async function runBillingEmail(
       charge = (
         await client.query<ChargeRow>(
           `SELECT period_start::text, period_end::text, lines, vat_rate_percent, vat_pence,
-                  total_pence, vat_number, charge_date::text
+                  total_pence, vat_number, charge_date::text, invoice
            FROM billing_charges WHERE id = $1`,
           [chargeId],
         )
@@ -149,6 +151,7 @@ export async function runBillingEmail(
           totalPence: charge!.total_pence,
           vatNumber: charge!.vat_number,
           chargeDate: charge!.charge_date,
+          invoice: charge!.invoice,
         })
       : kind === "payment_failed"
         ? paymentFailedEmail(

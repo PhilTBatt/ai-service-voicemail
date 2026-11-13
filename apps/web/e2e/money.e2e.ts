@@ -189,3 +189,24 @@ test.describe("the Admin page's costs", () => {
     await shot(page, "admin-dark");
   });
 });
+
+test.describe("the billing address for VAT invoices", () => {
+  test("is saved from the Account page, and cleared again", async ({ page, request }) => {
+    const fern = await tenantIdOf(request, FERN_LANE);
+    await openAs(page, OWNER, `/tenants/${fern}/settings`);
+    await settled(page);
+    const field = page.getByLabel("Address for your invoices");
+    await field.fill("4 Fern Lane, Leeds, XQ12 3AB");
+    await page.getByRole("button", { name: "Save address" }).click();
+    await expect(page.getByText("Address saved")).toBeVisible();
+    await page.reload();
+    await settled(page);
+    await expect(page.getByLabel("Address for your invoices")).toHaveValue(
+      "4 Fern Lane, Leeds, XQ12 3AB",
+    );
+    // Put back as it was, for the tests after this one.
+    await page.getByLabel("Address for your invoices").fill("");
+    await page.getByRole("button", { name: "Save address" }).click();
+    await expect(page.getByText("Address cleared")).toBeVisible();
+  });
+});

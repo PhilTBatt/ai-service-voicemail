@@ -366,13 +366,18 @@ describe("loadConfig: RETELL_WEBHOOK_KEY", () => {
 describe("loadConfig: VAT", () => {
   it("is off by default, on with a number and a date, and refuses one without the other", () => {
     expect(loadConfig(valid).vat).toBeUndefined();
-    expect(
-      loadConfig({
-        ...valid,
-        VAT_REGISTRATION_NUMBER: "GB123456789",
-        VAT_REGISTRATION_FROM: "2027-01-01",
-      }).vat,
-    ).toEqual({ number: "GB123456789", from: "2027-01-01" });
+    const registered = loadConfig({
+      ...valid,
+      VAT_REGISTRATION_NUMBER: "GB123456789",
+      VAT_REGISTRATION_FROM: "2027-01-01",
+      VAT_SELLER_NAME: "Brockersby",
+      VAT_SELLER_ADDRESS: "1 Example Street, Leeds, XQ1 2AB",
+    });
+    expect(registered.vat).toEqual({ number: "GB123456789", from: "2027-01-01" });
+    expect(registered.invoiceSupplier).toEqual({
+      name: "Brockersby",
+      address: "1 Example Street, Leeds, XQ1 2AB",
+    });
     expect(configErrorFor({ ...valid, VAT_REGISTRATION_NUMBER: "GB123456789" }).problems[0]).toBe(
       "VAT_REGISTRATION_FROM is missing",
     );
@@ -386,6 +391,37 @@ describe("loadConfig: VAT", () => {
         VAT_REGISTRATION_FROM: "2027-01-01",
       }).problems[0],
     ).toMatch(/^VAT_REGISTRATION_NUMBER is invalid/);
+  });
+
+  it("refuses a VAT number without the name and address its invoices need", () => {
+    expect(
+      configErrorFor({
+        ...valid,
+        VAT_REGISTRATION_NUMBER: "GB123456789",
+        VAT_REGISTRATION_FROM: "2027-01-01",
+      }).problems,
+    ).toEqual(["VAT_SELLER_NAME is missing", "VAT_SELLER_ADDRESS is missing"]);
+    expect(
+      configErrorFor({
+        ...valid,
+        VAT_REGISTRATION_NUMBER: "GB123456789",
+        VAT_REGISTRATION_FROM: "2027-01-01",
+        VAT_SELLER_NAME: "Brockersby",
+      }).problems,
+    ).toEqual(["VAT_SELLER_ADDRESS is missing"]);
+  });
+
+  it("takes the name and address before registering, and does nothing with them until then", () => {
+    const early = loadConfig({
+      ...valid,
+      VAT_SELLER_NAME: "Brockersby",
+      VAT_SELLER_ADDRESS: "1 Example Street, Leeds, XQ1 2AB",
+    });
+    expect(early.vat).toBeUndefined();
+    expect(early.invoiceSupplier).toEqual({
+      name: "Brockersby",
+      address: "1 Example Street, Leeds, XQ1 2AB",
+    });
   });
 });
 

@@ -12,6 +12,7 @@ import {
   projectedSeconds,
   ukDateOf,
 } from "../core/billing.ts";
+import { invoiceNumberText } from "../core/invoice.ts";
 import { startOfUkDate } from "../core/usage.ts";
 import { directDebitState } from "./direct-debit.ts";
 import { withTenant } from "./tenant.ts";
@@ -28,8 +29,10 @@ export async function loadBillingView(
         billing_start_date: string | null;
         status: string;
         cancellation_requested_at: Date | null;
+        billing_address: string | null;
       }>(
-        "SELECT is_pilot, billing_start_date::text, status, cancellation_requested_at FROM tenants WHERE id = $1",
+        `SELECT is_pilot, billing_start_date::text, status, cancellation_requested_at, billing_address
+         FROM tenants WHERE id = $1`,
         [tenantId],
       )
     ).rows[0];
@@ -128,9 +131,10 @@ export async function loadBillingView(
         total_pence: number;
         status: string;
         charge_date: string | null;
+        invoice_number: number | null;
       }>(
         `SELECT period_start::text, period_end::text, lines, vat_pence, total_pence, status,
-                charge_date::text
+                charge_date::text, invoice_number
          FROM billing_charges WHERE tenant_id = $1 ORDER BY period_start DESC LIMIT 12`,
         [tenantId],
       )
@@ -159,7 +163,35 @@ export async function loadBillingView(
         totalPence: charge.total_pence,
         status: charge.status,
         chargeDate: charge.charge_date,
+        invoiceNumber:
+          charge.invoice_number === null ? null : invoiceNumberText(charge.invoice_number),
       })),
+      billingAddress: tenant.billing_address,
     } satisfies BillingView;
+  });
+}
+
+/**
+ * Sets (or with null, clears) the address a business's VAT invoices are made out to. Inside its
+ * own row-level security; the change is audited, without the address (it's personal data for a
+ * sole trader). Returns false if there's no such business.
+ */
+export async function setBillingAddress(
+  pool: pg.Pool,
+  tenantId: string,
+  address: string | null,
+  actorUserId: string,
+): Promise<boolean> {
+  return withTenant(pool, tenantId, async (client) => {
+    const updated = await client.query("UPDATE tenants SET billing_address = $2 WHERE id = $1", [
+      tenantId,
+      address,
+    ]);
+    if (updated.rowCount !== 1) return false;
+    await client.query(
+      "INSERT INTO audit_log (tenant_id, actor_user_id, action, details) VALUES ($1, $2, 'billing.address-changed', $3)",
+      [tenantId, actorUserId, { cleared: address === null }],
+    );
+    return true;
   });
 }

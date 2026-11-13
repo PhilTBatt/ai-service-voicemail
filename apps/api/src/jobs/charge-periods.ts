@@ -18,8 +18,10 @@ import {
   endedPeriods,
   ukDateOf,
   type BillingPeriod,
+  type Charge,
   type VatRegistration,
 } from "../core/billing.ts";
+import { buildInvoice, type InvoiceSupplier } from "../core/invoice.ts";
 import { listBillableTenants, type AdminPool, type BillableTenant } from "../db/cross-tenant.ts";
 import { activeMandateRef, endMandate } from "../db/direct-debit.ts";
 import { withTenant } from "../db/tenant.ts";
@@ -37,6 +39,8 @@ export interface ChargePeriodsDeps {
   payments: PaymentsProvider;
   enqueueBillingEmail: EnqueueBillingEmail;
   vat: VatRegistration | null;
+  /** Who the VAT invoices are from (VAT_SELLER_NAME, VAT_SELLER_ADDRESS). Needed with `vat`. */
+  supplier?: InvoiceSupplier | null;
   plan?: Plan;
   alert?: AlertFn;
   now?: () => Date;
@@ -127,6 +131,75 @@ interface ChargeRow {
   total_pence: number;
 }
 
+/**
+ * A month charged with VAT gets its VAT invoice (core/invoice.ts): the next number in the one
+ * series, taken here in the charge's own transaction (the counter's row stays locked until it
+ * commits, and a rollback gives the number back, so there are no gaps), and the invoice as
+ * issued, stored with the charge.
+ */
+async function issueInvoice(
+  client: pg.PoolClient,
+  {
+    chargeId,
+    tenantId,
+    period,
+    charge,
+    plan,
+    vatNumber,
+    supplier,
+    issuedOn,
+  }: {
+    chargeId: string;
+    tenantId: string;
+    period: BillingPeriod;
+    charge: Charge;
+    plan: Plan;
+    vatNumber: string;
+    supplier: InvoiceSupplier | null;
+    issuedOn: string;
+  },
+): Promise<void> {
+  if (!supplier) {
+    // config.ts refuses VAT_REGISTRATION_NUMBER without these, so only a wiring mistake gets here.
+    throw new Error(
+      "VAT is charged but there's no supplier for the invoice (VAT_SELLER_NAME, VAT_SELLER_ADDRESS)",
+    );
+  }
+  const customer = (
+    await client.query<{ business_name: string; billing_address: string | null }>(
+      "SELECT business_name, billing_address FROM tenants WHERE id = $1",
+      [tenantId],
+    )
+  ).rows[0]!;
+  const number = (
+    await client.query<{ last_number: number }>(
+      "UPDATE invoice_numbers SET last_number = last_number + 1 WHERE series = 'vat' RETURNING last_number",
+    )
+  ).rows[0]!.last_number;
+  const invoice = buildInvoice({
+    number,
+    issuedOn,
+    supplier,
+    vatNumber,
+    customer: { name: customer.business_name, address: customer.billing_address },
+    period,
+    charge,
+    plan,
+  });
+  await client.query("UPDATE billing_charges SET invoice_number = $2, invoice = $3 WHERE id = $1", [
+    chargeId,
+    number,
+    JSON.stringify(invoice),
+  ]);
+  if (customer.billing_address === null) {
+    // Still issued (it's owed), saying the address wasn't given: the Account page asks for it.
+    logger.warn("VAT invoice issued without the business's billing address", {
+      tenantId,
+      invoiceNumber: number,
+    });
+  }
+}
+
 /** One business's one month. */
 export async function chargePeriod(
   {
@@ -134,8 +207,10 @@ export async function chargePeriod(
     payments,
     enqueueBillingEmail,
     vat,
+    supplier = null,
     plan = AI_ANSWERING_PLAN,
     alert = raiseAlert,
+    now = () => new Date(),
   }: ChargePeriodsDeps,
   tenant: BillableTenant,
   period: BillingPeriod,
@@ -215,7 +290,21 @@ export async function chargePeriod(
         ],
       )
     ).rows[0];
-    if (inserted) return { ...inserted, isNew: true, lostRace: false };
+    if (inserted) {
+      if (charge.vatRatePercent > 0) {
+        await issueInvoice(client, {
+          chargeId: inserted.id,
+          tenantId,
+          period,
+          charge,
+          plan,
+          vatNumber: vat!.number,
+          supplier,
+          issuedOn: ukDateOf(now()),
+        });
+      }
+      return { ...inserted, isNew: true, lostRace: false };
+    }
     // The other run's row, committed by now (the insert waited for it). That run is asking
     // for the payment, so this one leaves the month to it.
     const theirs = (

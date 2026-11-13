@@ -223,6 +223,11 @@ const DOORS: Record<string, Door> = {
     access: "business",
     path: ({ tenant }) => `/tenants/${tenant}/billing`,
   },
+  "PUT /tenants/:tenantId/billing/address": {
+    access: "business",
+    path: ({ tenant }) => `/tenants/${tenant}/billing/address`,
+    body: {},
+  },
   "POST /tenants/:tenantId/billing/direct-debit": {
     access: "business",
     path: ({ tenant }) => `/tenants/${tenant}/billing/direct-debit`,

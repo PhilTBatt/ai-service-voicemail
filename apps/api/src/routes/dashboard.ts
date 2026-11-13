@@ -6,6 +6,7 @@
 // even a bug in requireTenantAccess() couldn't hand one tenant's calls to another. The
 // cross-tenant list (admin and reseller) uses the admin pool, as the admin screens are meant to.
 import {
+  BILLING_ADDRESS_MAX,
   CSV_EXPORTS,
   URGENCIES,
   acceptDocumentsSchema,
@@ -72,7 +73,7 @@ import {
 } from "../db/mobile-confirmations.ts";
 import { logger } from "../logger.ts";
 import type { SmsProvider } from "../providers/sms.ts";
-import { loadBillingView } from "../db/billing.ts";
+import { loadBillingView, setBillingAddress } from "../db/billing.ts";
 import { checkDirectDebit, startDirectDebit } from "../db/direct-debit.ts";
 import type { AuthProvider } from "../providers/auth.ts";
 import type { PaymentsProvider } from "../providers/payments.ts";
@@ -117,6 +118,16 @@ export interface DashboardOptions extends RecordingSources {
   supplierReadings?: SupplierReadingProviders | undefined;
   now?: () => Date;
 }
+
+/** A business's address for its invoices: one line or a few, trimmed; null or blank clears it. */
+const billingAddressBody = z.object({
+  address: z
+    .string()
+    .trim()
+    .max(BILLING_ADDRESS_MAX)
+    .nullable()
+    .transform((address) => (address === null || address === "" ? null : address)),
+});
 
 export const CALL_LIST_DEFAULT_LIMIT = 50;
 export const CALL_LIST_MAX_LIMIT = 200;
@@ -545,6 +556,28 @@ export function dashboardRouter({
       return;
     }
     res.json(view satisfies BillingView);
+  });
+
+  // The address the business's VAT invoices are made out to (core/invoice.ts). Its owner or the
+  // admin; the reseller never reaches a tenant's own routes. Null clears it.
+  tenant.put("/billing/address", async (req, res) => {
+    const body = billingAddressBody.safeParse(req.body);
+    if (!body.success) {
+      res
+        .status(400)
+        .json({ error: "Invalid body", issues: z.flattenError(body.error).fieldErrors });
+      return;
+    }
+    const tenantId = tenantIdOf(res);
+    if (!(await setBillingAddress(pool, tenantId, body.data.address, principalOf(res).userId))) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    const view = await loadBillingView(pool, tenantId, {
+      now: now?.() ?? new Date(),
+      available: billing !== undefined,
+    });
+    res.json(view satisfies BillingView | null);
   });
 
   // Sends the person to the payments provider's page to set up Direct Debit. The answer is

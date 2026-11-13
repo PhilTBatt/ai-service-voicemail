@@ -1,9 +1,9 @@
 // The billing emails (BUILD_PLAN Step 12): a receipt for each month's charge, a note when a
 // payment couldn't be collected, and one when a Direct Debit ends. Pure: the job fills them in.
-// Called receipts rather than invoices: until Brockersby is VAT registered there's no VAT, and a
-// VAT invoice needs more than these show (HMRC VAT Notice 700/21 section 4.1: a sequential
-// number, both sides' names and addresses). Those come before the VAT settings do.
+// Receipts until Brockersby is VAT registered; from then, a month charged with VAT has a VAT
+// invoice (core/invoice.ts), and its email is that invoice, with everything HMRC lists.
 import { formatPence } from "./billing.ts";
+import { invoiceNumberText, type Invoice } from "./invoice.ts";
 import { escapeHtml } from "./notifications.ts";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -30,6 +30,8 @@ export interface ReceiptCharge {
   vatNumber: string | null;
   /** The day the money is collected, if a payment was made; null when nothing was due. */
   chargeDate: string | null;
+  /** The month's VAT invoice, when it was charged with VAT: the email is then that invoice. */
+  invoice?: Invoice | null;
 }
 
 export interface EmailContent {
@@ -55,6 +57,7 @@ const SIGN_OFF = "AnswerMate, from Brockersby";
 
 /** The month's receipt: what it covered, each part, VAT if any, the total, and when it's taken. */
 export function receiptEmail(businessName: string, charge: ReceiptCharge): EmailContent {
+  if (charge.invoice) return invoiceEmail(charge.invoice, charge.chargeDate);
   const period = `${formatDate(charge.periodStart)} to ${formatDate(lastDayOf(charge.periodEnd))}`;
   const rows: [string, number][] = [
     ...charge.lines.map((line): [string, number] => [line.description, line.pence]),
@@ -98,6 +101,66 @@ export function receiptEmail(businessName: string, charge: ReceiptCharge): Email
     subject: `Your AnswerMate receipt: ${period}`,
     text,
     html: document(`AnswerMate receipt`, [intro, collection, vatNote, SIGN_OFF], table),
+  };
+}
+
+const cell = (text: string, align: "left" | "right" = "left", bold = false) =>
+  `<td style="padding: 4px 12px 4px 0; text-align: ${align}">${bold ? `<strong>${escapeHtml(text)}</strong>` : escapeHtml(text)}</td>`;
+
+/**
+ * A month's VAT invoice as an email: who it's from and to, its number and date, each line with
+ * its quantity, unit price, VAT rate and amount before VAT, then the totals (core/invoice.ts).
+ */
+export function invoiceEmail(invoice: Invoice, chargeDate: string | null): EmailContent {
+  const number = invoiceNumberText(invoice.number);
+  const period = `${formatDate(invoice.periodStart)} to ${formatDate(lastDayOf(invoice.periodEnd))}`;
+  const customerAddress =
+    invoice.customer.address ?? "Address not given (add it on your AnswerMate Account page)";
+  const collection =
+    invoice.totalPence === 0
+      ? "There's nothing to pay for this month."
+      : chargeDate
+        ? `This will be collected by Direct Debit on or soon after ${formatDate(chargeDate)}.`
+        : "This will be collected by Direct Debit in the next few days.";
+  const header = [
+    `VAT invoice ${number}`,
+    `Date of issue and time of supply: ${formatDate(invoice.issuedOn)}`,
+    `For: AnswerMate, ${period}`,
+    "",
+    `From: ${invoice.supplier.name}, ${invoice.supplier.address}`,
+    `VAT registration number: ${invoice.supplier.vatNumber}`,
+    `To: ${invoice.customer.name}, ${customerAddress}`,
+  ];
+  const lineText = invoice.lines.map(
+    (line) =>
+      `${line.description}: ${line.quantity} ${line.unit}${line.quantity === 1 ? "" : "s"} at ${formatPence(line.unitPence)}, VAT ${line.vatRatePercent}%, ${formatPence(line.pence)} before VAT`,
+  );
+  const totals = [
+    `Total before VAT: ${formatPence(invoice.netPence)}`,
+    `VAT at ${invoice.vatRatePercent}%: ${formatPence(invoice.vatPence)}`,
+    `Total: ${formatPence(invoice.totalPence)}`,
+  ];
+  const text = [...header, "", ...lineText, "", ...totals, "", collection, "", SIGN_OFF].join("\n");
+  const table = [
+    '<table style="border-collapse: collapse">',
+    `<tr>${cell("Description", "left", true)}${cell("Quantity", "right", true)}${cell("Unit price", "right", true)}${cell("VAT rate", "right", true)}${cell("Amount before VAT", "right", true)}</tr>`,
+    ...invoice.lines.map(
+      (line) =>
+        `<tr>${cell(line.description)}${cell(`${line.quantity} ${line.unit}${line.quantity === 1 ? "" : "s"}`, "right")}${cell(formatPence(line.unitPence), "right")}${cell(`${line.vatRatePercent}%`, "right")}${cell(formatPence(line.pence), "right")}</tr>`,
+    ),
+    `<tr><td colspan="4" style="padding: 4px 12px 4px 0; border-top: 1px solid #ccc">Total before VAT</td>${cell(formatPence(invoice.netPence), "right")}</tr>`,
+    `<tr><td colspan="4" style="padding: 4px 12px 4px 0">VAT at ${invoice.vatRatePercent}%</td>${cell(formatPence(invoice.vatPence), "right")}</tr>`,
+    `<tr><td colspan="4" style="padding: 4px 12px 4px 0"><strong>Total</strong></td>${cell(formatPence(invoice.totalPence), "right", true)}</tr>`,
+    "</table>",
+  ].join("");
+  return {
+    subject: `Your AnswerMate VAT invoice ${number}: ${period}`,
+    text,
+    html: document(
+      `AnswerMate VAT invoice ${number}`,
+      [header.filter((line) => line !== "").join(". ") + ".", collection, SIGN_OFF],
+      table,
+    ),
   };
 }
 

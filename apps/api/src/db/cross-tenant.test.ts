@@ -253,7 +253,15 @@ describe("a business whose data was deleted", () => {
     });
     expect((await listTenantsWithCallCounts(admin)).map((row) => row.id)).toContain(tenantId);
 
+    await admin.query("UPDATE tenants SET billing_address = $2 WHERE id = $1", [
+      tenantId,
+      "4 Fern Lane, Leeds, XQ12 3AB",
+    ]);
     await deleteTenantData(admin, tenantId, { now: new Date(), actorUserId: null });
+    // Its address for invoices goes with the rest of its details.
+    expect(
+      (await admin.query("SELECT billing_address FROM tenants WHERE id = $1", [tenantId])).rows[0],
+    ).toEqual({ billing_address: null });
 
     expect((await listTenantsWithCallCounts(admin)).map((row) => row.id)).not.toContain(tenantId);
     expect((await listCurrentUsage(admin, new Date())).map((row) => row.tenantId)).not.toContain(
